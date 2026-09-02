@@ -27,6 +27,8 @@ export function validateProject(
     if (seen.has(slot.id)) error(`Duplicate slot id ${slot.id}`, { slot: slot.id })
     seen.add(slot.id)
     if (slot.kind === 'artwork') error('Slot kind artwork is not supported yet', { slot: slot.id })
+    if (slot.note?.trim())
+      issues.push({ level: 'warn', message: `Open feedback: ${slot.note.trim()}`, slot: slot.id })
   }
 
   for (const locale of set.locales) {

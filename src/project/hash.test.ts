@@ -45,6 +45,12 @@ describe('approvalHash', () => {
     expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(project(), bytes('img')))
   })
 
+  it('ignores a slot note, so feedback never makes an approval stale', async () => {
+    const p = project()
+    p.set.slots[0].note = 'Headline too long'
+    expect(await approvalHash(p, bytes('img'))).toBe(await approvalHash(project(), bytes('img')))
+  })
+
   it('changes when a source image changes', async () => {
     expect(await approvalHash(project(), bytes('img2'))).not.toBe(await approvalHash(project(), bytes('img')))
   })

@@ -20,7 +20,11 @@ export async function approvalHash(
   sourceBytes: (localeId: string, screen: string) => Promise<Uint8Array>,
 ): Promise<string> {
   const { approval: _ignored, ...set } = project.set
-  const parts: Uint8Array[] = [new TextEncoder().encode(canonicalJson({ set, copies: project.copies }))]
+  // A note is a message about the set, not part of it — hashing it would make feedback stale an approval.
+  const hashable = { ...set, slots: set.slots.map(({ note: _note, ...slot }) => slot) }
+  const parts: Uint8Array[] = [
+    new TextEncoder().encode(canonicalJson({ set: hashable, copies: project.copies })),
+  ]
   for (const locale of set.locales) {
     for (const slot of set.slots) parts.push(await sourceBytes(locale.id, slot.screen))
   }
