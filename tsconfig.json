@@ -15,5 +15,5 @@
     "verbatimModuleSyntax": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "cli"]
+  "include": ["src", "cli", "vite-plugin-project.ts"]
 }
