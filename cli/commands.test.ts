@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { approveCommand, checkCommand, renderCommand } from './commands'
+import { CliError } from './errors'
 import { readProject } from './project-io'
 
 async function scaffold() {
@@ -73,5 +74,17 @@ describe('approve then render', () => {
     await expect(
       renderCommand({ projectDir: dir, setId: 'default', requireApproval: false }),
     ).rejects.toThrow(/Headline missing.*slot a.*locale en/s)
+  })
+
+  it('refuses an unknown target id with exit code 2', async () => {
+    const { dir } = await scaffold()
+    const failing = renderCommand({
+      projectDir: dir,
+      setId: 'default',
+      targetIds: ['appstore'],
+      requireApproval: false,
+    })
+    await expect(failing).rejects.toThrow(/Unknown target appstore/)
+    await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
   })
 })

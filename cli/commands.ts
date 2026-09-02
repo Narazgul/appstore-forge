@@ -5,20 +5,14 @@ import { sourcePath } from '../src/project/bridge'
 import { approvalHash } from '../src/project/hash'
 import type { Approval, Project } from '../src/project/types'
 import { validateProject, type Issue } from '../src/project/validate'
+import { CliError } from './errors'
 import { readProject, repoRootOf, writeProject } from './project-io'
 import { renderProject } from './render'
 
-export class CliError extends Error {
-  constructor(
-    message: string,
-    readonly exitCode: number,
-  ) {
-    super(message)
-  }
+export function formatIssue(i: Issue): string {
+  const where = [i.slot && `slot ${i.slot}`, i.locale && `locale ${i.locale}`].filter(Boolean).join(', ')
+  return `${i.level}: ${i.message}${where ? ` (${where})` : ''}`
 }
-
-const fmt = (i: Issue) =>
-  `${i.level}: ${i.message}${i.slot ? ` (slot ${i.slot}` : ''}${i.locale ? `${i.slot ? ', ' : ' ('}locale ${i.locale}` : ''}${i.slot || i.locale ? ')' : ''}`
 
 async function load(projectDir: string, setId: string) {
   const repoRoot = repoRootOf(projectDir)
@@ -32,7 +26,7 @@ async function load(projectDir: string, setId: string) {
 
 function assertValid(issues: Issue[]) {
   const errors = issues.filter((i) => i.level === 'error')
-  if (errors.length) throw new CliError(errors.map(fmt).join('\n'), 2)
+  if (errors.length) throw new CliError(errors.map(formatIssue).join('\n'), 2)
 }
 
 async function approvalMatches(project: Project, bytes: (l: string, s: string) => Promise<Uint8Array>) {
