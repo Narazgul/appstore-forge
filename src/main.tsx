@@ -18,8 +18,8 @@ import { useStore } from './store'
 preloadFonts()
   .then(async () => {
     if (import.meta.env.VITE_FORGE_ADAPTER === 'firestore') {
-      const host = (window.parent as unknown as { firebase?: CompatFirebase }).firebase
-      if (!host) throw new Error('Forge im Backoffice braucht window.parent.firebase')
+      const host = (window.parent as unknown as { forgeFirebase?: CompatFirebase }).forgeFirebase
+      if (!host) throw new Error('Forge im Backoffice braucht window.parent.forgeFirebase')
       const setId = new URLSearchParams(location.search).get('set') ?? 'default'
       await useStore.getState().openProject(firestoreProjectStore({ setId, firebase: host }))
     } else if (__FORGE_PROJECT__) {

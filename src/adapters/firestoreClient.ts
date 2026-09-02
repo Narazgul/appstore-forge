@@ -1,7 +1,10 @@
 import type { ProjectStore } from '../project/store'
 import type { Project, ProjectCopies, ProjectSet } from '../project/types'
 
-/** The slice of the compat SDK the adapter touches; the host page owns initialisation and login. */
+/**
+ * The slice of the compat SDK the adapter touches, handed over by the host page as
+ * `window.parent.forgeFirebase`; the host owns initialisation, login and the storage bucket.
+ */
 export type CompatFirebase = {
   firestore(): { collection(path: string): { doc(id: string): CompatDoc } }
   storage(): { ref(path: string): { getDownloadURL(): Promise<string> } }
