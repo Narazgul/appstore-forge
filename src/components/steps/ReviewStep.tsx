@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { readiness } from '../../lib/progress'
 import { useStore } from '../../store'
-import { LocaleGrid } from '../LocaleGrid'
 import { StorePreview } from '../StorePreview'
 import { StepFrame } from './StepFrame'
 
 type Check = { ok: boolean; text: string; fix?: { label: string; step: 'shots' | 'copy' | 'target' } }
 
-/** In project mode the whole locale grid with its approval stamp, otherwise the readiness
- *  checklist against the store's rules; both end on the set as a mock product page. */
+/** In project mode the approval stamp over the target toggle, otherwise the readiness checklist
+ *  against the store's rules; both end on the set as a mock product page. */
 export function ReviewStep() {
   const screens = useStore((s) => s.screens)
   const settings = useStore((s) => s.settings)
@@ -30,7 +29,7 @@ export function ReviewStep() {
     return (
       <StepFrame
         title="Review all languages"
-        lead="Every language for the selected target. Approve when the whole grid is right; the CLI refuses to render for upload without a matching stamp."
+        lead="Every language for the selected target, on the store page shoppers see. Approve when the whole set is right; the CLI refuses to render for upload without a matching stamp."
         aside={
           <div
             className="flex gap-1 rounded-lg p-1"
@@ -101,7 +100,6 @@ export function ReviewStep() {
             </p>
           )}
         </div>
-        <LocaleGrid />
         <StorePreview />
       </StepFrame>
     )

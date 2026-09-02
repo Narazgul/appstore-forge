@@ -4,11 +4,25 @@ import { useSceneSources } from '../lib/useSceneSources'
 import { useStore } from '../store'
 import type { Screen } from '../types'
 
-/** `width`/`height` are one store tile; a span-2 composition renders twice as wide with a seam marker. */
-export function ScreenPreview({ screen, width, height }: { screen: Screen; width: number; height: number }) {
+/**
+ * `width`/`height` are one store tile; a span-2 composition renders twice as wide with a seam marker.
+ * `screens` names the strip the screen belongs to — the review page draws languages the store is
+ * not currently showing, whose neighbours are not the ones in the store.
+ */
+export function ScreenPreview({
+  screen,
+  screens,
+  width,
+  height,
+}: {
+  screen: Screen
+  screens?: Screen[]
+  width: number
+  height: number
+}) {
   const ref = useRef<HTMLCanvasElement>(null)
   const settings = useStore((s) => s.settings)
-  const sources = useSceneSources(screen)
+  const sources = useSceneSources(screen, screens)
   const span = sceneSpan(screen, settings)
   const fullWidth = width * span
 
