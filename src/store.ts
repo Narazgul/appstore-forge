@@ -4,7 +4,7 @@ import { getTemplateSpec } from './presets/templates'
 import { imageIdFor, screensFor, settingsFor } from './project/bridge'
 import { approvalHash } from './project/hash'
 import type { ProjectStore } from './project/store'
-import type { Project, ProjectTarget, SlotCopy } from './project/types'
+import type { Project, ProjectCopies, ProjectTarget, SlotCopy } from './project/types'
 import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
 /** The guided flow. Steps are navigation and status, never a gate — any step is one click away. */
@@ -115,6 +115,23 @@ export function projectAfterTargetPatch(
   }
 }
 
+/** Removing a slot removes its copy too — an orphaned entry would still feed the approval hash. */
+export function projectAfterSlotRemoval(project: Project, slotId: string): Project {
+  const copies: ProjectCopies = {}
+  for (const [localeId, entries] of Object.entries(project.copies)) {
+    const { [slotId]: _dropped, ...rest } = entries
+    copies[localeId] = rest
+  }
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      slots: project.set.slots.filter((s) => s.id !== slotId),
+    },
+    copies,
+  }
+}
+
 type State = {
   screens: Screen[]
   images: Record<string, HTMLImageElement>
@@ -156,6 +173,8 @@ type State = {
   /** null = nothing to judge, false = edited since the last approval */
   approvalOk: boolean | null
   openProject: (store: ProjectStore) => Promise<void>
+  /** re-read the project after an outside change, keeping where the user is */
+  reloadProject: () => Promise<void>
   setLocale: (id: string) => void
   setTarget: (id: string) => void
   setCopy: (localeId: string, slotId: string, patch: Partial<SlotCopy>) => void
@@ -178,6 +197,22 @@ async function loadImageUrl(url: string): Promise<HTMLImageElement> {
   return img
 }
 
+async function loadProjectImages(
+  project: Project,
+  store: ProjectStore,
+): Promise<Record<string, HTMLImageElement>> {
+  const images: Record<string, HTMLImageElement> = {}
+  await Promise.all(
+    project.set.locales.flatMap((l) =>
+      project.set.slots.map(async (s) => {
+        images[imageIdFor(l.id, s.screen)] = await loadImageUrl(store.sourceUrl(l.id, s.screen))
+      }),
+    ),
+  )
+  return images
+}
+
+let unsubscribe: (() => void) | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave(get: () => State) {
   if (saveTimer) clearTimeout(saveTimer)
@@ -313,8 +348,10 @@ export const useStore = create<State>((set, get) => ({
     })
   },
 
-  clearImage: (id) =>
-    set((state) => ({ screens: state.screens.map((s) => (s.id === id ? { ...s, imageId: null } : s)) })),
+  clearImage: (id) => {
+    if (get().project) return
+    set((state) => ({ screens: state.screens.map((s) => (s.id === id ? { ...s, imageId: null } : s)) }))
+  },
 
   updateScreen: (id, patch) => {
     const state = get()
@@ -335,14 +372,7 @@ export const useStore = create<State>((set, get) => ({
     const screens = state.screens.filter((s) => s.id !== id)
     const selectedId = state.selectedId === id ? null : state.selectedId
     if (!state.project) return set({ screens, selectedId })
-    const project: Project = {
-      set: {
-        ...state.project.set,
-        approval: null,
-        slots: state.project.set.slots.filter((s) => s.id !== id),
-      },
-      copies: state.project.copies,
-    }
+    const project = projectAfterSlotRemoval(state.project, id)
     set({ screens, selectedId, project, approvalOk: false })
     scheduleSave(get)
   },
@@ -369,19 +399,20 @@ export const useStore = create<State>((set, get) => ({
 
   setSettings: (patch) => {
     const state = get()
-    const settings = { ...state.settings, ...patch }
-    if (!state.project) return set({ settings })
-    // Size and device belong to the target, not to the shared look.
-    const { sizeId: _size, deviceId: _device, ...shared } = patch
+    if (!state.project) return set({ settings: { ...state.settings, ...patch } })
+    // Size and device belong to the target, not to the look every target shares.
+    const { sizeId, deviceId, ...shared } = patch
+    const targetPatch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>> = {}
+    if (sizeId !== undefined) targetPatch.sizeId = sizeId
+    if (deviceId !== undefined) targetPatch.deviceId = deviceId
+    const base = Object.keys(targetPatch).length
+      ? projectAfterTargetPatch(state.project, state.targetId, targetPatch)
+      : state.project
     const project: Project = {
-      set: {
-        ...state.project.set,
-        approval: null,
-        settings: { ...state.project.set.settings, ...shared },
-      },
-      copies: state.project.copies,
+      set: { ...base.set, approval: null, settings: { ...base.set.settings, ...shared } },
+      copies: base.copies,
     }
-    set({ settings, project, approvalOk: false })
+    set({ project, settings: settingsFor(project, state.targetId), approvalOk: false })
     scheduleSave(get)
   },
 
@@ -415,8 +446,26 @@ export const useStore = create<State>((set, get) => ({
     scheduleSave(get)
   },
 
-  clearAllOverrides: () => set((state) => ({ screens: state.screens.map((s) => ({ ...s, overrides: {} })) })),
-  reset: () => set({ screens: [], images: {}, selectedId: null }),
+  clearAllOverrides: () => {
+    const state = get()
+    const screens = state.screens.map((s) => ({ ...s, overrides: {} }))
+    if (!state.project) return set({ screens })
+    const project: Project = {
+      set: {
+        ...state.project.set,
+        approval: null,
+        slots: state.project.set.slots.map((s) => ({ ...s, overrides: {} })),
+      },
+      copies: state.project.copies,
+    }
+    set({ screens, project, approvalOk: false })
+    scheduleSave(get)
+  },
+
+  reset: () => {
+    if (get().project) return
+    set({ screens: [], images: {}, selectedId: null })
+  },
 
   project: null,
   projectStore: null,
@@ -426,14 +475,7 @@ export const useStore = create<State>((set, get) => ({
 
   openProject: async (store) => {
     const project = await store.load()
-    const images: Record<string, HTMLImageElement> = {}
-    await Promise.all(
-      project.set.locales.flatMap((l) =>
-        project.set.slots.map(async (s) => {
-          images[imageIdFor(l.id, s.screen)] = await loadImageUrl(store.sourceUrl(l.id, s.screen))
-        }),
-      ),
-    )
+    const images = await loadProjectImages(project, store)
     const localeId = project.set.locales[0]?.id ?? 'en'
     const targetId = project.set.targets[0]?.id ?? ''
     set({
@@ -448,7 +490,37 @@ export const useStore = create<State>((set, get) => ({
       step: 'shots',
     })
     await get().refreshApproval()
-    store.subscribe?.(() => void get().openProject(store))
+    unsubscribe?.()
+    unsubscribe =
+      store.subscribe?.(() => {
+        get()
+          .reloadProject()
+          .catch((error) => console.error('reloading the project failed', error))
+      }) ?? null
+  },
+
+  reloadProject: async () => {
+    const store = get().projectStore
+    if (!store) return
+    const project = await store.load()
+    const images = await loadProjectImages(project, store)
+    const state = get()
+    const localeId = project.set.locales.some((l) => l.id === state.localeId)
+      ? state.localeId
+      : (project.set.locales[0]?.id ?? 'en')
+    const targetId = project.set.targets.some((t) => t.id === state.targetId)
+      ? state.targetId
+      : (project.set.targets[0]?.id ?? '')
+    set({
+      project,
+      images,
+      localeId,
+      targetId,
+      screens: screensFor(project, localeId),
+      settings: settingsFor(project, targetId),
+      selectedId: project.set.slots.some((s) => s.id === state.selectedId) ? state.selectedId : null,
+    })
+    await get().refreshApproval()
   },
 
   setLocale: (localeId) =>
@@ -477,6 +549,8 @@ export const useStore = create<State>((set, get) => ({
     const { project, projectStore } = get()
     if (!project || !projectStore) return
     const hash = await approvalHash(project, (l, s) => projectStore.sourceBytes(l, s))
+    // An edit while the hash was computing wins; approving the older project would be a lie.
+    if (get().project !== project) return
     const next: Project = {
       ...project,
       set: { ...project.set, approval: { hash, by, at: new Date().toISOString() } },
@@ -490,6 +564,7 @@ export const useStore = create<State>((set, get) => ({
     if (!project || !projectStore) return set({ approvalOk: null })
     if (!project.set.approval) return set({ approvalOk: false })
     const hash = await approvalHash(project, (l, s) => projectStore.sourceBytes(l, s))
+    if (get().project !== project) return
     set({ approvalOk: hash === project.set.approval.hash })
   },
 }))
