@@ -7,7 +7,7 @@ import { ReviewStep } from './components/steps/ReviewStep'
 import { ShotsStep } from './components/steps/ShotsStep'
 import { TargetStep } from './components/steps/TargetStep'
 import { TuneStep } from './components/steps/TuneStep'
-import { desktop, exportAll, type ExportResult } from './lib/export'
+import { exportAll, type ExportResult } from './lib/export'
 import { useStore } from './store'
 
 export function App() {
@@ -18,24 +18,27 @@ export function App() {
   const addFiles = useStore((s) => s.addFiles)
   const step = useStore((s) => s.step)
   const setStep = useStore((s) => s.setStep)
+  // A project draws its screenshots from the repo, so dropping files does nothing at all.
+  const project = useStore((s) => s.project)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<Exclude<ExportResult, { kind: 'cancelled' }> | null>(null)
+  const [result, setResult] = useState<ExportResult | null>(null)
 
   // Files can land on any step; they always go where screenshots are shown.
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
       setDragging(false)
+      if (project) return
       const files = Array.from(e.dataTransfer.files)
       if (!files.length) return
       void addFiles(files)
       if (step !== 'tune') setStep('shots')
     },
-    [addFiles, step, setStep],
+    [addFiles, project, step, setStep],
   )
 
   const onExport = useCallback(async () => {
@@ -43,8 +46,7 @@ export function App() {
     setError(null)
     setResult(null)
     try {
-      const outcome = await exportAll(screens, settings, images, format)
-      if (outcome.kind !== 'cancelled') setResult(outcome)
+      setResult(await exportAll(screens, settings, images, format))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -61,8 +63,10 @@ export function App() {
         <main
           className="relative flex-1 overflow-auto p-8"
           onDragOver={(e) => {
+            // Cancelling dragover is what stops the browser from navigating to the dropped
+            // file; only the drop affordance is off in project mode.
             e.preventDefault()
-            setDragging(true)
+            if (!project) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
@@ -86,7 +90,7 @@ export function App() {
           {step === 'tune' && <TuneStep />}
           {step === 'review' && <ReviewStep />}
 
-          {dragging && step !== 'shots' && (
+          {dragging && !project && step !== 'shots' && (
             <div
               className="pointer-events-none absolute inset-4 flex items-center justify-center rounded-2xl border-2 border-dashed text-[14px] font-semibold"
               style={{
@@ -101,14 +105,7 @@ export function App() {
 
           {result && (
             <div className="toast">
-              <span>
-                {result.kind === 'saved'
-                  ? `Saved ${result.count} file${result.count === 1 ? '' : 's'} to ${result.dir.split('/').slice(-1)[0]}`
-                  : `Downloaded ${result.count} file${result.count === 1 ? '' : 's'}`}
-              </span>
-              {result.kind === 'saved' && (
-                <button onClick={() => void desktop()?.revealPath(result.dir)}>Show in Finder</button>
-              )}
+              <span>{`Downloaded ${result.count} file${result.count === 1 ? '' : 's'}`}</span>
               <button onClick={() => setResult(null)}>Dismiss</button>
             </div>
           )}

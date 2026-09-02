@@ -15,13 +15,19 @@ export function CopyStep() {
   const screens = useStore((s) => s.screens)
   const settings = useStore((s) => s.settings)
   const updateScreen = useStore((s) => s.updateScreen)
+  const project = useStore((s) => s.project)
+  const setCopy = useStore((s) => s.setCopy)
   const size = getSize(settings.sizeId)
   const thumbH = Math.round((THUMB * size.h) / size.w)
 
   return (
     <StepFrame
       title="Write the copy"
-      lead="One benefit per screen, said the way a shopper would say it. Short headlines stay big; the renderer shrinks anything that would collide with the phone."
+      lead={
+        project
+          ? 'One benefit per screen, one line per language. en and de are maintained by hand; the other languages come from the translation run.'
+          : 'One benefit per screen, said the way a shopper would say it. Short headlines stay big; the renderer shrinks anything that would collide with the phone.'
+      }
     >
       {screens.length === 0 ? (
         <Tip>Add screenshots first — each one gets a headline and an optional subtitle.</Tip>
@@ -42,30 +48,67 @@ export function CopyStep() {
                     </span>
                   </div>
                   {hasCopy ? (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <input
-                          className="field"
-                          value={screen.headline}
-                          placeholder="Headline — the benefit, *stars* to highlight"
-                          onChange={(e) => updateScreen(screen.id, { headline: e.target.value })}
-                        />
-                        <span className="count" data-over={headLen > HEADLINE_SOFT}>
-                          {headLen}
-                        </span>
+                    project ? (
+                      <div className="flex flex-col gap-2">
+                        {project.set.locales.map((l) => {
+                          // A hand-edited copy file may carry only one of the two fields.
+                          const copy = project.copies[l.id]?.[screen.id]
+                          const headline = copy?.headline ?? ''
+                          const subhead = copy?.subhead ?? ''
+                          const len = headline.replace(/\*/g, '').length
+                          return (
+                            <div key={l.id} className="flex items-center gap-2">
+                              <span
+                                className="w-10 shrink-0 text-[11px] font-semibold"
+                                data-required={l.id === 'en' || l.id === 'de'}
+                              >
+                                {l.id}
+                              </span>
+                              <input
+                                className="field"
+                                value={headline}
+                                placeholder="Headline, *stars* to highlight"
+                                onChange={(e) => setCopy(l.id, screen.id, { headline: e.target.value })}
+                              />
+                              <span className="count" data-over={len > HEADLINE_SOFT}>
+                                {len}
+                              </span>
+                              <input
+                                className="field"
+                                value={subhead}
+                                placeholder="Subtitle (optional)"
+                                onChange={(e) => setCopy(l.id, screen.id, { subhead: e.target.value })}
+                              />
+                            </div>
+                          )
+                        })}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          className="field"
-                          value={screen.subhead}
-                          placeholder="Subtitle (optional) — one short sentence"
-                          onChange={(e) => updateScreen(screen.id, { subhead: e.target.value })}
-                        />
-                        <span className="count" data-over={screen.subhead.length > SUBHEAD_SOFT}>
-                          {screen.subhead.length}
-                        </span>
-                      </div>
-                    </>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <input
+                            className="field"
+                            value={screen.headline}
+                            placeholder="Headline — the benefit, *stars* to highlight"
+                            onChange={(e) => updateScreen(screen.id, { headline: e.target.value })}
+                          />
+                          <span className="count" data-over={headLen > HEADLINE_SOFT}>
+                            {headLen}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            className="field"
+                            value={screen.subhead}
+                            placeholder="Subtitle (optional) — one short sentence"
+                            onChange={(e) => updateScreen(screen.id, { subhead: e.target.value })}
+                          />
+                          <span className="count" data-over={screen.subhead.length > SUBHEAD_SOFT}>
+                            {screen.subhead.length}
+                          </span>
+                        </div>
+                      </>
+                    )
                   ) : (
                     <p className="text-[12px]" style={{ color: 'var(--muted)' }}>
                       This composition is a breather: the device speaks for itself. Change its layout in

@@ -1,6 +1,11 @@
 import { create } from 'zustand'
+import { preloadScriptFonts } from './presets/fonts'
 import { getRhythm, rhythmStep } from './presets/rhythms'
 import { getTemplateSpec } from './presets/templates'
+import { imageIdFor, screensFor, settingsFor } from './project/bridge'
+import { approvalHash } from './project/hash'
+import type { ProjectStore } from './project/store'
+import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy } from './project/types'
 import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
 /** The guided flow. Steps are navigation and status, never a gate — any step is one click away. */
@@ -57,6 +62,95 @@ export const templateSettings = (template: TemplateSpec, current: Settings): Set
   deviceId: current.deviceId,
 })
 
+export function projectAfterScreenPatch(
+  project: Project,
+  localeId: string,
+  screenId: string,
+  patch: Partial<SlotCopy>,
+): Project {
+  const locale = project.copies[localeId] ?? {}
+  const current = locale[screenId] ?? { headline: '', subhead: '' }
+  return {
+    set: { ...project.set, approval: null },
+    copies: { ...project.copies, [localeId]: { ...locale, [screenId]: { ...current, ...patch } } },
+  }
+}
+
+export function projectAfterOverride(project: Project, slotId: string, overrides: ScreenOverrides): Project {
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      slots: project.set.slots.map((s) => (s.id === slotId ? { ...s, overrides } : s)),
+    },
+    copies: project.copies,
+  }
+}
+
+/** A template in project mode is a look, not a set: it never adds or drops slots. */
+export function projectAfterTemplate(project: Project, template: TemplateSpec): Project {
+  const { sizeId: _size, deviceId: _device, ...base } = DEFAULT_SETTINGS
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      settings: { ...base, ...template.settings },
+      slots: project.set.slots.map((slot, i) => ({ ...slot, overrides: variantFor(template, i) })),
+    },
+    copies: project.copies,
+  }
+}
+
+export function projectAfterTargetPatch(
+  project: Project,
+  id: string,
+  patch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>>,
+): Project {
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      targets: project.set.targets.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    },
+    copies: project.copies,
+  }
+}
+
+/**
+ * A note is feedback for the agent that regenerates a screenshot, not part of the set: it stays out
+ * of the approval hash, so writing one must not go through `mutated` and drop the stamp.
+ */
+export function projectAfterNote(project: Project, slotId: string, note: string): Project {
+  return {
+    set: {
+      ...project.set,
+      slots: project.set.slots.map((slot) => {
+        if (slot.id !== slotId) return slot
+        const { note: _dropped, ...rest } = slot
+        return note.trim() ? { ...rest, note } : rest
+      }),
+    },
+    copies: project.copies,
+  }
+}
+
+/** Removing a slot removes its copy too — an orphaned entry would still feed the approval hash. */
+export function projectAfterSlotRemoval(project: Project, slotId: string): Project {
+  const copies: ProjectCopies = {}
+  for (const [localeId, entries] of Object.entries(project.copies)) {
+    const { [slotId]: _dropped, ...rest } = entries
+    copies[localeId] = rest
+  }
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      slots: project.set.slots.filter((s) => s.id !== slotId),
+    },
+    copies,
+  }
+}
+
 type State = {
   screens: Screen[]
   images: Record<string, HTMLImageElement>
@@ -90,16 +184,89 @@ type State = {
   clearOverrides: (id: string, keys: (keyof ScreenOverrides)[]) => void
   clearAllOverrides: () => void
   reset: () => void
+  /** null in freeform mode: no project on disk, everything lives in this store */
+  project: Project | null
+  projectStore: ProjectStore | null
+  localeId: string
+  targetId: string
+  /** null = nothing to judge, false = edited since the last approval */
+  approvalOk: boolean | null
+  /** the stamp an edit invalidated, so the GUI can name who approved what is now outdated */
+  staleApproval: Approval | null
+  /** the last failure a user action produced, shown where that action lives */
+  lastError: string | null
+  setLastError: (message: string | null) => void
+  openProject: (store: ProjectStore) => Promise<void>
+  /** re-read the project after an outside change, keeping where the user is */
+  reloadProject: () => Promise<void>
+  setLocale: (id: string) => void
+  setTarget: (id: string) => void
+  setCopy: (localeId: string, slotId: string, patch: Partial<SlotCopy>) => void
+  /** feedback for the agent; it is not part of the set, so the approval survives it */
+  setSlotNote: (slotId: string, note: string) => void
+  updateTarget: (id: string, patch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>>) => void
+  approve: (by: string) => Promise<void>
+  refreshApproval: () => Promise<void>
 }
 
-async function loadImage(file: File): Promise<HTMLImageElement> {
-  const img = new Image()
-  img.src = URL.createObjectURL(file)
-  await img.decode()
-  return img
+/** `img.decode()` never settles in a background tab, which hung the whole GUI on a reload
+ *  while the window was not focused. The load events fire either way. */
+function loadImageUrl(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error(`Image failed to load: ${url}`))
+    img.src = url
+  })
 }
 
-export const useStore = create<State>((set) => ({
+const loadImage = (file: File): Promise<HTMLImageElement> => loadImageUrl(URL.createObjectURL(file))
+
+/**
+ * A screenshot the project names but the repo does not have yet is normal — Roborazzi has
+ * not run, or a capture was renamed. Its key stays absent, `renderScene` draws the tile
+ * without a source, and the rest of the grid opens.
+ */
+async function loadProjectImages(
+  project: Project,
+  store: ProjectStore,
+): Promise<Record<string, HTMLImageElement>> {
+  const keys = project.set.locales.flatMap((l) =>
+    project.set.slots.map((s) => ({ id: imageIdFor(l.id, s.screen), url: store.sourceUrl(l.id, s.screen) })),
+  )
+  const results = await Promise.allSettled(keys.map(({ url }) => loadImageUrl(url)))
+  const images: Record<string, HTMLImageElement> = {}
+  results.forEach((result, i) => {
+    if (result.status === 'fulfilled') images[keys[i].id] = result.value
+    else console.warn(`source screenshot missing for ${keys[i].id}`, result.reason)
+  })
+  return images
+}
+
+/**
+ * What every project mutation writes: the new project, the approval gone, and the stamp it
+ * invalidated kept so the Review step can say whose approval went stale.
+ */
+export function mutated(state: State, project: Project, extra: Partial<State> = {}): Partial<State> {
+  return {
+    project,
+    approvalOk: false,
+    staleApproval: project.set.approval ? null : (state.project?.set.approval ?? state.staleApproval),
+    ...extra,
+  }
+}
+
+let unsubscribe: (() => void) | null = null
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleSave(get: () => State) {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    const { project, projectStore } = get()
+    if (project && projectStore) void projectStore.save(project)
+  }, 300)
+}
+
+export const useStore = create<State>((set, get) => ({
   screens: [],
   images: {},
   settings: DEFAULT_SETTINGS,
@@ -111,44 +278,71 @@ export const useStore = create<State>((set) => ({
   setListing: (patch) => set((state) => ({ listing: { ...state.listing, ...patch } })),
   format: 'png',
 
-  applyRhythm: (id) =>
-    set((state) => {
-      const rhythm = getRhythm(id)
-      return {
-        rhythmId: rhythm.id,
-        screens: state.screens.map((s, i) => {
-          // Only the composition keys move; a Notebook screen keeps its colours.
-          const { layout: _l, positionId: _p, textAlign: _t, ...rest } = s.overrides
-          const step = rhythmStep(rhythm, i)
-          return { ...s, overrides: step ? { ...rest, ...step } : rest }
-        }),
-      }
-    }),
+  applyRhythm: (id) => {
+    const state = get()
+    const rhythm = getRhythm(id)
+    const screens = state.screens.map((s, i) => {
+      // Only the composition keys move; a Notebook screen keeps its colours.
+      const { layout: _l, positionId: _p, textAlign: _t, ...rest } = s.overrides
+      const step = rhythmStep(rhythm, i)
+      return { ...s, overrides: step ? { ...rest, ...step } : rest }
+    })
+    if (!state.project) return set({ rhythmId: rhythm.id, screens })
+    const project: Project = {
+      set: {
+        ...state.project.set,
+        approval: null,
+        slots: state.project.set.slots.map((slot, i) => ({
+          ...slot,
+          overrides: screens[i]?.overrides ?? slot.overrides,
+        })),
+      },
+      copies: state.project.copies,
+    }
+    set(mutated(state, project, { rhythmId: rhythm.id, screens: screensFor(project, state.localeId) }))
+    scheduleSave(get)
+  },
 
-  applyTemplate: (id) =>
-    set((state) => {
-      const template = getTemplateSpec(id)
-      const slots = slotCount(template)
-      // A set template lays out every slot up front so the whole look is visible before any
-      // screenshot exists. Screens that already hold an image keep it (and their copy); unfilled
-      // slots take the new template's sample copy; a freeform template drops empty slots.
-      const filled = state.screens.filter((s) => s.imageId !== null)
-      const count = Math.max(slots, filled.length)
-      const screens: Screen[] = []
-      for (let i = 0; i < count; i++) {
-        const existing = filled[i]
-        screens.push(existing ? { ...existing, overrides: variantFor(template, i) } : emptySlot(template, i))
-      }
-      return {
-        templateId: template.id,
-        rhythmId: template.rhythm ?? (template.variants?.length ? 'template' : 'uniform'),
-        settings: templateSettings(template, state.settings),
-        screens,
-        selectedId: screens.some((s) => s.id === state.selectedId) ? state.selectedId : null,
-      }
-    }),
+  applyTemplate: (id) => {
+    const state = get()
+    const template = getTemplateSpec(id)
+    const rhythmId = template.rhythm ?? (template.variants?.length ? 'template' : 'uniform')
+    if (state.project) {
+      const project = projectAfterTemplate(state.project, template)
+      set(
+        mutated(state, project, {
+          templateId: template.id,
+          rhythmId,
+          screens: screensFor(project, state.localeId),
+          settings: settingsFor(project, state.targetId),
+        }),
+      )
+      scheduleSave(get)
+      return
+    }
+    const slots = slotCount(template)
+    // A set template lays out every slot up front so the whole look is visible before any
+    // screenshot exists. Screens that already hold an image keep it (and their copy); unfilled
+    // slots take the new template's sample copy; a freeform template drops empty slots.
+    const filled = state.screens.filter((s) => s.imageId !== null)
+    const count = Math.max(slots, filled.length)
+    const screens: Screen[] = []
+    for (let i = 0; i < count; i++) {
+      const existing = filled[i]
+      screens.push(existing ? { ...existing, overrides: variantFor(template, i) } : emptySlot(template, i))
+    }
+    set({
+      templateId: template.id,
+      rhythmId,
+      settings: templateSettings(template, state.settings),
+      screens,
+      selectedId: screens.some((s) => s.id === state.selectedId) ? state.selectedId : null,
+    })
+  },
 
   addFiles: async (files) => {
+    // In project mode the screenshots come from the project's sources, not from a drop.
+    if (get().project) return
     const usable = files.filter((f) => f.type.startsWith('image/'))
     if (!usable.length) return
     const loaded = await Promise.all(usable.map(async (file) => ({ file, img: await loadImage(file) })))
@@ -181,6 +375,7 @@ export const useStore = create<State>((set) => ({
   },
 
   setImage: async (id, file) => {
+    if (get().project) return
     if (!file.type.startsWith('image/')) return
     const img = await loadImage(file)
     set((state) => {
@@ -192,56 +387,251 @@ export const useStore = create<State>((set) => ({
     })
   },
 
-  clearImage: (id) =>
-    set((state) => ({ screens: state.screens.map((s) => (s.id === id ? { ...s, imageId: null } : s)) })),
+  clearImage: (id) => {
+    if (get().project) return
+    set((state) => ({ screens: state.screens.map((s) => (s.id === id ? { ...s, imageId: null } : s)) }))
+  },
 
-  updateScreen: (id, patch) =>
-    set((state) => ({
-      screens: state.screens.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-    })),
+  updateScreen: (id, patch) => {
+    const state = get()
+    const screens = state.screens.map((s) => (s.id === id ? { ...s, ...patch } : s))
+    const copy: Partial<SlotCopy> = {}
+    if (patch.headline !== undefined) copy.headline = patch.headline
+    if (patch.subhead !== undefined) copy.subhead = patch.subhead
+    if (!state.project || (copy.headline === undefined && copy.subhead === undefined)) {
+      return set({ screens })
+    }
+    const project = projectAfterScreenPatch(state.project, state.localeId, id, copy)
+    set(mutated(state, project, { screens }))
+    scheduleSave(get)
+  },
 
-  removeScreen: (id) =>
-    set((state) => ({
-      screens: state.screens.filter((s) => s.id !== id),
-      selectedId: state.selectedId === id ? null : state.selectedId,
-    })),
+  removeScreen: (id) => {
+    const state = get()
+    const screens = state.screens.filter((s) => s.id !== id)
+    const selectedId = state.selectedId === id ? null : state.selectedId
+    if (!state.project) return set({ screens, selectedId })
+    const project = projectAfterSlotRemoval(state.project, id)
+    set(mutated(state, project, { screens, selectedId }))
+    scheduleSave(get)
+  },
 
-  moveScreen: (id, delta) =>
-    set((state) => {
-      const from = state.screens.findIndex((s) => s.id === id)
-      const to = from + delta
-      if (from < 0 || to < 0 || to >= state.screens.length) return state
-      const screens = [...state.screens]
-      const [moved] = screens.splice(from, 1)
-      screens.splice(to, 0, moved)
-      return { screens }
-    }),
+  moveScreen: (id, delta) => {
+    const state = get()
+    const from = state.screens.findIndex((s) => s.id === id)
+    const to = from + delta
+    if (from < 0 || to < 0 || to >= state.screens.length) return
+    const screens = [...state.screens]
+    const [moved] = screens.splice(from, 1)
+    screens.splice(to, 0, moved)
+    if (!state.project) return set({ screens })
+    const slots = [...state.project.set.slots]
+    const [movedSlot] = slots.splice(from, 1)
+    slots.splice(to, 0, movedSlot)
+    const project: Project = {
+      set: { ...state.project.set, approval: null, slots },
+      copies: state.project.copies,
+    }
+    set(mutated(state, project, { screens }))
+    scheduleSave(get)
+  },
 
-  setSettings: (patch) => set((state) => ({ settings: { ...state.settings, ...patch } })),
+  setSettings: (patch) => {
+    const state = get()
+    if (!state.project) return set({ settings: { ...state.settings, ...patch } })
+    // Size and device belong to the target, not to the look every target shares.
+    const { sizeId, deviceId, ...shared } = patch
+    const targetPatch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>> = {}
+    if (sizeId !== undefined) targetPatch.sizeId = sizeId
+    if (deviceId !== undefined) targetPatch.deviceId = deviceId
+    const base = Object.keys(targetPatch).length
+      ? projectAfterTargetPatch(state.project, state.targetId, targetPatch)
+      : state.project
+    const project: Project = {
+      set: { ...base.set, approval: null, settings: { ...base.set.settings, ...shared } },
+      copies: base.copies,
+    }
+    set(mutated(state, project, { settings: settingsFor(project, state.targetId) }))
+    scheduleSave(get)
+  },
+
   setFormat: (format) => set({ format }),
 
   selectedId: null,
   selectScreen: (id) => set({ selectedId: id }),
 
-  setOverride: (id, patch) =>
-    set((state) => ({
-      screens: state.screens.map((s) =>
-        s.id === id ? { ...s, overrides: { ...s.overrides, ...patch } } : s,
-      ),
-    })),
+  setOverride: (id, patch) => {
+    const state = get()
+    const screens = state.screens.map((s) =>
+      s.id === id ? { ...s, overrides: { ...s.overrides, ...patch } } : s,
+    )
+    if (!state.project) return set({ screens })
+    const project = projectAfterOverride(state.project, id, screens.find((s) => s.id === id)?.overrides ?? {})
+    set(mutated(state, project, { screens }))
+    scheduleSave(get)
+  },
 
-  clearOverrides: (id, keys) =>
-    set((state) => ({
-      screens: state.screens.map((s) => {
-        if (s.id !== id) return s
-        const overrides = { ...s.overrides }
-        for (const key of keys) delete overrides[key]
-        return { ...s, overrides }
-      }),
-    })),
+  clearOverrides: (id, keys) => {
+    const state = get()
+    const screens = state.screens.map((s) => {
+      if (s.id !== id) return s
+      const overrides = { ...s.overrides }
+      for (const key of keys) delete overrides[key]
+      return { ...s, overrides }
+    })
+    if (!state.project) return set({ screens })
+    const project = projectAfterOverride(state.project, id, screens.find((s) => s.id === id)?.overrides ?? {})
+    set(mutated(state, project, { screens }))
+    scheduleSave(get)
+  },
 
-  clearAllOverrides: () => set((state) => ({ screens: state.screens.map((s) => ({ ...s, overrides: {} })) })),
-  reset: () => set({ screens: [], images: {}, selectedId: null }),
+  clearAllOverrides: () => {
+    const state = get()
+    const screens = state.screens.map((s) => ({ ...s, overrides: {} }))
+    if (!state.project) return set({ screens })
+    const project: Project = {
+      set: {
+        ...state.project.set,
+        approval: null,
+        slots: state.project.set.slots.map((s) => ({ ...s, overrides: {} })),
+      },
+      copies: state.project.copies,
+    }
+    set(mutated(state, project, { screens }))
+    scheduleSave(get)
+  },
+
+  reset: () => {
+    if (get().project) return
+    set({ screens: [], images: {}, selectedId: null })
+  },
+
+  project: null,
+  projectStore: null,
+  localeId: 'en',
+  targetId: '',
+  approvalOk: null,
+  staleApproval: null,
+  lastError: null,
+  setLastError: (lastError) => set({ lastError }),
+
+  openProject: async (store) => {
+    // A watcher left over from an earlier project must never fire into this one.
+    unsubscribe?.()
+    unsubscribe = null
+    const project = await store.load()
+    await preloadScriptFonts(project.set.locales.map((l) => l.id))
+    const images = await loadProjectImages(project, store)
+    const localeId = project.set.locales[0]?.id ?? 'en'
+    const targetId = project.set.targets[0]?.id ?? ''
+    set({
+      project,
+      projectStore: store,
+      images,
+      localeId,
+      targetId,
+      screens: screensFor(project, localeId),
+      settings: settingsFor(project, targetId),
+      selectedId: null,
+      step: 'shots',
+      staleApproval: null,
+      lastError: null,
+    })
+    await get().refreshApproval()
+    unsubscribe =
+      store.subscribe?.(() => {
+        get()
+          .reloadProject()
+          .catch((error) => console.error('reloading the project failed', error))
+      }) ?? null
+  },
+
+  reloadProject: async () => {
+    const store = get().projectStore
+    if (!store) return
+    const project = await store.load()
+    await preloadScriptFonts(project.set.locales.map((l) => l.id))
+    const images = await loadProjectImages(project, store)
+    const state = get()
+    const localeId = project.set.locales.some((l) => l.id === state.localeId)
+      ? state.localeId
+      : (project.set.locales[0]?.id ?? 'en')
+    const targetId = project.set.targets.some((t) => t.id === state.targetId)
+      ? state.targetId
+      : (project.set.targets[0]?.id ?? '')
+    set({
+      project,
+      images,
+      localeId,
+      targetId,
+      screens: screensFor(project, localeId),
+      settings: settingsFor(project, targetId),
+      selectedId: project.set.slots.some((s) => s.id === state.selectedId) ? state.selectedId : null,
+    })
+    await get().refreshApproval()
+  },
+
+  setLocale: (localeId) =>
+    set((state) => (state.project ? { localeId, screens: screensFor(state.project, localeId) } : state)),
+
+  setTarget: (targetId) =>
+    set((state) => (state.project ? { targetId, settings: settingsFor(state.project, targetId) } : state)),
+
+  setCopy: (localeId, slotId, patch) => {
+    const state = get()
+    if (!state.project) return
+    const project = projectAfterScreenPatch(state.project, localeId, slotId, patch)
+    set(mutated(state, project, { screens: screensFor(project, state.localeId) }))
+    scheduleSave(get)
+  },
+
+  setSlotNote: (slotId, note) => {
+    const state = get()
+    if (!state.project) return
+    set({ project: projectAfterNote(state.project, slotId, note) })
+    scheduleSave(get)
+  },
+
+  updateTarget: (id, patch) => {
+    const state = get()
+    if (!state.project) return
+    const project = projectAfterTargetPatch(state.project, id, patch)
+    set(mutated(state, project, { settings: settingsFor(project, state.targetId) }))
+    scheduleSave(get)
+  },
+
+  approve: async (by) => {
+    const { project, projectStore } = get()
+    if (!project || !projectStore) return
+    const hash = await approvalHash(project, (l, s) => projectStore.sourceBytes(l, s))
+    // An edit while the hash was computing wins; approving the older project would be a lie.
+    if (get().project !== project) return
+    const next: Project = {
+      ...project,
+      set: { ...project.set, approval: { hash, by, at: new Date().toISOString() } },
+    }
+    // A stamp the files never received is worse than no stamp: the CLI would still refuse
+    // and the GUI would claim the set was approved.
+    try {
+      await projectStore.save(next)
+    } catch (error) {
+      set({ lastError: `Approval not saved: ${error instanceof Error ? error.message : String(error)}` })
+      return
+    }
+    if (get().project !== project) return
+    set({ project: next, approvalOk: true, staleApproval: null, lastError: null })
+  },
+
+  refreshApproval: async () => {
+    const { project, projectStore } = get()
+    if (!project || !projectStore) return set({ approvalOk: null })
+    if (!project.set.approval) return set({ approvalOk: false })
+    const hash = await approvalHash(project, (l, s) => projectStore.sourceBytes(l, s))
+    if (get().project !== project) return
+    const ok = hash === project.set.approval.hash
+    // A stamp that no longer matches the files is stale in exactly the sense an edit makes it.
+    set({ approvalOk: ok, staleApproval: ok ? null : project.set.approval })
+  },
 }))
 
 // Automation handle: lets an agent (Argent/CDP) or the devtools console drive the editor

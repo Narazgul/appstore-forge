@@ -1,5 +1,5 @@
 import type { Layout, Screen, Settings } from '../types'
-import { getFont } from '../presets/fonts'
+import { fontStackFor, isRtl } from '../presets/scripts'
 
 /**
  * The text engine: markup parsing, line breaking, auto-shrink, and drawing. Split out of
@@ -15,8 +15,9 @@ export type TextMeasurer = {
   letterSpacing: string
 }
 
-/** A headline word with the index of the `*span*` it belongs to (-1 = plain). */
-export type Word = { text: string; span: number }
+/** A headline word with the index of the `*span*` it belongs to (-1 = plain). `glue` marks a
+ *  piece that a segmenter split off its neighbour, so no space belongs in front of it. */
+export type Word = { text: string; span: number; glue?: boolean }
 
 /** `The list that *feels* like a *notebook.*` → words tagged with their highlight span. */
 export function parseMarkup(text: string): Word[] {
@@ -38,17 +39,72 @@ export const stripMarkup = (text: string) =>
 
 export type Line = { words: Word[]; widths: number[]; width: number }
 
-export function wrap(ctx: TextMeasurer, words: Word[], maxWidth: number): Line[] {
+/**
+ * Split a whitespace-free word into segmenter pieces; Latin words come back whole.
+ * Punctuation is never a piece of its own — the segmenter reports it separately, but a break
+ * in front of it would strand a comma at the start of a CJK line and tear `$9.99` in two.
+ */
+function pieces(word: Word, lang: string | undefined): Word[] {
+  if (!lang || typeof Intl.Segmenter !== 'function') return [word]
+  const out: Word[] = []
+  let lead = ''
+  for (const { segment, isWordLike } of new Intl.Segmenter(lang, { granularity: 'word' }).segment(
+    word.text,
+  )) {
+    if (!segment.trim()) continue
+    if (isWordLike) {
+      out.push({ text: lead + segment, span: word.span, glue: out.length > 0 })
+      lead = ''
+    } else if (out.length) {
+      out[out.length - 1].text += segment
+    } else {
+      lead += segment
+    }
+  }
+  return out.length > 1 ? out : [word]
+}
+
+export function wrap(ctx: TextMeasurer, words: Word[], maxWidth: number, lang?: string): Line[] {
   if (!words.length) return []
   const space = ctx.measureText(' ').width
+  const all = words.flatMap((w) => pieces(w, lang))
+  const widths = all.map((w) => ctx.measureText(w.text).width)
+  const measure = (ws: Word[], wd: number[]) =>
+    wd.reduce((sum, width, i) => sum + (i && !ws[i].glue ? space : 0) + width, 0)
+
+  /** A span is one contiguous run, so its whole width is the sum over its pieces. */
+  const spanWidth = (span: number) => {
+    let total = 0
+    let started = false
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].span !== span) continue
+      total += (started && !all[i].glue ? space : 0) + widths[i]
+      started = true
+    }
+    return total
+  }
+
   const lines: Line[] = []
   let line: Line = { words: [], widths: [], width: 0 }
-  for (const word of words) {
-    const ww = ctx.measureText(word.text).width
-    const next = line.words.length ? line.width + space + ww : ww
+  for (const [i, word] of all.entries()) {
+    const ww = widths[i]
+    const gap = line.words.length && !word.glue ? space : 0
+    const next = line.width + gap + ww
     if (line.words.length && next > maxWidth) {
+      // A marker band split over two lines reads as two bands, so the earlier words of the
+      // span travel down with it — unless the span is too wide to sit on one line anyway.
+      let take = 0
+      if (word.span >= 0 && spanWidth(word.span) <= maxWidth) {
+        while (take < line.words.length - 1 && line.words[line.words.length - 1 - take].span === word.span)
+          take++
+      }
+      const moved = line.words.splice(line.words.length - take, take)
+      const movedWidths = line.widths.splice(line.widths.length - take, take)
+      if (take) line.width = measure(line.words, line.widths)
       lines.push(line)
-      line = { words: [word], widths: [ww], width: ww }
+      const startWords = [...moved, word].map((w, j) => (j === 0 ? { ...w, glue: false } : w))
+      const startWidths = [...movedWidths, ww]
+      line = { words: startWords, widths: startWidths, width: measure(startWords, startWidths) }
     } else {
       line.words.push(word)
       line.widths.push(ww)
@@ -77,18 +133,20 @@ export type TextLayout = {
   headLines: Line[]
   subLines: Line[]
   gap: number
+  /** false when the block only "fits" because the shrink hit its floor — the copy is too long */
+  fits: boolean
 }
 
 export const HEAD_LH = 1.14
 export const SUB_LH = 1.4
 
-export function setHeadFont(ctx: TextMeasurer, size: number, settings: Settings) {
-  ctx.font = `700 ${size}px ${getFont(settings.fontId).stack}`
+export function setHeadFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
+  ctx.font = `700 ${size}px ${fontStackFor(settings.fontId, lang)}`
   ctx.letterSpacing = `${size * settings.headlineTracking}px`
 }
 
-export function setSubFont(ctx: TextMeasurer, size: number, settings: Settings) {
-  ctx.font = `400 ${size}px ${getFont(settings.fontId).stack}`
+export function setSubFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
+  ctx.font = `400 ${size}px ${fontStackFor(settings.fontId, lang)}`
   ctx.letterSpacing = '0px'
 }
 
@@ -112,16 +170,17 @@ export function layoutText(
 
   // Shrink until it fits: overflowing into the device is worse than smaller type.
   for (let i = 0; i < 30; i++) {
-    setHeadFont(ctx, headSize, settings)
-    const headLines = wrap(ctx, headWords, maxWidth)
-    setSubFont(ctx, subSize, settings)
-    const subLines = wrap(ctx, subWords, maxWidth)
-    const candidate = { headSize, subSize, headLines, subLines, gap }
-    if (blockHeight(candidate) <= maxHeight || headSize < h * 0.014) return candidate
+    setHeadFont(ctx, headSize, settings, screen.lang)
+    const headLines = wrap(ctx, headWords, maxWidth, screen.lang)
+    setSubFont(ctx, subSize, settings, screen.lang)
+    const subLines = wrap(ctx, subWords, maxWidth, screen.lang)
+    const candidate = { headSize, subSize, headLines, subLines, gap, fits: true }
+    if (blockHeight(candidate) <= maxHeight) return candidate
+    if (headSize < h * 0.014) return { ...candidate, fits: false }
     headSize *= 0.94
     subSize *= 0.94
   }
-  return { headSize, subSize, headLines: [], subLines: [], gap }
+  return { headSize, subSize, headLines: [], subLines: [], gap, fits: false }
 }
 
 /** Draw one line of words at `y` (top of the em box), with marker bands under starred spans. */
@@ -132,13 +191,21 @@ function drawLine(
   y: number,
   size: number,
   highlights: string[],
+  rtl: boolean,
 ) {
   const space = ctx.measureText(' ').width
   const xs: number[] = []
-  let x = x0
-  line.words.forEach((_, i) => {
-    xs.push(x)
-    x += line.widths[i] + space
+  let x = rtl ? x0 + line.width : x0
+  line.words.forEach((word, i) => {
+    const gap = i === 0 || word.glue ? 0 : space
+    if (rtl) {
+      x -= gap + line.widths[i]
+      xs.push(x)
+    } else {
+      x += gap
+      xs.push(x)
+      x += line.widths[i]
+    }
   })
 
   // Marker bands first, one continuous band per run of same-span words, so a highlighted
@@ -151,8 +218,8 @@ function drawLine(
       let j = i
       while (j + 1 < line.words.length && line.words[j + 1].span === span) j++
       if (span >= 0) {
-        const left = xs[i] - pad
-        const right = xs[j] + line.widths[j] + pad
+        const left = Math.min(xs[i], xs[j]) - pad
+        const right = Math.max(xs[i] + line.widths[i], xs[j] + line.widths[j]) + pad
         ctx.save()
         ctx.fillStyle = highlights[span % highlights.length]
         ctx.beginPath()
@@ -167,6 +234,31 @@ function drawLine(
   line.words.forEach((word, i) => ctx.fillText(word.text, xs[i], y))
 }
 
+/** The text box: the tile minus padding by default, or wherever the layout puts it. */
+const textBox = (layout: Layout, W: number, tileW: number) => ({
+  left: layout.text!.left !== undefined ? W * layout.text!.left : tileW * layout.padX,
+  maxWidth: layout.text!.width !== undefined ? W * layout.text!.width : tileW * (1 - layout.padX * 2),
+})
+
+/**
+ * The measurement `drawTextBlock` does, without drawing. The CLI runs it up front so copy
+ * that only "fits" by shrinking past the floor aborts the render instead of shipping tiny.
+ * Returns null for a composition that carries no copy.
+ */
+export function measureTextBlock(
+  ctx: TextMeasurer,
+  W: number,
+  tileW: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+): TextLayout | null {
+  if (!layout.text || (!screen.headline && !screen.subhead)) return null
+  const { maxWidth } = textBox(layout, W, tileW)
+  return layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h)
+}
+
 export function drawTextBlock(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -178,34 +270,41 @@ export function drawTextBlock(
 ) {
   if (!layout.text || (!screen.headline && !screen.subhead)) return
 
-  // The text box: the tile minus padding by default, or wherever the layout puts it.
-  const boxLeft = layout.text.left !== undefined ? W * layout.text.left : tileW * layout.padX
-  const maxWidth = layout.text.width !== undefined ? W * layout.text.width : tileW * (1 - layout.padX * 2)
+  const { left: boxLeft, maxWidth } = textBox(layout, W, tileW)
   const bandTop = layout.text.top * h
   const bandHeight = layout.text.height * h
   const block = layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h)
   const { headSize, subSize, headLines, subLines, gap } = block
 
   let y = bandTop + (bandHeight - blockHeight(block)) / 2
+  // In an RTL script the "left" alignment is the right edge of the box.
+  const rtl = isRtl(screen.lang)
   const startX = (lineWidth: number) =>
-    settings.textAlign === 'left' ? boxLeft : boxLeft + (maxWidth - lineWidth) / 2
+    settings.textAlign === 'left'
+      ? rtl
+        ? boxLeft + maxWidth - lineWidth
+        : boxLeft
+      : boxLeft + (maxWidth - lineWidth) / 2
 
   ctx.save()
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
+  // The words are placed by hand; `direction` is what makes the engine shape and order the
+  // glyphs inside one word right to left.
+  ctx.direction = rtl ? 'rtl' : 'ltr'
   ctx.fillStyle = settings.textColor
 
-  setHeadFont(ctx, headSize, settings)
+  setHeadFont(ctx, headSize, settings, screen.lang)
   for (const line of headLines) {
-    drawLine(ctx, line, startX(line.width), y, headSize, settings.highlights)
+    drawLine(ctx, line, startX(line.width), y, headSize, settings.highlights, rtl)
     y += headSize * HEAD_LH
   }
   if (subLines.length) {
     y += gap
     ctx.globalAlpha = 0.72
-    setSubFont(ctx, subSize, settings)
+    setSubFont(ctx, subSize, settings, screen.lang)
     for (const line of subLines) {
-      drawLine(ctx, line, startX(line.width), y, subSize, [])
+      drawLine(ctx, line, startX(line.width), y, subSize, [], rtl)
       y += subSize * SUB_LH
     }
   }

@@ -1,5 +1,42 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'Noto Sans Arabic';
+  src: url('../fonts/NotoSansArabic.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans Thai';
+  src: url('../fonts/NotoSansThai.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('../fonts/NotoSansSC.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans TC';
+  src: url('../fonts/NotoSansTC.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans KR';
+  src: url('../fonts/NotoSansKR.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans JP';
+  src: url('../fonts/NotoSansJP.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+
 :root {
   --shell: #f6f6f7;
   --panel: #ffffff;
@@ -308,6 +345,36 @@ input[type='color'] {
   font-size: 10px;
   color: var(--muted);
 }
+/* Google Play chrome: the same mock page, the other store's furniture. */
+.store-icon[data-play] {
+  border-radius: 14px;
+}
+.store-install {
+  display: inline-block;
+  border-radius: 8px;
+  background: #01875f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 26px;
+}
+.store-playstats {
+  margin: 22px 0 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* The feedback note on a screen card and under its review tile. */
+.note {
+  resize: vertical;
+  min-height: 44px;
+  line-height: 1.35;
+}
+
 .store-section {
   margin: 18px 0 10px;
   font-size: 16px;
@@ -364,13 +431,8 @@ input[type='color'] {
   background: var(--panel);
   border-right: 1px solid var(--line);
 }
-/* The rail head is the window drag strip in the packaged app and clears the traffic lights. */
 .rail-head {
   padding: 18px 16px 14px;
-}
-body.is-desktop .rail-head {
-  padding-top: 44px;
-  -webkit-app-region: drag;
 }
 
 .rail-step {
@@ -519,6 +581,10 @@ body.is-desktop .rail-head {
   border-radius: 14px;
   border: 1px solid var(--line);
   background: var(--panel);
+}
+.copy-row span[data-required='true']::after {
+  content: ' *';
+  color: var(--accent);
 }
 .count {
   min-width: 28px;

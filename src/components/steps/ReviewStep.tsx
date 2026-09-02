@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { readiness } from '../../lib/progress'
 import { useStore } from '../../store'
 import { StorePreview } from '../StorePreview'
@@ -5,13 +6,105 @@ import { StepFrame } from './StepFrame'
 
 type Check = { ok: boolean; text: string; fix?: { label: string; step: 'shots' | 'copy' | 'target' } }
 
-/** A readiness checklist against the store's rules, then the set on a mock product page. */
+/** In project mode the approval stamp over the target toggle, otherwise the readiness checklist
+ *  against the store's rules; both end on the set as a mock product page. */
 export function ReviewStep() {
   const screens = useStore((s) => s.screens)
   const settings = useStore((s) => s.settings)
   const format = useStore((s) => s.format)
   const setFormat = useStore((s) => s.setFormat)
   const setStep = useStore((s) => s.setStep)
+  const project = useStore((s) => s.project)
+  const approvalOk = useStore((s) => s.approvalOk)
+  const staleApproval = useStore((s) => s.staleApproval)
+  const lastError = useStore((s) => s.lastError)
+  const setLastError = useStore((s) => s.setLastError)
+  const approve = useStore((s) => s.approve)
+  const targetId = useStore((s) => s.targetId)
+  const setTarget = useStore((s) => s.setTarget)
+  const [by, setBy] = useState(() => localStorage.getItem('forge-approver') ?? '')
+
+  if (project) {
+    const stamp = project.set.approval
+    return (
+      <StepFrame
+        title="Review all languages"
+        lead="Every language for the selected target, on the store page shoppers see. Approve when the whole set is right; the CLI refuses to render for upload without a matching stamp."
+        aside={
+          <div
+            className="flex gap-1 rounded-lg p-1"
+            style={{ background: 'var(--panel)', border: '1px solid var(--line)' }}
+          >
+            {project.set.targets.map((t) => (
+              <button
+                key={t.id}
+                className="seg"
+                data-active={targetId === t.id}
+                onClick={() => setTarget(t.id)}
+              >
+                {t.id}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        <div
+          className="flex flex-col gap-2 rounded-xl border p-3"
+          style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className="check-mark"
+              data-ok={approvalOk === true}
+              style={{
+                background: approvalOk ? 'var(--ok-bg)' : 'var(--warn-bg)',
+                color: approvalOk ? 'var(--ok)' : 'var(--warn)',
+              }}
+              aria-hidden
+            >
+              {approvalOk ? '✓' : '!'}
+            </span>
+            <span className="flex-1 text-[13px]">
+              {approvalOk
+                ? `Approved by ${stamp?.by} on ${stamp?.at}`
+                : staleApproval
+                  ? `Changed since the approval by ${staleApproval.by} on ${staleApproval.at}`
+                  : 'Not approved yet'}
+            </span>
+            <input
+              className="field"
+              // `.field` sets width:100% after Tailwind's layer, so a `w-40` class would lose to it.
+              style={{ width: '10rem', flex: 'none' }}
+              value={by}
+              placeholder="Your name"
+              onChange={(e) => {
+                setBy(e.target.value)
+                localStorage.setItem('forge-approver', e.target.value)
+              }}
+            />
+            <button
+              className="btn-primary"
+              disabled={!by.trim() || approvalOk === true}
+              onClick={() => {
+                approve(by.trim()).catch((err: unknown) =>
+                  setLastError(err instanceof Error ? err.message : String(err)),
+                )
+              }}
+            >
+              Approve
+            </button>
+          </div>
+          {lastError && (
+            <p className="text-[12px]" style={{ color: '#dc2626' }}>
+              {lastError}
+            </p>
+          )}
+        </div>
+        <StorePreview />
+      </StepFrame>
+    )
+  }
+
   const r = readiness(screens, settings)
 
   const checks: Check[] = [

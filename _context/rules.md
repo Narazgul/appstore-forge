@@ -45,28 +45,18 @@ a real bug.
 
 ## Packaging
 
-9. **Runtime deps stay empty.** Everything the renderer imports is bundled into
-   `dist/` by Vite, so app dependencies live in `devDependencies`. This keeps
-   electron-builder from trying to pack a pnpm symlink tree, which is where these
-   builds usually break.
-
-10. **Quit the app before repackaging.** `electron-builder` deletes
-    `release/mac-arm64/` mid-build. Killing a running instance out from under
-    itself produces silent exits with no crash report.
-
-11. **Assets must be relative.** `base: './'` in the Vite config — packaged
-    builds load over `file://`, which has no site root.
+9. **Runtime deps stay in `dependencies`.** Consumers install this package
+   straight from GitHub, so everything the editor and the CLI import at runtime
+   must be a real dependency — a `devDependencies` entry is not installed for
+   them and the tool breaks on someone else's machine.
 
 ## Verification
 
-12. **Screenshots decide visual correctness, not `describe`.** The preview is a
+10. **Screenshots decide visual correctness, not `describe`.** The preview is a
     canvas; the accessibility tree cannot see a wrong bezel or a clipped
     headline.
 
-13. **Pixel claims need `window.__renderExport`.** "It looks right in the
+11. **Pixel claims need `window.__renderExport`.** "It looks right in the
     preview" is not evidence that it reaches the export. Hash the returned bytes
     and compare — and check that untouched screens stay byte-identical, which is
     what catches cross-screen leaks.
-
-14. **Never repackage while an agent is driving the app.** It will report crashes
-    that are actually you deleting its target.

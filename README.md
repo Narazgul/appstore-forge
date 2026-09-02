@@ -2,12 +2,11 @@
 
 <p align="center">
   Turn raw app screenshots into store-ready App Store and Google Play assets.<br>
-  A local Mac app. No account, no upload, no server — the images never leave your machine.
+  Runs locally in your browser. No account, no upload, no server — the images never leave your machine.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey.svg">
 </p>
 
 <p align="center">
@@ -17,7 +16,7 @@
 ---
 
 Drop your PNGs in, pick a background and a device frame, write a headline per
-screen, save the folder. Six steps, and the app tells you at every point what is
+screen, download the set. Six steps, and the app tells you at every point what is
 still missing before the set can be uploaded.
 
 - **Frames without artwork.** Devices are drawn with canvas primitives from a
@@ -33,40 +32,34 @@ still missing before the set can be uploaded.
 
 ## Build and run it
 
-There is no download. This is a build-it-yourself tool — you need Node and
-[pnpm](https://pnpm.io/installation), and three commands:
+You need Node and [pnpm](https://pnpm.io/installation):
 
 ```bash
 git clone https://github.com/hebertporto/appstore-forge.git
 cd appstore-forge
 pnpm install
-pnpm install:app     # build, install to /Applications, launch
+pnpm dev             # browser version on :4324
 ```
 
-That last command builds the app, drops it in `/Applications`, and opens it.
-From then on it is a normal Mac app — no terminal, no dev server, and it keeps
-working after you close the shell you built it from.
+Installed as a package, the same editor opens a set that lives in your repo as
+files — see [Project mode](#project-mode):
 
-Just want to look at it first? `pnpm dev` runs it in a browser on `:4324` with
-no build step. Everything works there except the native folder picker — export
-falls back to a zip download.
+```bash
+forge dev --project ./aso
+```
 
-| Command             | What it does                                                         |
-| ------------------- | -------------------------------------------------------------------- |
-| `pnpm install:app`  | Build, install to `/Applications`, launch                            |
-| `pnpm dist`         | Installable `.dmg` in `release/`, if you want one                    |
-| `pnpm app`          | Unpacked `.app` in `release/mac-arm64/` — faster, for trying changes |
-| `pnpm electron:dev` | App window with hot reload, for development                          |
-| `pnpm dev`          | Plain browser version on `:4324`                                     |
+| Command          | What it does                       |
+| ---------------- | ---------------------------------- |
+| `pnpm dev`       | The editor in a browser on `:4324` |
+| `pnpm build`     | Static build in `dist/`            |
+| `pnpm typecheck` | TypeScript, no emit                |
+| `pnpm lint`      | ESLint                             |
+| `pnpm test`      | Vitest — pure logic only           |
 
 ### What you should expect
 
-- **macOS on Apple Silicon.** That is the only packaging target today. The web
-  build (`pnpm dev`) runs anywhere.
-- **The build is unsigned**, deliberately — there is no Apple Developer account
-  behind it. Because _you_ built it locally macOS does not quarantine it, so it
-  opens normally. Copy that `.app` to another Mac and Gatekeeper will block it
-  until you right-click → **Open** once. That is expected, not a broken build.
+- **It runs anywhere Node runs.** There is no packaged app and no platform
+  restriction; the editor is a normal web build served from your own machine.
 - **No releases, no binaries.** Nothing to download and nothing to trust — the
   source is the distribution.
 
@@ -81,8 +74,6 @@ export run the same code.**
 the two, so what is on screen is exactly what lands on disk.
 
 ```
-electron/main.cjs      window, native folder picker, file writes, Finder reveal
-electron/preload.cjs   context-isolated bridge exposed as window.desktop
 src/
   render/scene.ts      the renderer — background, backdrop, device placement
   render/text.ts       markup, line breaking, auto-shrink, marker bands
@@ -90,8 +81,9 @@ src/
   presets/             devices, backgrounds, fonts, layouts, rhythms, templates, sizes
   components/steps/    one file per step of the guided flow
   components/tune/     one file per section of the fine-tune panel
-  lib/export.ts        renders every screen full-size, then saves or zips
+  lib/export.ts        renders every screen full-size, then zips the set
   store.ts             zustand: screens, decoded images, settings
+fonts/                 the bundled faces, one per writing system
 samples/               four fake app screenshots for trying it out
 _context/              domain model, invariants, and workflows — read before changing code
 ```
@@ -104,10 +96,8 @@ up the second colour.
 
 ## Export
 
-Export opens a native folder picker, writes the PNGs into
-`<chosen>/store-screenshots-<size-id>/`, and reveals the folder in Finder. The
-same build running in a plain browser has no filesystem, so it falls back to a
-zip download.
+Export renders every screen at full store resolution and downloads them as
+`store-screenshots-<size-id>.zip`.
 
 Only the largest device per family is required — both stores downscale for the rest.
 
@@ -123,20 +113,122 @@ Only the largest device per family is required — both stores downscale for the
 > and canvas always writes RGBA for PNG even when every pixel is opaque. If an
 > upload is refused, flip the format toggle to JPEG and re-export.
 
+## Project mode
+
+The browser version keeps the set in the tab. **Project mode** keeps it in files
+next to your app repo, so the set is reviewable, diffable and re-renderable
+without opening anything. The GUI and the CLI read and write the same files —
+the editor is a view on them, not a separate copy.
+
+A project is a folder (`aso/` by convention) inside your repo:
+
+```
+myapp/
+  aso/
+    default.json          the set: targets, locales, slots, shared settings, approval
+    copy/en.json          headline + subhead per slot, one file per language
+    copy/de.json
+  screenshots/en/home.png the raw captures
+  store/ios/en-US/1.png   what forge render writes
+```
+
+`aso/<setId>.json` is one **set**. `default` is the set name you get for free; a
+second set lives in `aso/promo.json` with its copy under `copy/promo/<locale>.json`.
+
+```json
+{
+  "version": 1,
+  "id": "default",
+  "targets": [
+    {
+      "id": "ios",
+      "sizeId": "iphone-6-9",
+      "deviceId": "iphone-17-pro",
+      "out": "store/ios/{storeLocale}/{n}.png"
+    },
+    {
+      "id": "play",
+      "sizeId": "android-phone",
+      "deviceId": "pixel-9-pro",
+      "out": "store/play/{storeLocale}/{n}.png"
+    }
+  ],
+  "locales": [{ "id": "en", "store": { "ios": "en-US", "play": "en-US" } }],
+  "sources": "screenshots/{locale}/{screen}.png",
+  "settings": { "background": { "kind": "solid", "color": "#111114" }, "layout": "hero" },
+  "slots": [{ "id": "budget", "kind": "screen", "screen": "home", "overrides": {} }],
+  "approval": null
+}
+```
+
+`sources` and every target's `out` are relative to the **parent** of the project
+folder, so they read as normal repo paths. A **slot** is one output image: it
+names a source screen and carries its own overrides, and the text for it lives
+per language in `copy/<locale>.json` keyed by slot id.
+
+The locale id is also the renderer's language: it picks the script font and, for
+an RTL language, sets the canvas `direction` to `rtl` so a run is shaped and
+ordered right to left inside each word.
+
+### The four commands
+
+```bash
+forge check --project ./aso                       # is the set complete?
+forge render --project ./aso                      # write every target × locale
+forge approve --project ./aso --by hofi           # stamp the set as reviewed
+forge dev --project ./aso                         # the editor on this project
+```
+
+| Option               | Meaning                                                  |
+| -------------------- | -------------------------------------------------------- |
+| `--project <dir>`    | The project folder. Required.                            |
+| `--set <id>`         | Which set file. Default `default`.                       |
+| `--target <id>`      | Render only this target. Repeatable.                     |
+| `--locale <id>`      | Render only this language. Repeatable.                   |
+| `--require-approval` | `check` and `render` insist on a current approval stamp. |
+| `--by <name>`        | Who approves. Required for `approve`.                    |
+| `--port <n>`         | Dev server port. Default `4324`.                         |
+
+`render` clears the PNGs already in each output folder before it writes, so a set
+that lost a slot does not leave an orphan behind. `{n}` restarts at 1 for every
+target and locale, so two targets may share a folder only if the file name keeps
+them apart.
+
+```bash
+forge render --project ./aso --target play --locale de --locale en --require-approval
+```
+
+**Approval** is a hash over the set file, all copy files and the bytes of every
+source screenshot. Change a headline, swap a screenshot or move a slot and the
+stamp goes stale — `--require-approval` then refuses to render. That is the gate
+between "someone looked at this" and "this went to the store".
+
+| Exit code | Meaning                                                                                                                          |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `0`       | Fine.                                                                                                                            |
+| `1`       | Usage mistake or an unexpected failure.                                                                                          |
+| `2`       | The project does not validate — missing headline, missing source, or a headline that only fits by shrinking past the size floor. |
+| `3`       | Approval required but missing or stale.                                                                                          |
+
+### The PNGs are RGB
+
+`forge render` writes true RGB PNGs with no alpha channel, so they go straight
+into App Store Connect. The browser export cannot do that — canvas always hands
+back RGBA — which is why that path offers a JPEG toggle instead. In project mode
+the JPEG detour is unnecessary.
+
 ## Automation
 
-The zustand store is exposed as `window.__store`, in packaged builds too, so an
-agent driving the app over CDP (Argent, Playwright) or the devtools console can
-script it:
+The zustand store is exposed as `window.__store`, so an agent driving the app
+over CDP (Argent, Playwright) or the devtools console can script it:
 
 ```js
 await window.__store.getState().addFiles([file])
 window.__store.getState().setSettings({ layout: 'bleed', sizeId: 'android-phone' })
 ```
 
-`window.__renderExport` runs the real export renderer without the native dialog,
-and `window.desktop` exposes the Electron bridge (`chooseFolder`, `writeFiles`,
-`revealPath`). This is a local tool with no untrusted content — scripting it is a
+`window.__renderExport` runs the real export renderer without triggering a
+download. This is a local tool with no untrusted content — scripting it is a
 feature, not an exposure.
 
 ## Contributing
@@ -150,17 +242,24 @@ preferences, breaking them produces wrong exported pixels.
 
 ```bash
 pnpm install
-pnpm electron:dev
+pnpm dev
 pnpm typecheck && pnpm lint && pnpm test
 ```
 
 ## Not built yet
 
 - Pulling screenshots straight off a booted simulator or emulator
-- Exporting every required size in one pass
-- Persisting a project between launches
-- Windows and Linux builds
-- Auto-update (rebuild to update)
+- Exporting every required size in one pass from the browser version
+- `artwork` slots — the kind exists in the project type, but validation rejects
+  it; every slot is a framed screenshot for now
+- A Firestore adapter. `ProjectStore` is the seam a remote backend would plug
+  into; the file adapter behind `forge dev` is the only implementation
+- Two editors on one project. There is no locking, so the last write wins
+- A placement-aware text floor. The lift that keeps a device out of the copy is
+  measured from the base frame, not from each placement, so a duo or trio
+  arrangement whose flanking frames sit higher or larger can still reach up into
+  the headline
+- A bundled Hebrew face — `he` is detected as RTL but renders in the system font
 
 ## License
 

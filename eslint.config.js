@@ -25,7 +25,18 @@ export default tseslint.config(
     },
   },
   {
-    files: ['electron/**/*.cjs', '*.config.{js,ts}'],
+    files: ['cli/**/*.ts', 'vite-plugin-project.ts'],
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: globals.node,
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    files: ['*.config.{js,ts}'],
     extends: [js.configs.recommended],
     languageOptions: { globals: { ...globals.node, ...globals.commonjs } },
   },

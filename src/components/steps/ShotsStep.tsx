@@ -12,13 +12,16 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
   const settings = useStore((s) => s.settings)
   const template = useStore((s) => getTemplateSpec(s.templateId))
   const selectScreen = useStore((s) => s.selectScreen)
+  const project = useStore((s) => s.project)
   const r = readiness(screens, settings)
   const slots = slotCount(template)
   const size = getSize(settings.sizeId)
   const previewHeight = Math.round((PREVIEW_WIDTH * size.h) / size.w)
 
-  const lead =
-    slots > 0
+  // In project mode the sources come from the repo (Roborazzi), so there is nothing to drop.
+  const lead = project
+    ? 'The screenshots come from the project sources. Rerun the capture to change them; here you check how they sit in the frame.'
+    : slots > 0
       ? `${template.label} is a ${slots}-screen template. Fill each slot in the order shoppers will see them; the first two do most of the selling.`
       : 'Add as many screenshots as you like, in the order shoppers will see them. The first two do most of the selling.'
 
@@ -31,19 +34,21 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
 
   return (
     <StepFrame title="Add screenshots" lead={lead}>
-      <button
-        onClick={onBrowse}
-        className="flex w-full flex-col items-center gap-1 rounded-2xl border-2 border-dashed px-8 py-6"
-        style={{
-          borderColor: dragging || r.missingShots > 0 ? 'var(--accent)' : 'var(--line)',
-          background: dragging ? 'rgba(30,111,245,0.06)' : 'transparent',
-        }}
-      >
-        <span className="text-[14px] font-semibold">{dropLabel}</span>
-        <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
-          PNGs straight from the simulator or a device — or click to browse
-        </span>
-      </button>
+      {!project && (
+        <button
+          onClick={onBrowse}
+          className="flex w-full flex-col items-center gap-1 rounded-2xl border-2 border-dashed px-8 py-6"
+          style={{
+            borderColor: dragging || r.missingShots > 0 ? 'var(--accent)' : 'var(--line)',
+            background: dragging ? 'rgba(30,111,245,0.06)' : 'transparent',
+          }}
+        >
+          <span className="text-[14px] font-semibold">{dropLabel}</span>
+          <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
+            PNGs straight from the simulator or a device — or click to browse
+          </span>
+        </button>
+      )}
 
       {r.total > 0 && (
         <div className="flex flex-wrap gap-5" onClick={() => selectScreen(null)}>

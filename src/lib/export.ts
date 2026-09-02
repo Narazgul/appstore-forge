@@ -4,20 +4,7 @@ import { stripMarkup } from '../render/text'
 import { getSize } from '../presets/sizes'
 import type { Screen, Settings } from '../types'
 
-export type DesktopBridge = {
-  platform: string
-  chooseFolder: () => Promise<string | null>
-  writeFiles: (dir: string, folder: string, files: { name: string; data: Uint8Array }[]) => Promise<string>
-  revealPath: (target: string) => Promise<void>
-}
-
-export const desktop = (): DesktopBridge | null =>
-  (window as unknown as { desktop?: DesktopBridge }).desktop ?? null
-
-export type ExportResult =
-  | { kind: 'saved'; dir: string; count: number }
-  | { kind: 'downloaded'; count: number }
-  | { kind: 'cancelled' }
+export type ExportResult = { kind: 'downloaded'; count: number }
 
 const slug = (text: string, fallback: string) =>
   text
@@ -85,27 +72,12 @@ export async function renderAll(
   return { files, folder: `store-screenshots-${size.id}` }
 }
 
-/**
- * In the desktop app this writes real files into a folder the user picks and opens it
- * in Finder. In a plain browser there is no filesystem, so it falls back to a zip download.
- */
 export async function exportAll(
   screens: Screen[],
   settings: Settings,
   images: Record<string, HTMLImageElement>,
   format: 'png' | 'jpeg',
 ): Promise<ExportResult> {
-  const bridge = desktop()
-
-  if (bridge) {
-    const dir = await bridge.chooseFolder()
-    if (!dir) return { kind: 'cancelled' }
-    const { files, folder } = await renderAll(screens, settings, images, format)
-    const written = await bridge.writeFiles(dir, folder, files)
-    await bridge.revealPath(written)
-    return { kind: 'saved', dir: written, count: files.length }
-  }
-
   const { files, folder } = await renderAll(screens, settings, images, format)
   const entries: Record<string, Uint8Array> = {}
   for (const file of files) entries[`${folder}/${file.name}`] = file.data
@@ -121,8 +93,8 @@ export async function exportAll(
 }
 
 // Automation hook, mirroring `window.__store`: renders the real export at full store
-// resolution without going through the native folder dialog, so the export path itself
-// can be exercised by an agent or from the devtools console.
+// resolution without triggering a download, so the export path itself can be exercised
+// by an agent or from the devtools console.
 if (typeof window !== 'undefined') {
   ;(window as unknown as { __renderExport: typeof renderAll }).__renderExport = renderAll
 }

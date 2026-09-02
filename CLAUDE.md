@@ -1,76 +1,68 @@
 # AppStore Forge
 
-A local macOS app (Electron + React + canvas) that turns raw app screenshots into
-store-ready App Store and Google Play assets.
+A local tool (React + canvas, served by Vite) that turns raw app screenshots into
+store-ready App Store and Google Play assets. It ships as an npm package
+installed straight from GitHub, not as a packaged desktop app.
+
+It runs in two modes. **Freeform**: everything in the tab, export as a zip.
+**Project mode**: the set lives as JSON files in the user's repo (`aso/<setId>.json`
+plus `aso/copy/<locale>.json`), edited by the same GUI and rendered headlessly by
+the `forge` CLI. Both modes go through one renderer — see `_context/domain.md`,
+"Project mode is a second door, not a second app".
 
 Read `_context/` before changing anything:
 
 - `_context/domain.md` — the vocabulary and the data model. Read first.
 - `_context/rules.md` — the invariants. These are not style preferences; breaking
   them produces wrong exported pixels.
-- `_context/workflows.md` — how to build, install, version, and verify.
+- `_context/workflows.md` — how to build, run, and verify.
 
-## Build and install
-
-The app is a **local personal build**. It is unsigned and not distributed, so
-there is no notarization or auto-update step.
+## Run it
 
 ```bash
 pnpm install          # once
-pnpm install:app      # build → install to /Applications → launch
+pnpm dev              # the editor in a browser on :4324
 ```
 
-`pnpm install:app` is the command you want almost every time. It runs
-`pnpm dist`, removes the old `/Applications/AppStore Forge.app`, copies the new
-one in, and opens it.
+| Command          | Use it when                                           |
+| ---------------- | ----------------------------------------------------- |
+| `pnpm dev`       | Iterating on the UI, with hot reload                  |
+| `pnpm build`     | Static build in `dist/`                               |
+| `pnpm typecheck` | Before any build                                      |
+| `pnpm lint`      | ESLint                                                |
+| `pnpm test`      | Vitest — pure logic only, see `_context/workflows.md` |
+| `pnpm format`    | Prettier over the repo                                |
 
-| Command             | Use it when                                                           |
-| ------------------- | --------------------------------------------------------------------- |
-| `pnpm install:app`  | You changed something and want it in `/Applications` now              |
-| `pnpm dist`         | You only want the `.dmg` in `release/`                                |
-| `pnpm app`          | Unpacked `.app` in `release/mac-arm64/`, skips the DMG step — fastest |
-| `pnpm electron:dev` | Iterating on the UI, with hot reload                                  |
-| `pnpm dev`          | Plain browser version on :4324                                        |
-| `pnpm typecheck`    | Before any build                                                      |
-| `pnpm lint`         | ESLint                                                                |
-| `pnpm test`         | Vitest — pure logic only, see `_context/workflows.md`                 |
-| `pnpm format`       | Prettier over the repo                                                |
+The CLI is `bin/forge.mjs` → `cli/index.ts`:
 
-### Quit the app before repackaging
+| Command                                | Use it when                                     |
+| -------------------------------------- | ----------------------------------------------- |
+| `forge check --project <dir>`          | Asking whether a set is complete                |
+| `forge render --project <dir>`         | Writing the PNGs — RGB, no alpha                |
+| `forge approve --project <dir> --by X` | Stamping a set as reviewed                      |
+| `forge dev --project <dir>`            | The editor on a project instead of an empty tab |
 
-`electron-builder` deletes `release/mac-arm64/` while building. If the app is
-running from there, it gets pulled out from under the running process and dies
-with no crash report. Always:
+Exit codes are the contract: `0` fine, `1` usage, `2` the project does not
+validate, `3` approval required but missing or stale. README's "Project mode"
+section has the full option list; the per-file workflows are "Adding a locale"
+and "Adding a target" in `_context/workflows.md`.
 
-```bash
-pkill -f "AppStore Forge.app"; sleep 1; pnpm install:app
-```
+## Dependencies
 
-This also applies to automated UI verification — never repackage while an agent
-is driving the app, or you will get phantom crash reports.
+Consumers install this package from GitHub, so everything imported at runtime
+belongs in `dependencies`. `devDependencies` is only for what builds, lints, and
+tests the repo itself.
 
 ## Versioning
 
-`package.json` `version` is the single source of truth. It reaches three places
-automatically:
-
-- the macOS bundle (`CFBundleShortVersionString`)
-- the DMG filename (`AppStore Forge-<version>-arm64.dmg`)
-- the sidebar subtitle, via `__APP_VERSION__` injected by `define` in `vite.config.ts`
+`package.json` `version` is the single source of truth. It reaches the sidebar
+subtitle via `__APP_VERSION__`, injected by `define` in `vite.config.ts`.
 
 ```bash
 pnpm version patch --no-git-tag-version   # or minor / major
-pnpm install:app
 ```
 
 Never hardcode a version string anywhere else.
-
-## Gatekeeper
-
-The build is unsigned (`identity: null`). Because it is built locally, macOS does
-not quarantine it and it opens normally. Copied to another Mac it needs a
-right-click → Open once. Do not add signing config unless the app is actually
-going to be distributed.
 
 ## Verifying a change
 

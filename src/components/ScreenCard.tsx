@@ -24,6 +24,10 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
   const moveScreen = useStore((s) => s.moveScreen)
   const selectedId = useStore((s) => s.selectedId)
   const selectScreen = useStore((s) => s.selectScreen)
+  // A project takes its screenshots from the repo; replacing or clearing one here does nothing.
+  const project = useStore((s) => s.project)
+  const note = useStore((s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.note ?? '')
+  const setSlotNote = useStore((s) => s.setSlotNote)
   const fileRef = useRef<HTMLInputElement>(null)
   const span = useStore((s) => sceneSpan(screen, s.settings))
 
@@ -87,6 +91,15 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
             placeholder="Subtitle (optional)"
             onChange={(e) => updateScreen(screen.id, { subhead: e.target.value })}
           />
+          {project && (
+            <textarea
+              className="field note"
+              rows={2}
+              value={note}
+              placeholder="Feedback for the agent (what should change on this screen?)"
+              onChange={(e) => setSlotNote(screen.id, e.target.value)}
+            />
+          )}
         </div>
       )}
 
@@ -113,22 +126,23 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
             <button className="seg" disabled={index === total - 1} onClick={() => moveScreen(screen.id, 1)}>
               →
             </button>
-            {!empty && (
+            {!project && !empty && (
               <button className="seg" onClick={() => fileRef.current?.click()}>
                 Replace
               </button>
             )}
-            {isSlot ? (
-              !empty && (
-                <button className="seg" onClick={() => clearImage(screen.id)}>
-                  Clear
+            {!project &&
+              (isSlot ? (
+                !empty && (
+                  <button className="seg" onClick={() => clearImage(screen.id)}>
+                    Clear
+                  </button>
+                )
+              ) : (
+                <button className="seg" onClick={() => removeScreen(screen.id)}>
+                  Remove
                 </button>
-              )
-            ) : (
-              <button className="seg" onClick={() => removeScreen(screen.id)}>
-                Remove
-              </button>
-            )}
+              ))}
           </div>
         )}
       </div>
