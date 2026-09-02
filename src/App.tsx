@@ -32,12 +32,13 @@ export function App() {
     (e: React.DragEvent) => {
       e.preventDefault()
       setDragging(false)
+      if (project) return
       const files = Array.from(e.dataTransfer.files)
       if (!files.length) return
       void addFiles(files)
       if (step !== 'tune') setStep('shots')
     },
-    [addFiles, step, setStep],
+    [addFiles, project, step, setStep],
   )
 
   const onExport = useCallback(async () => {
@@ -62,9 +63,10 @@ export function App() {
         <main
           className="relative flex-1 overflow-auto p-8"
           onDragOver={(e) => {
-            if (project) return
+            // Cancelling dragover is what stops the browser from navigating to the dropped
+            // file; only the drop affordance is off in project mode.
             e.preventDefault()
-            setDragging(true)
+            if (!project) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
