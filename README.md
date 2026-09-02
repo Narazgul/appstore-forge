@@ -41,10 +41,11 @@ pnpm install
 pnpm dev             # browser version on :4324
 ```
 
-Installed as a package, the same editor starts from any project folder:
+Installed as a package, the same editor opens a set that lives in your repo as
+files — see [Project mode](#project-mode):
 
 ```bash
-forge dev --project ./store-screenshots
+forge dev --project ./aso
 ```
 
 | Command          | What it does                       |
@@ -112,6 +113,106 @@ Only the largest device per family is required — both stores downscale for the
 > and canvas always writes RGBA for PNG even when every pixel is opaque. If an
 > upload is refused, flip the format toggle to JPEG and re-export.
 
+## Project mode
+
+The browser version keeps the set in the tab. **Project mode** keeps it in files
+next to your app repo, so the set is reviewable, diffable and re-renderable
+without opening anything. The GUI and the CLI read and write the same files —
+the editor is a view on them, not a separate copy.
+
+A project is a folder (`aso/` by convention) inside your repo:
+
+```
+myapp/
+  aso/
+    default.json          the set: targets, locales, slots, shared settings, approval
+    copy/en.json          headline + subhead per slot, one file per language
+    copy/de.json
+  screenshots/en/home.png the raw captures
+  store/ios/en-US/1.png   what forge render writes
+```
+
+`aso/<setId>.json` is one **set**. `default` is the set name you get for free; a
+second set lives in `aso/promo.json` with its copy under `copy/promo/<locale>.json`.
+
+```json
+{
+  "version": 1,
+  "id": "default",
+  "targets": [
+    {
+      "id": "ios",
+      "sizeId": "iphone-6-9",
+      "deviceId": "iphone-17-pro",
+      "out": "store/ios/{storeLocale}/{n}.png"
+    },
+    {
+      "id": "play",
+      "sizeId": "android-phone",
+      "deviceId": "pixel-9-pro",
+      "out": "store/play/{storeLocale}/{n}.png"
+    }
+  ],
+  "locales": [{ "id": "en", "store": { "ios": "en-US", "play": "en-US" } }],
+  "sources": "screenshots/{locale}/{screen}.png",
+  "settings": { "background": { "kind": "solid", "color": "#111114" }, "layout": "hero" },
+  "slots": [{ "id": "budget", "kind": "screen", "screen": "home", "overrides": {} }],
+  "approval": null
+}
+```
+
+`sources` and every target's `out` are relative to the **parent** of the project
+folder, so they read as normal repo paths. A **slot** is one output image: it
+names a source screen and carries its own overrides, and the text for it lives
+per language in `copy/<locale>.json` keyed by slot id.
+
+### The four commands
+
+```bash
+forge check --project ./aso                       # is the set complete?
+forge render --project ./aso                      # write every target × locale
+forge approve --project ./aso --by hofi           # stamp the set as reviewed
+forge dev --project ./aso                         # the editor on this project
+```
+
+| Option               | Meaning                                                  |
+| -------------------- | -------------------------------------------------------- |
+| `--project <dir>`    | The project folder. Required.                            |
+| `--set <id>`         | Which set file. Default `default`.                       |
+| `--target <id>`      | Render only this target. Repeatable.                     |
+| `--locale <id>`      | Render only this language. Repeatable.                   |
+| `--require-approval` | `check` and `render` insist on a current approval stamp. |
+| `--by <name>`        | Who approves. Required for `approve`.                    |
+| `--port <n>`         | Dev server port. Default `4324`.                         |
+
+`render` clears the PNGs already in each output folder before it writes, so a set
+that lost a slot does not leave an orphan behind. `{n}` restarts at 1 for every
+target and locale, so two targets may share a folder only if the file name keeps
+them apart.
+
+```bash
+forge render --project ./aso --target play --locale de --locale en --require-approval
+```
+
+**Approval** is a hash over the set file, all copy files and the bytes of every
+source screenshot. Change a headline, swap a screenshot or move a slot and the
+stamp goes stale — `--require-approval` then refuses to render. That is the gate
+between "someone looked at this" and "this went to the store".
+
+| Exit code | Meaning                                                           |
+| --------- | ----------------------------------------------------------------- |
+| `0`       | Fine.                                                             |
+| `1`       | Usage mistake or an unexpected failure.                           |
+| `2`       | The project does not validate — missing headline, missing source. |
+| `3`       | Approval required but missing or stale.                           |
+
+### The PNGs are RGB
+
+`forge render` writes true RGB PNGs with no alpha channel, so they go straight
+into App Store Connect. The browser export cannot do that — canvas always hands
+back RGBA — which is why that path offers a JPEG toggle instead. In project mode
+the JPEG detour is unnecessary.
+
 ## Automation
 
 The zustand store is exposed as `window.__store`, so an agent driving the app
@@ -144,7 +245,16 @@ pnpm typecheck && pnpm lint && pnpm test
 ## Not built yet
 
 - Pulling screenshots straight off a booted simulator or emulator
-- Exporting every required size in one pass
+- Exporting every required size in one pass from the browser version
+- `artwork` slots — the kind exists in the project type, but validation rejects
+  it; every slot is a framed screenshot for now
+- A Firestore adapter. `ProjectStore` is the seam a remote backend would plug
+  into; the file adapter behind `forge dev` is the only implementation
+- Two editors on one project. There is no locking, so the last write wins
+- A placement-aware text floor. The lift that keeps a device out of the copy is
+  measured from the base frame, not from each placement, so a duo or trio
+  arrangement whose flanking frames sit higher or larger can still reach up into
+  the headline
 - A bundled Hebrew face — `he` is detected as RTL but renders in the system font
 
 ## License

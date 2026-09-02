@@ -75,6 +75,72 @@ is the gallery thumbnail), so give one sample per variant. Use `*stars*` in them
 if the highlight colours are part of its character. Omit `variants` for a
 freeform template.
 
+## Adding a locale
+
+To a project (`aso/<setId>.json`), not to a preset file.
+
+1. One entry in `locales`, with a store locale for **every** target — the folder
+   name that store wants, which is rarely the same string as the id:
+
+   ```json
+   { "id": "de", "store": { "ios": "de-DE", "play": "de-DE" } }
+   ```
+
+   A target without a store locale is a validation error, not a fallback.
+
+2. The source screenshots. `sources` is a template (`screenshots/{locale}/{screen}.png`)
+   resolved against the **parent** of the project folder, and every slot's
+   `screen` must exist for the new locale.
+
+3. `copy/de.json` — `{ "<slotId>": { "headline": "...", "subhead": "" } }`. A
+   missing or blank headline is an error; a subhead is optional. Copy for a slot
+   that no longer exists is a warning, and the GUI drops it when the slot goes.
+
+4. A non-Latin script needs a face. Inter covers Latin, Cyrillic, Greek and
+   Vietnamese; anything else is a row in `src/presets/scripts.ts` plus the TTF in
+   `fonts/`. The CLI registers every family up front (`cli/fonts.ts`, Skia has no
+   fallback we control); the browser fetches only the families the project's
+   locales need (`preloadScriptFonts`) and **throws** if one is not available —
+   a silent fallback would be a wrong export (rules.md, rule 3). Hebrew is
+   detected as RTL but has no bundled face.
+
+5. `forge check --project ./aso`. Exit 2 lists what is missing, per slot and
+   locale.
+
+Adding a locale invalidates the approval stamp, and it should: nobody has looked
+at the new language yet.
+
+## Adding a target
+
+1. One entry in `targets`:
+
+   ```json
+   {
+     "id": "play",
+     "sizeId": "android-phone",
+     "deviceId": "pixel-9-pro",
+     "out": "store/play/{storeLocale}/{n}.png"
+   }
+   ```
+
+   `sizeId` comes from `presets/sizes.ts`, `deviceId` from `presets/devices.ts`;
+   an unknown id is an error rather than the usual silent first-row fallback.
+
+2. Add the new target id to the `store` map of every locale.
+
+3. Watch the `out` template. A render pass clears the PNGs in each folder it
+   writes to (once per folder, so locales sharing one survive each other), and
+   `{n}` restarts at 1 per target and locale — two targets may share a folder
+   only if the file name keeps them apart. A span-2 layout produces two files and
+   advances `{n}` twice, so `{n}` is a file counter, not a slot index.
+
+4. Nothing else. A target only carries size and device; the look lives in the
+   set's `settings` and the slots' overrides, so all targets stay in step. In the
+   GUI the Target step edits the active target's size and device through
+   `updateTarget` and writes back to the same file.
+
+Render one target while iterating: `forge render --project ./aso --target play`.
+
 ## Adding a step or a readiness rule
 
 The rail, footer and Review step all read `readiness()` in `lib/progress.ts`;
@@ -108,11 +174,21 @@ await window.__store.getState().addFiles([new File([blob], 'x.png', { type: 'ima
 - `lib/settings.test.ts` — override inheritance, `SECTION_KEYS` completeness
 - `lib/progress.test.ts` — readiness and store limits
 - `presets/presets.test.ts` — every preset id resolves, every number is in range
+- `presets/scripts.test.ts` — script detection and RTL per language tag
 - `store.test.ts` — variant cycling, slot counts, template reset
+- `project/*.test.ts` — validation issues, the approval hash, the bridge
+- `cli/*.test.ts` — the commands and their exit codes, project read/write, the
+  headless render (real canvas via `@napi-rs/canvas`, so these do produce pixels),
+  and the dev server's PUT guard
 
-Nothing that needs a real canvas is unit-tested, and that is deliberate: a DOM
-assertion cannot see a wrong bezel, a clipped headline, or a font that silently
-fell back. Those are verified from screenshots (below).
+In the browser, nothing that needs a real canvas is unit-tested, and that is
+deliberate: a DOM assertion cannot see a wrong bezel, a clipped headline, or a
+font that silently fell back. Those are verified from screenshots (below).
+
+The CLI render is the one exception, because `@napi-rs/canvas` gives node a real
+canvas. Even there the assertions stay outside the drawing — file names, counts,
+and the PNG header (size and `colorType: 2`, which is what proves the output
+carries no alpha). Whether the picture is right is still a screenshot question.
 
 The preset test earns its keep because a bad preset id does not throw — every
 lookup falls back to the first row — so a typo ships as a silently wrong render.
@@ -125,7 +201,8 @@ their automation handles).
 
 Drive the dev server (`pnpm dev`, `:4324`) over CDP. Start from a fresh page —
 a stale tab with leftover state will otherwise be reused and you will verify the
-wrong thing.
+wrong thing. For project mode use `forge dev --project <dir>`, which serves the
+same app on the same port with the project middleware attached.
 
 Then:
 
