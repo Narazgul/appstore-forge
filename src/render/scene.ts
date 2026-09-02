@@ -60,7 +60,8 @@ export type DeviceBox = { box: Box; source: PlacementSource; angle: number }
 /**
  * Where every device frame of a composition sits, back to front. `w`/`h` are one store tile.
  * The single source of device geometry: the renderer draws these boxes and the rhythm glyphs
- * sketch them, so a picker can never show a composition the export does not produce.
+ * sketch them. The glyphs pass no `minTop`, so a lifted device (hero, panorama) sits a little
+ * higher in the glyph than in the export.
  */
 export function composeDevices(
   layout: Layout,
