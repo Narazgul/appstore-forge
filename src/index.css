@@ -1,5 +1,36 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'Noto Sans Arabic';
+  src: url('../fonts/NotoSansArabic.ttf');
+  font-weight: 100 900;
+}
+@font-face {
+  font-family: 'Noto Sans Thai';
+  src: url('../fonts/NotoSansThai.ttf');
+  font-weight: 100 900;
+}
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('../fonts/NotoSansSC.ttf');
+  font-weight: 100 900;
+}
+@font-face {
+  font-family: 'Noto Sans TC';
+  src: url('../fonts/NotoSansTC.ttf');
+  font-weight: 100 900;
+}
+@font-face {
+  font-family: 'Noto Sans KR';
+  src: url('../fonts/NotoSansKR.ttf');
+  font-weight: 100 900;
+}
+@font-face {
+  font-family: 'Noto Sans JP';
+  src: url('../fonts/NotoSansJP.ttf');
+  font-weight: 100 900;
+}
+
 :root {
   --shell: #f6f6f7;
   --panel: #ffffff;
