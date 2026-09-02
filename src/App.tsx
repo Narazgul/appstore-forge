@@ -7,7 +7,7 @@ import { ReviewStep } from './components/steps/ReviewStep'
 import { ShotsStep } from './components/steps/ShotsStep'
 import { TargetStep } from './components/steps/TargetStep'
 import { TuneStep } from './components/steps/TuneStep'
-import { desktop, exportAll, type ExportResult } from './lib/export'
+import { exportAll, type ExportResult } from './lib/export'
 import { useStore } from './store'
 
 export function App() {
@@ -23,7 +23,7 @@ export function App() {
   const [dragging, setDragging] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<Exclude<ExportResult, { kind: 'cancelled' }> | null>(null)
+  const [result, setResult] = useState<ExportResult | null>(null)
 
   // Files can land on any step; they always go where screenshots are shown.
   const onDrop = useCallback(
@@ -43,8 +43,7 @@ export function App() {
     setError(null)
     setResult(null)
     try {
-      const outcome = await exportAll(screens, settings, images, format)
-      if (outcome.kind !== 'cancelled') setResult(outcome)
+      setResult(await exportAll(screens, settings, images, format))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -101,14 +100,7 @@ export function App() {
 
           {result && (
             <div className="toast">
-              <span>
-                {result.kind === 'saved'
-                  ? `Saved ${result.count} file${result.count === 1 ? '' : 's'} to ${result.dir.split('/').slice(-1)[0]}`
-                  : `Downloaded ${result.count} file${result.count === 1 ? '' : 's'}`}
-              </span>
-              {result.kind === 'saved' && (
-                <button onClick={() => void desktop()?.revealPath(result.dir)}>Show in Finder</button>
-              )}
+              <span>{`Downloaded ${result.count} file${result.count === 1 ? '' : 's'}`}</span>
               <button onClick={() => setResult(null)}>Dismiss</button>
             </div>
           )}

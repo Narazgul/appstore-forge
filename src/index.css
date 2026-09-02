@@ -364,13 +364,8 @@ input[type='color'] {
   background: var(--panel);
   border-right: 1px solid var(--line);
 }
-/* The rail head is the window drag strip in the packaged app and clears the traffic lights. */
 .rail-head {
   padding: 18px 16px 14px;
-}
-body.is-desktop .rail-head {
-  padding-top: 44px;
-  -webkit-app-region: drag;
 }
 
 .rail-step {

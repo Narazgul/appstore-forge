@@ -59,8 +59,6 @@ the type level — a set must share one canvas size.
 ## Architecture
 
 ```
-electron/main.cjs     window, native folder picker, file writes, Finder reveal
-electron/preload.cjs  context-isolated bridge → window.desktop
 src/render/scene.ts   THE renderer: background → text → device placements
 src/render/frames.ts  device body, bezel, screen clip, Dynamic Island / punch-hole
 src/presets/          backgrounds, devices, fonts, layouts, rhythms, templates, positions, sizes

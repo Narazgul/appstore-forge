@@ -8,10 +8,7 @@ import './index.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
-import { desktop } from './lib/export'
 import { preloadFonts } from './presets/fonts'
-
-if (desktop()) document.body.classList.add('is-desktop')
 
 // Canvas measures text against whatever is actually loaded, and the preview must match the
 // export exactly — so every family is fetched before the first paint.
