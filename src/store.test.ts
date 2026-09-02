@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_SETTINGS,
   projectAfterOverride,
@@ -13,6 +13,7 @@ import {
 } from './store'
 import { screensFor, settingsFor } from './project/bridge'
 import { TEMPLATES, getTemplateSpec } from './presets/templates'
+import type { ProjectStore } from './project/store'
 import type { Project } from './project/types'
 import type { TemplateSpec } from './types'
 
@@ -201,11 +202,21 @@ describe('the store in project mode', () => {
       settings: settingsFor(p, 'appstore'),
       approvalOk: true,
       selectedId: null,
+      staleApproval: null,
+      lastError: null,
     })
   }
 
   afterEach(() => {
-    useStore.setState({ project: null, projectStore: null, screens: [], images: {}, approvalOk: null })
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      screens: [],
+      images: {},
+      approvalOk: null,
+      staleApproval: null,
+      lastError: null,
+    })
   })
 
   it('clearAllOverrides empties every slot and drops the approval', () => {
@@ -259,5 +270,156 @@ describe('the store in project mode', () => {
     const state = useStore.getState()
     expect(state.project).not.toBeNull()
     expect(state.screens.map((s) => s.imageId)).toEqual(['en/shot'])
+  })
+})
+
+/** A canvas-free Image: it resolves through the load events the store now waits for. */
+class FakeImage {
+  onload: (() => void) | null = null
+  onerror: (() => void) | null = null
+  set src(url: string) {
+    queueMicrotask(() => (missingSources.has(url) ? this.onerror?.() : this.onload?.()))
+  }
+}
+
+const missingSources = new Set<string>()
+
+const twoSlotProject = (): Project => {
+  const p = project()
+  p.set.approval = null
+  p.set.locales.push({ id: 'de', store: { appstore: 'de-DE' } })
+  p.set.slots.push({ id: 'b', kind: 'screen', screen: 'two', overrides: {} })
+  return p
+}
+
+const fakeProjectStore = (p: Project, save?: () => Promise<void>): ProjectStore => ({
+  load: () => Promise.resolve(p),
+  save: save ?? (() => Promise.resolve()),
+  sourceUrl: (localeId, screen) => `/sources/${localeId}/${screen}.png`,
+  sourceBytes: (localeId, screen) => Promise.resolve(new TextEncoder().encode(`${localeId}/${screen}`)),
+})
+
+describe('opening a project with a missing source', () => {
+  afterEach(() => {
+    missingSources.clear()
+    vi.unstubAllGlobals()
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      screens: [],
+      images: {},
+      approvalOk: null,
+      staleApproval: null,
+      lastError: null,
+    })
+  })
+
+  const stubBrowser = () => {
+    vi.stubGlobal('Image', FakeImage)
+    vi.stubGlobal('document', {
+      fonts: { load: () => Promise.resolve([]), ready: Promise.resolve(), check: () => true },
+    })
+  }
+
+  it('opens with the images that did load and leaves the failed key absent', async () => {
+    stubBrowser()
+    missingSources.add('/sources/de/two.png')
+    const p = twoSlotProject()
+    await useStore.getState().openProject(fakeProjectStore(p))
+    const state = useStore.getState()
+    expect(state.project).toBe(p)
+    expect(Object.keys(state.images).sort()).toEqual(['de/shot', 'en/shot', 'en/two'])
+    expect(state.images['de/two']).toBeUndefined()
+    expect(state.screens.map((s) => s.imageId)).toEqual(['en/shot', 'en/two'])
+  })
+
+  it('still opens when no source at all can be loaded', async () => {
+    stubBrowser()
+    for (const url of ['/sources/en/shot.png', '/sources/en/two.png']) missingSources.add(url)
+    missingSources.add('/sources/de/shot.png')
+    missingSources.add('/sources/de/two.png')
+    await useStore.getState().openProject(fakeProjectStore(twoSlotProject()))
+    expect(useStore.getState().images).toEqual({})
+    expect(useStore.getState().screens).toHaveLength(2)
+  })
+})
+
+describe('approve', () => {
+  afterEach(() => {
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      approvalOk: null,
+      staleApproval: null,
+      lastError: null,
+    })
+  })
+
+  const open = (p: Project, store: ProjectStore) => {
+    useStore.setState({
+      project: p,
+      projectStore: store,
+      localeId: 'en',
+      targetId: 'appstore',
+      screens: screensFor(p, 'en'),
+      settings: settingsFor(p, 'appstore'),
+      approvalOk: false,
+      staleApproval: null,
+      lastError: null,
+    })
+  }
+
+  it('stamps the project only after the save came back', async () => {
+    const p = twoSlotProject()
+    open(p, fakeProjectStore(p))
+    await useStore.getState().approve('Hofi')
+    const state = useStore.getState()
+    expect(state.approvalOk).toBe(true)
+    expect(state.project!.set.approval).toMatchObject({ by: 'Hofi' })
+    expect(state.lastError).toBeNull()
+    expect(state.staleApproval).toBeNull()
+  })
+
+  it('keeps the approval unset and reports the failure when the save rejects', async () => {
+    const p = twoSlotProject()
+    open(
+      p,
+      fakeProjectStore(p, () => Promise.reject(new Error('disk full'))),
+    )
+    await useStore.getState().approve('Hofi')
+    const state = useStore.getState()
+    expect(state.approvalOk).toBe(false)
+    expect(state.project!.set.approval).toBeNull()
+    expect(state.lastError).toMatch(/disk full/)
+  })
+})
+
+describe('staleApproval', () => {
+  afterEach(() => {
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      approvalOk: null,
+      staleApproval: null,
+      lastError: null,
+    })
+  })
+
+  it('keeps the stamp a mutation dropped, and keeps it over the next mutation', () => {
+    const p = project()
+    useStore.setState({
+      project: p,
+      localeId: 'en',
+      targetId: 'appstore',
+      screens: screensFor(p, 'en'),
+      settings: settingsFor(p, 'appstore'),
+      approvalOk: true,
+      staleApproval: null,
+    })
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    expect(useStore.getState().staleApproval).toEqual({ hash: 'h', by: 'x', at: 't' })
+    useStore.getState().setCopy('en', 'a', { headline: 'Neuer' })
+    expect(useStore.getState().staleApproval).toEqual({ hash: 'h', by: 'x', at: 't' })
+    expect(useStore.getState().approvalOk).toBe(false)
   })
 })
