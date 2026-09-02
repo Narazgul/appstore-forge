@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { preloadScriptFonts } from './presets/fonts'
 import { getRhythm, rhythmStep } from './presets/rhythms'
 import { getTemplateSpec } from './presets/templates'
 import { imageIdFor, screensFor, settingsFor } from './project/bridge'
@@ -474,7 +475,11 @@ export const useStore = create<State>((set, get) => ({
   approvalOk: null,
 
   openProject: async (store) => {
+    // A watcher left over from an earlier project must never fire into this one.
+    unsubscribe?.()
+    unsubscribe = null
     const project = await store.load()
+    await preloadScriptFonts(project.set.locales.map((l) => l.id))
     const images = await loadProjectImages(project, store)
     const localeId = project.set.locales[0]?.id ?? 'en'
     const targetId = project.set.targets[0]?.id ?? ''
@@ -490,7 +495,6 @@ export const useStore = create<State>((set, get) => ({
       step: 'shots',
     })
     await get().refreshApproval()
-    unsubscribe?.()
     unsubscribe =
       store.subscribe?.(() => {
         get()
@@ -503,6 +507,7 @@ export const useStore = create<State>((set, get) => ({
     const store = get().projectStore
     if (!store) return
     const project = await store.load()
+    await preloadScriptFonts(project.set.locales.map((l) => l.id))
     const images = await loadProjectImages(project, store)
     const state = get()
     const localeId = project.set.locales.some((l) => l.id === state.localeId)

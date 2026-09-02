@@ -6,7 +6,8 @@ import tailwindcss from '@tailwindcss/vite'
 const { version } = JSON.parse(readFileSync('./package.json', 'utf8'))
 
 export default defineConfig({
-  define: { __APP_VERSION__: JSON.stringify(version) },
+  // The project plugin flips __FORGE_PROJECT__ to true when `forge dev` runs.
+  define: { __APP_VERSION__: JSON.stringify(version), __FORGE_PROJECT__: 'false' },
   plugins: [react(), tailwindcss()],
   // Consumers may serve the bundle from a sub-path, so assets stay relative.
   base: './',

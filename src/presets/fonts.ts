@@ -1,4 +1,4 @@
-import { SCRIPT_FONTS } from './scripts'
+import { scriptFontFor } from './scripts'
 
 export type FontOption = {
   id: string
@@ -44,11 +44,21 @@ export async function preloadFonts(): Promise<void> {
       jobs.push(document.fonts.load(`${weight} 64px "${font.family}"`).catch(() => undefined))
     }
   }
-  for (const font of SCRIPT_FONTS) {
-    for (const weight of [400, 700]) {
-      jobs.push(document.fonts.load(`${weight} 64px "${font.family}"`).catch(() => undefined))
-    }
-  }
   await Promise.all(jobs)
   await document.fonts.ready
+}
+
+/** Script fonts are ~8 MB each; only the families a project's languages need are fetched. */
+export async function preloadScriptFonts(langs: string[]): Promise<void> {
+  const families = new Set(langs.map((l) => scriptFontFor(l)?.family).filter((f): f is string => !!f))
+  await Promise.all(
+    [...families].flatMap((family) =>
+      [400, 700].map((weight) => document.fonts.load(`${weight} 64px "${family}"`).catch(() => undefined)),
+    ),
+  )
+  await document.fonts.ready
+  // A face that is not available now would render in the system font without any error; the
+  // renderer treats that as a defect (rules.md, rule 3), so the load fails loudly instead.
+  const missing = [...families].filter((family) => !document.fonts.check(`400 64px "${family}"`))
+  if (missing.length) throw new Error(`Script fonts not available: ${missing.join(', ')}`)
 }
