@@ -166,6 +166,10 @@ folder, so they read as normal repo paths. A **slot** is one output image: it
 names a source screen and carries its own overrides, and the text for it lives
 per language in `copy/<locale>.json` keyed by slot id.
 
+The locale id is also the renderer's language: it picks the script font and, for
+an RTL language, sets the canvas `direction` to `rtl` so a run is shaped and
+ordered right to left inside each word.
+
 ### The four commands
 
 ```bash
@@ -199,12 +203,12 @@ source screenshot. Change a headline, swap a screenshot or move a slot and the
 stamp goes stale — `--require-approval` then refuses to render. That is the gate
 between "someone looked at this" and "this went to the store".
 
-| Exit code | Meaning                                                           |
-| --------- | ----------------------------------------------------------------- |
-| `0`       | Fine.                                                             |
-| `1`       | Usage mistake or an unexpected failure.                           |
-| `2`       | The project does not validate — missing headline, missing source. |
-| `3`       | Approval required but missing or stale.                           |
+| Exit code | Meaning                                                                                                                          |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `0`       | Fine.                                                                                                                            |
+| `1`       | Usage mistake or an unexpected failure.                                                                                          |
+| `2`       | The project does not validate — missing headline, missing source, or a headline that only fits by shrinking past the size floor. |
+| `3`       | Approval required but missing or stale.                                                                                          |
 
 ### The PNGs are RGB
 

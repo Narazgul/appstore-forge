@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validatePutBody } from '../vite-plugin-project'
+import { projectRoute, validatePutBody } from '../vite-plugin-project'
 import type { Project } from '../src/project/types'
 
 const project = (overrides: Partial<Project['set']> = {}, copies: Project['copies'] = {}): unknown => ({
@@ -40,5 +40,24 @@ describe('validatePutBody', () => {
     expect(validatePutBody(null, 'default')).toBe('Body must be a project object')
     expect(validatePutBody('nope', 'default')).toBe('Body must be a project object')
     expect(validatePutBody({ set: { id: 'default' } }, 'default')).toBe('Project copies must be an object')
+  })
+})
+
+describe('projectRoute', () => {
+  it('takes the url as it is when it already names a project route', () => {
+    expect(projectRoute({ url: '/api/project' })).toBe('/api/project')
+    expect(projectRoute({ url: '/sources/en/shot.png' })).toBe('/sources/en/shot.png')
+  })
+
+  it("recovers the request's own path after the SPA fallback rewrote it", () => {
+    expect(projectRoute({ url: '/index.html', originalUrl: '/api/project' })).toBe('/api/project')
+    expect(projectRoute({ url: '/index.html', originalUrl: '/sources/de/shot.png' })).toBe(
+      '/sources/de/shot.png',
+    )
+  })
+
+  it('leaves anything that is not a project route to the next middleware', () => {
+    expect(projectRoute({ url: '/index.html', originalUrl: '/some/page' })).toBe('/index.html')
+    expect(projectRoute({})).toBe('')
   })
 })

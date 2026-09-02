@@ -103,6 +103,14 @@ describe('renderProject', () => {
     )
   })
 
+  it('refuses to render copy that only fits by shrinking past the floor', async () => {
+    const { repo, project } = await fixture()
+    project.copies.en.a.headline = Array.from({ length: 60 }, () => 'unverhaeltnismaessig').join(' ')
+    await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
+      /Headline does not fit for slot a, locale en/,
+    )
+  })
+
   it('fails with slot and locale when a source is missing', async () => {
     const { repo, project } = await fixture()
     project.set.slots[0].screen = 'missing'

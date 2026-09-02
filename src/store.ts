@@ -5,7 +5,7 @@ import { getTemplateSpec } from './presets/templates'
 import { imageIdFor, screensFor, settingsFor } from './project/bridge'
 import { approvalHash } from './project/hash'
 import type { ProjectStore } from './project/store'
-import type { Project, ProjectCopies, ProjectTarget, SlotCopy } from './project/types'
+import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy } from './project/types'
 import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
 /** The guided flow. Steps are navigation and status, never a gate — any step is one click away. */
@@ -173,6 +173,11 @@ type State = {
   targetId: string
   /** null = nothing to judge, false = edited since the last approval */
   approvalOk: boolean | null
+  /** the stamp an edit invalidated, so the GUI can name who approved what is now outdated */
+  staleApproval: Approval | null
+  /** the last failure a user action produced, shown where that action lives */
+  lastError: string | null
+  setLastError: (message: string | null) => void
   openProject: (store: ProjectStore) => Promise<void>
   /** re-read the project after an outside change, keeping where the user is */
   reloadProject: () => Promise<void>
@@ -184,33 +189,51 @@ type State = {
   refreshApproval: () => Promise<void>
 }
 
-async function loadImage(file: File): Promise<HTMLImageElement> {
-  const img = new Image()
-  img.src = URL.createObjectURL(file)
-  await img.decode()
-  return img
+/** `img.decode()` never settles in a background tab, which hung the whole GUI on a reload
+ *  while the window was not focused. The load events fire either way. */
+function loadImageUrl(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error(`Image failed to load: ${url}`))
+    img.src = url
+  })
 }
 
-async function loadImageUrl(url: string): Promise<HTMLImageElement> {
-  const img = new Image()
-  img.src = url
-  await img.decode()
-  return img
-}
+const loadImage = (file: File): Promise<HTMLImageElement> => loadImageUrl(URL.createObjectURL(file))
 
+/**
+ * A screenshot the project names but the repo does not have yet is normal — Roborazzi has
+ * not run, or a capture was renamed. Its key stays absent, `renderScene` draws the tile
+ * without a source, and the rest of the grid opens.
+ */
 async function loadProjectImages(
   project: Project,
   store: ProjectStore,
 ): Promise<Record<string, HTMLImageElement>> {
-  const images: Record<string, HTMLImageElement> = {}
-  await Promise.all(
-    project.set.locales.flatMap((l) =>
-      project.set.slots.map(async (s) => {
-        images[imageIdFor(l.id, s.screen)] = await loadImageUrl(store.sourceUrl(l.id, s.screen))
-      }),
-    ),
+  const keys = project.set.locales.flatMap((l) =>
+    project.set.slots.map((s) => ({ id: imageIdFor(l.id, s.screen), url: store.sourceUrl(l.id, s.screen) })),
   )
+  const results = await Promise.allSettled(keys.map(({ url }) => loadImageUrl(url)))
+  const images: Record<string, HTMLImageElement> = {}
+  results.forEach((result, i) => {
+    if (result.status === 'fulfilled') images[keys[i].id] = result.value
+    else console.warn(`source screenshot missing for ${keys[i].id}`, result.reason)
+  })
   return images
+}
+
+/**
+ * What every project mutation writes: the new project, the approval gone, and the stamp it
+ * invalidated kept so the Review step can say whose approval went stale.
+ */
+export function mutated(state: State, project: Project, extra: Partial<State> = {}): Partial<State> {
+  return {
+    project,
+    approvalOk: false,
+    staleApproval: project.set.approval ? null : (state.project?.set.approval ?? state.staleApproval),
+    ...extra,
+  }
 }
 
 let unsubscribe: (() => void) | null = null
@@ -256,12 +279,7 @@ export const useStore = create<State>((set, get) => ({
       },
       copies: state.project.copies,
     }
-    set({
-      rhythmId: rhythm.id,
-      project,
-      screens: screensFor(project, state.localeId),
-      approvalOk: false,
-    })
+    set(mutated(state, project, { rhythmId: rhythm.id, screens: screensFor(project, state.localeId) }))
     scheduleSave(get)
   },
 
@@ -271,14 +289,14 @@ export const useStore = create<State>((set, get) => ({
     const rhythmId = template.rhythm ?? (template.variants?.length ? 'template' : 'uniform')
     if (state.project) {
       const project = projectAfterTemplate(state.project, template)
-      set({
-        templateId: template.id,
-        rhythmId,
-        project,
-        screens: screensFor(project, state.localeId),
-        settings: settingsFor(project, state.targetId),
-        approvalOk: false,
-      })
+      set(
+        mutated(state, project, {
+          templateId: template.id,
+          rhythmId,
+          screens: screensFor(project, state.localeId),
+          settings: settingsFor(project, state.targetId),
+        }),
+      )
       scheduleSave(get)
       return
     }
@@ -364,7 +382,7 @@ export const useStore = create<State>((set, get) => ({
       return set({ screens })
     }
     const project = projectAfterScreenPatch(state.project, state.localeId, id, copy)
-    set({ screens, project, approvalOk: false })
+    set(mutated(state, project, { screens }))
     scheduleSave(get)
   },
 
@@ -374,7 +392,7 @@ export const useStore = create<State>((set, get) => ({
     const selectedId = state.selectedId === id ? null : state.selectedId
     if (!state.project) return set({ screens, selectedId })
     const project = projectAfterSlotRemoval(state.project, id)
-    set({ screens, selectedId, project, approvalOk: false })
+    set(mutated(state, project, { screens, selectedId }))
     scheduleSave(get)
   },
 
@@ -394,7 +412,7 @@ export const useStore = create<State>((set, get) => ({
       set: { ...state.project.set, approval: null, slots },
       copies: state.project.copies,
     }
-    set({ screens, project, approvalOk: false })
+    set(mutated(state, project, { screens }))
     scheduleSave(get)
   },
 
@@ -413,7 +431,7 @@ export const useStore = create<State>((set, get) => ({
       set: { ...base.set, approval: null, settings: { ...base.set.settings, ...shared } },
       copies: base.copies,
     }
-    set({ project, settings: settingsFor(project, state.targetId), approvalOk: false })
+    set(mutated(state, project, { settings: settingsFor(project, state.targetId) }))
     scheduleSave(get)
   },
 
@@ -429,7 +447,7 @@ export const useStore = create<State>((set, get) => ({
     )
     if (!state.project) return set({ screens })
     const project = projectAfterOverride(state.project, id, screens.find((s) => s.id === id)?.overrides ?? {})
-    set({ screens, project, approvalOk: false })
+    set(mutated(state, project, { screens }))
     scheduleSave(get)
   },
 
@@ -443,7 +461,7 @@ export const useStore = create<State>((set, get) => ({
     })
     if (!state.project) return set({ screens })
     const project = projectAfterOverride(state.project, id, screens.find((s) => s.id === id)?.overrides ?? {})
-    set({ screens, project, approvalOk: false })
+    set(mutated(state, project, { screens }))
     scheduleSave(get)
   },
 
@@ -459,7 +477,7 @@ export const useStore = create<State>((set, get) => ({
       },
       copies: state.project.copies,
     }
-    set({ screens, project, approvalOk: false })
+    set(mutated(state, project, { screens }))
     scheduleSave(get)
   },
 
@@ -473,6 +491,9 @@ export const useStore = create<State>((set, get) => ({
   localeId: 'en',
   targetId: '',
   approvalOk: null,
+  staleApproval: null,
+  lastError: null,
+  setLastError: (lastError) => set({ lastError }),
 
   openProject: async (store) => {
     // A watcher left over from an earlier project must never fire into this one.
@@ -493,6 +514,8 @@ export const useStore = create<State>((set, get) => ({
       settings: settingsFor(project, targetId),
       selectedId: null,
       step: 'shots',
+      staleApproval: null,
+      lastError: null,
     })
     await get().refreshApproval()
     unsubscribe =
@@ -538,7 +561,7 @@ export const useStore = create<State>((set, get) => ({
     const state = get()
     if (!state.project) return
     const project = projectAfterScreenPatch(state.project, localeId, slotId, patch)
-    set({ project, screens: screensFor(project, state.localeId), approvalOk: false })
+    set(mutated(state, project, { screens: screensFor(project, state.localeId) }))
     scheduleSave(get)
   },
 
@@ -546,7 +569,7 @@ export const useStore = create<State>((set, get) => ({
     const state = get()
     if (!state.project) return
     const project = projectAfterTargetPatch(state.project, id, patch)
-    set({ project, settings: settingsFor(project, state.targetId), approvalOk: false })
+    set(mutated(state, project, { settings: settingsFor(project, state.targetId) }))
     scheduleSave(get)
   },
 
@@ -560,8 +583,16 @@ export const useStore = create<State>((set, get) => ({
       ...project,
       set: { ...project.set, approval: { hash, by, at: new Date().toISOString() } },
     }
-    set({ project: next, approvalOk: true })
-    await projectStore.save(next)
+    // A stamp the files never received is worse than no stamp: the CLI would still refuse
+    // and the GUI would claim the set was approved.
+    try {
+      await projectStore.save(next)
+    } catch (error) {
+      set({ lastError: `Approval not saved: ${error instanceof Error ? error.message : String(error)}` })
+      return
+    }
+    if (get().project !== project) return
+    set({ project: next, approvalOk: true, staleApproval: null, lastError: null })
   },
 
   refreshApproval: async () => {
@@ -570,7 +601,9 @@ export const useStore = create<State>((set, get) => ({
     if (!project.set.approval) return set({ approvalOk: false })
     const hash = await approvalHash(project, (l, s) => projectStore.sourceBytes(l, s))
     if (get().project !== project) return
-    set({ approvalOk: hash === project.set.approval.hash })
+    const ok = hash === project.set.approval.hash
+    // A stamp that no longer matches the files is stale in exactly the sense an edit makes it.
+    set({ approvalOk: ok, staleApproval: ok ? null : project.set.approval })
   },
 }))
 

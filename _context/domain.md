@@ -98,10 +98,6 @@ src/components/Footer.tsx        status line + the step's one primary action (Ne
 src/components/steps/*           Target → Look → Screenshots → Copy → Fine-tune → Review & export
 src/components/TunePanel.tsx     the full control set, scoped to all screens or the selected one
 src/components/StorePreview.tsx  the set inside a mock App Store product page (Review step)
-src/render/placeholder.ts  drawn stand-in screenshot for template thumbnails
-src/lib/settings.ts   override resolution + section grouping
-src/lib/export.ts     full-size render → zip download
-src/store.ts          zustand: screens, decoded images, settings, selection, page
 ```
 
 ### The one decision everything rests on
@@ -129,10 +125,12 @@ to scale or license, and adding a device is a one-line object in
 The six steps follow the order the decisions depend on (size shapes the canvas,
 the look shapes the slots, the slots take screenshots, copy sits on them). But
 nothing is locked: every step is clickable at any time, files can be dropped on
-any step, headlines are editable in both Screenshots and Copy, and Export is in
-the footer on every step — disabled only while a slot is empty, with the reason
-as its label. Colour is used for status only: green = done, amber = needs
-attention, the accent = the current step and the primary action.
+any step (freeform mode only — a project takes its screenshots from the repo, so
+the drop zone and the replace/clear controls are hidden there), headlines are
+editable in both Screenshots and Copy, and Export is in the footer on every
+step — disabled only while a slot is empty, with the reason as its label. Colour
+is used for status only: green = done, amber = needs attention, the accent = the
+current step and the primary action.
 
 ### Project mode is a second door, not a second app
 

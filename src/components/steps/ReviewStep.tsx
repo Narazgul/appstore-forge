@@ -17,6 +17,9 @@ export function ReviewStep() {
   const setStep = useStore((s) => s.setStep)
   const project = useStore((s) => s.project)
   const approvalOk = useStore((s) => s.approvalOk)
+  const staleApproval = useStore((s) => s.staleApproval)
+  const lastError = useStore((s) => s.lastError)
+  const setLastError = useStore((s) => s.setLastError)
   const approve = useStore((s) => s.approve)
   const targetId = useStore((s) => s.targetId)
   const setTarget = useStore((s) => s.setTarget)
@@ -47,45 +50,56 @@ export function ReviewStep() {
         }
       >
         <div
-          className="flex items-center gap-3 rounded-xl border p-3"
+          className="flex flex-col gap-2 rounded-xl border p-3"
           style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
         >
-          <span
-            className="check-mark"
-            data-ok={approvalOk === true}
-            style={{
-              background: approvalOk ? 'var(--ok-bg)' : 'var(--warn-bg)',
-              color: approvalOk ? 'var(--ok)' : 'var(--warn)',
-            }}
-            aria-hidden
-          >
-            {approvalOk ? '✓' : '!'}
-          </span>
-          <span className="flex-1 text-[13px]">
-            {approvalOk
-              ? `Approved by ${stamp?.by} on ${stamp?.at}`
-              : stamp
-                ? 'Changed since the last approval'
-                : 'Not approved yet'}
-          </span>
-          <input
-            className="field"
-            // `.field` sets width:100% after Tailwind's layer, so a `w-40` class would lose to it.
-            style={{ width: '10rem', flex: 'none' }}
-            value={by}
-            placeholder="Your name"
-            onChange={(e) => {
-              setBy(e.target.value)
-              localStorage.setItem('forge-approver', e.target.value)
-            }}
-          />
-          <button
-            className="btn-primary"
-            disabled={!by.trim() || approvalOk === true}
-            onClick={() => void approve(by.trim())}
-          >
-            Approve
-          </button>
+          <div className="flex items-center gap-3">
+            <span
+              className="check-mark"
+              data-ok={approvalOk === true}
+              style={{
+                background: approvalOk ? 'var(--ok-bg)' : 'var(--warn-bg)',
+                color: approvalOk ? 'var(--ok)' : 'var(--warn)',
+              }}
+              aria-hidden
+            >
+              {approvalOk ? '✓' : '!'}
+            </span>
+            <span className="flex-1 text-[13px]">
+              {approvalOk
+                ? `Approved by ${stamp?.by} on ${stamp?.at}`
+                : staleApproval
+                  ? `Changed since the approval by ${staleApproval.by} on ${staleApproval.at}`
+                  : 'Not approved yet'}
+            </span>
+            <input
+              className="field"
+              // `.field` sets width:100% after Tailwind's layer, so a `w-40` class would lose to it.
+              style={{ width: '10rem', flex: 'none' }}
+              value={by}
+              placeholder="Your name"
+              onChange={(e) => {
+                setBy(e.target.value)
+                localStorage.setItem('forge-approver', e.target.value)
+              }}
+            />
+            <button
+              className="btn-primary"
+              disabled={!by.trim() || approvalOk === true}
+              onClick={() => {
+                approve(by.trim()).catch((err: unknown) =>
+                  setLastError(err instanceof Error ? err.message : String(err)),
+                )
+              }}
+            >
+              Approve
+            </button>
+          </div>
+          {lastError && (
+            <p className="text-[12px]" style={{ color: '#dc2626' }}>
+              {lastError}
+            </p>
+          )}
         </div>
         <LocaleGrid />
         <StorePreview />

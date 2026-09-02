@@ -27,6 +27,7 @@ export function Rail() {
   const settings = useStore((s) => s.settings)
   const template = useStore((s) => getTemplateSpec(s.templateId))
   const rhythmId = useStore((s) => s.rhythmId)
+  const project = useStore((s) => s.project)
   const r = readiness(screens, settings)
   const size = getSize(settings.sizeId)
   const customised = screens.filter((s) =>
@@ -102,7 +103,8 @@ export function Rail() {
         })}
       </ol>
       <p className="mt-auto px-4 pb-4 text-[11px] leading-snug" style={{ color: 'var(--muted)' }}>
-        Steps are a checklist, not a gate — jump anywhere. Drop screenshots on any step.
+        Steps are a checklist, not a gate — jump anywhere.
+        {project ? ' The screenshots come from the project sources.' : ' Drop screenshots on any step.'}
       </p>
     </nav>
   )

@@ -51,8 +51,11 @@ export function CopyStep() {
                     project ? (
                       <div className="flex flex-col gap-2">
                         {project.set.locales.map((l) => {
-                          const copy = project.copies[l.id]?.[screen.id] ?? { headline: '', subhead: '' }
-                          const len = copy.headline.replace(/\*/g, '').length
+                          // A hand-edited copy file may carry only one of the two fields.
+                          const copy = project.copies[l.id]?.[screen.id]
+                          const headline = copy?.headline ?? ''
+                          const subhead = copy?.subhead ?? ''
+                          const len = headline.replace(/\*/g, '').length
                           return (
                             <div key={l.id} className="flex items-center gap-2">
                               <span
@@ -63,7 +66,7 @@ export function CopyStep() {
                               </span>
                               <input
                                 className="field"
-                                value={copy.headline}
+                                value={headline}
                                 placeholder="Headline, *stars* to highlight"
                                 onChange={(e) => setCopy(l.id, screen.id, { headline: e.target.value })}
                               />
@@ -72,7 +75,7 @@ export function CopyStep() {
                               </span>
                               <input
                                 className="field"
-                                value={copy.subhead}
+                                value={subhead}
                                 placeholder="Subtitle (optional)"
                                 onChange={(e) => setCopy(l.id, screen.id, { subhead: e.target.value })}
                               />

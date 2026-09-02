@@ -24,6 +24,8 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
   const moveScreen = useStore((s) => s.moveScreen)
   const selectedId = useStore((s) => s.selectedId)
   const selectScreen = useStore((s) => s.selectScreen)
+  // A project takes its screenshots from the repo; replacing or clearing one here does nothing.
+  const project = useStore((s) => s.project)
   const fileRef = useRef<HTMLInputElement>(null)
   const span = useStore((s) => sceneSpan(screen, s.settings))
 
@@ -113,22 +115,23 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
             <button className="seg" disabled={index === total - 1} onClick={() => moveScreen(screen.id, 1)}>
               →
             </button>
-            {!empty && (
+            {!project && !empty && (
               <button className="seg" onClick={() => fileRef.current?.click()}>
                 Replace
               </button>
             )}
-            {isSlot ? (
-              !empty && (
-                <button className="seg" onClick={() => clearImage(screen.id)}>
-                  Clear
+            {!project &&
+              (isSlot ? (
+                !empty && (
+                  <button className="seg" onClick={() => clearImage(screen.id)}>
+                    Clear
+                  </button>
+                )
+              ) : (
+                <button className="seg" onClick={() => removeScreen(screen.id)}>
+                  Remove
                 </button>
-              )
-            ) : (
-              <button className="seg" onClick={() => removeScreen(screen.id)}>
-                Remove
-              </button>
-            )}
+              ))}
           </div>
         )}
       </div>

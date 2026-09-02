@@ -18,6 +18,20 @@ const MAX_BODY_BYTES = 5 * 1024 * 1024
  *  page decides where the server writes. Only names that stay inside the project pass. */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/
 
+const isProjectRoute = (url: string) => url === '/api/project' || url.startsWith('/sources/')
+
+/**
+ * The path the browser asked for. Registered after Vite's own middlewares, this handler sees
+ * `req.url` already rewritten to `/index.html` by the SPA fallback; connect keeps the request's
+ * own path in `originalUrl`.
+ */
+export function projectRoute(req: { url?: string; originalUrl?: string }): string {
+  const url = req.url ?? ''
+  if (isProjectRoute(url)) return url
+  const original = req.originalUrl ?? ''
+  return isProjectRoute(original) ? original : url
+}
+
 export function validatePutBody(body: unknown, setId: string): string | null {
   const project = body as Project | null
   if (!project || typeof project !== 'object') return 'Body must be a project object'
@@ -122,7 +136,7 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
   }
 
   async function serve(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const url = req.url ?? ''
+    const url = projectRoute(req)
     if (url === '/api/project' && req.method === 'GET') {
       const project = await readProject(projectDir, setId)
       res.setHeader('content-type', 'application/json')
@@ -166,11 +180,14 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
         watcher.close()
       })
 
-      // A rejected handler would be an unhandled rejection and take the dev server down with it;
-      // a broken project file must stay a 500.
-      server.middlewares.use((req, res, next) => {
-        serve(req, res).then((handled) => (handled ? undefined : next()), next)
-      })
+      // Registering after Vite's own middlewares puts the host check and cors in front of the
+      // project files. A rejected handler would be an unhandled rejection and take the dev
+      // server down with it; a broken project file must stay a 500.
+      return () => {
+        server.middlewares.use((req, res, next) => {
+          serve(req, res).then((handled) => (handled ? undefined : next()), next)
+        })
+      }
     },
   }
 }
