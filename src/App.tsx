@@ -18,6 +18,8 @@ export function App() {
   const addFiles = useStore((s) => s.addFiles)
   const step = useStore((s) => s.step)
   const setStep = useStore((s) => s.setStep)
+  // A project draws its screenshots from the repo, so dropping files does nothing at all.
+  const project = useStore((s) => s.project)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -60,6 +62,7 @@ export function App() {
         <main
           className="relative flex-1 overflow-auto p-8"
           onDragOver={(e) => {
+            if (project) return
             e.preventDefault()
             setDragging(true)
           }}
@@ -85,7 +88,7 @@ export function App() {
           {step === 'tune' && <TuneStep />}
           {step === 'review' && <ReviewStep />}
 
-          {dragging && step !== 'shots' && (
+          {dragging && !project && step !== 'shots' && (
             <div
               className="pointer-events-none absolute inset-4 flex items-center justify-center rounded-2xl border-2 border-dashed text-[14px] font-semibold"
               style={{
