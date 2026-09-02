@@ -70,6 +70,7 @@ export function composeDevices(
   aspect: number,
   deviceScale: number,
   tilt: number,
+  minTop?: number,
 ): DeviceBox[] {
   const W = w * layout.span
   const slot: Box = {
@@ -84,16 +85,31 @@ export function composeDevices(
   const baseW = fitW * deviceScale
   const cx = layout.device.cx !== undefined ? W * layout.device.cx : slot.x + slot.w / 2
   const cy = layout.device.cy !== undefined ? h * layout.device.cy : slot.y + slot.h / 2
+  // A fixed-width layout ignores the device band, so a tall frame can climb into the copy.
+  // Push the whole composition down rather than shrink it — the width is the layout's point.
+  const baseH = baseW / aspect
+  const lift = minTop !== undefined ? Math.max(0, minTop - (cy - baseH / 2)) : 0
+  const cyClamped = cy + lift
 
   return getPosition(positionId).placements.map((placement) => {
     const fw = baseW * placement.scale
     const fh = fw / aspect
     return {
-      box: { x: cx + placement.dx * W - fw / 2, y: cy + placement.dy * h - fh / 2, w: fw, h: fh },
+      box: { x: cx + placement.dx * W - fw / 2, y: cyClamped + placement.dy * h - fh / 2, w: fw, h: fh },
       source: placement.source,
       angle: placement.rotate + tilt,
     }
   })
+}
+
+/**
+ * The highest the device may start before it runs into the copy: the bottom of the text band
+ * plus a little air. A layout whose copy sits *below* the device yields none — there the band
+ * is cleared by the device's bottom edge, and pushing the device down would bury it.
+ */
+export function textFloor(layout: Layout, h: number): number | undefined {
+  const header = layout.text && layout.text.top < layout.device.top ? layout.text : null
+  return header ? h * (header.top + header.height) + h * 0.02 : undefined
 }
 
 /** How many store tiles a screen's composition covers — the canvas must be `span` tiles wide. */
@@ -132,6 +148,7 @@ export function renderScene(
     frameAspect(device),
     settings.deviceScale,
     settings.tilt,
+    textFloor(layout, h),
   )
 
   for (const { box, source, angle } of boxes) {
