@@ -29,6 +29,9 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.0.0
         version: 4.3.3(vite@6.4.3(@types/node@26.3.0)(jiti@2.7.0)(lightningcss@1.32.0))
+      '@types/node':
+        specifier: ^26.3.0
+        version: 26.3.0
       '@types/react':
         specifier: ^19.1.0
         version: 19.2.18
@@ -3086,7 +3089,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 26.3.0
+      '@types/node': 24.13.3
       '@types/responselike': 1.0.3
 
   '@types/chai@5.2.3':
@@ -3106,7 +3109,7 @@ snapshots:
 
   '@types/fs-extra@9.0.13':
     dependencies:
-      '@types/node': 26.3.0
+      '@types/node': 24.13.3
 
   '@types/http-cache-semantics@4.2.0': {}
 
@@ -3114,7 +3117,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 26.3.0
+      '@types/node': 24.13.3
 
   '@types/ms@2.1.0': {}
 
@@ -3136,7 +3139,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 26.3.0
+      '@types/node': 24.13.3
 
   '@typescript-eslint/eslint-plugin@8.68.0(@typescript-eslint/parser@8.68.0(eslint@10.9.1(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@5.9.3))(eslint@10.9.1(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@5.9.3)':
     dependencies:

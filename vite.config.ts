@@ -13,5 +13,5 @@ export default defineConfig({
   build: { outDir: 'dist', emptyOutDir: true },
   // Only pure logic is unit-tested — anything touching a real canvas is verified visually
   // instead. See _context/workflows.md.
-  test: { include: ['src/**/*.test.ts'], environment: 'node' },
+  test: { include: ['src/**/*.test.ts', 'cli/**/*.test.ts'], environment: 'node' },
 })
