@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_SETTINGS,
+  projectAfterNote,
   projectAfterOverride,
   projectAfterScreenPatch,
   projectAfterSlotRemoval,
@@ -167,6 +168,27 @@ describe('projectAfterTargetPatch', () => {
   })
 })
 
+describe('projectAfterNote', () => {
+  it('writes the note and keeps the approval, which does not cover notes', () => {
+    const next = projectAfterNote(project(), 'a', 'Headline too long')
+    expect(next.set.slots[0].note).toBe('Headline too long')
+    expect(next.set.approval).toEqual(project().set.approval)
+  })
+
+  it('removes the key again for an empty note', () => {
+    const next = projectAfterNote(projectAfterNote(project(), 'a', 'x'), 'a', '')
+    expect(next.set.slots[0]).not.toHaveProperty('note')
+  })
+
+  it('leaves other slots alone and does not mutate the input', () => {
+    const p = project()
+    p.set.slots.push({ id: 'b', kind: 'screen', screen: 'two', overrides: {} })
+    const next = projectAfterNote(p, 'b', 'Swap the shot')
+    expect(next.set.slots[0]).not.toHaveProperty('note')
+    expect(p.set.slots[1]).not.toHaveProperty('note')
+  })
+})
+
 describe('projectAfterSlotRemoval', () => {
   const twoSlots = (): Project => {
     const p = project()
@@ -261,6 +283,18 @@ describe('the store in project mode', () => {
     expect(state.project!.copies.de).toEqual({})
     expect(state.screens).toEqual([])
     expect(state.approvalOk).toBe(false)
+  })
+
+  it('setSlotNote writes the note without touching the approval', () => {
+    const p = project()
+    open(p)
+    useStore.setState({ approvalOk: true, staleApproval: null })
+    useStore.getState().setSlotNote('a', 'Headline too long')
+    const state = useStore.getState()
+    expect(state.project!.set.slots[0].note).toBe('Headline too long')
+    expect(state.project!.set.approval).toEqual(p.set.approval)
+    expect(state.approvalOk).toBe(true)
+    expect(state.staleApproval).toBeNull()
   })
 
   it('clearImage and reset keep their hands off a project', () => {

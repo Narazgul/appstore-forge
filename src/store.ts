@@ -116,6 +116,24 @@ export function projectAfterTargetPatch(
   }
 }
 
+/**
+ * A note is feedback for the agent that regenerates a screenshot, not part of the set: it stays out
+ * of the approval hash, so writing one must not go through `mutated` and drop the stamp.
+ */
+export function projectAfterNote(project: Project, slotId: string, note: string): Project {
+  return {
+    set: {
+      ...project.set,
+      slots: project.set.slots.map((slot) => {
+        if (slot.id !== slotId) return slot
+        const { note: _dropped, ...rest } = slot
+        return note.trim() ? { ...rest, note } : rest
+      }),
+    },
+    copies: project.copies,
+  }
+}
+
 /** Removing a slot removes its copy too — an orphaned entry would still feed the approval hash. */
 export function projectAfterSlotRemoval(project: Project, slotId: string): Project {
   const copies: ProjectCopies = {}
@@ -184,6 +202,8 @@ type State = {
   setLocale: (id: string) => void
   setTarget: (id: string) => void
   setCopy: (localeId: string, slotId: string, patch: Partial<SlotCopy>) => void
+  /** feedback for the agent; it is not part of the set, so the approval survives it */
+  setSlotNote: (slotId: string, note: string) => void
   updateTarget: (id: string, patch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>>) => void
   approve: (by: string) => Promise<void>
   refreshApproval: () => Promise<void>
@@ -562,6 +582,13 @@ export const useStore = create<State>((set, get) => ({
     if (!state.project) return
     const project = projectAfterScreenPatch(state.project, localeId, slotId, patch)
     set(mutated(state, project, { screens: screensFor(project, state.localeId) }))
+    scheduleSave(get)
+  },
+
+  setSlotNote: (slotId, note) => {
+    const state = get()
+    if (!state.project) return
+    set({ project: projectAfterNote(state.project, slotId, note) })
     scheduleSave(get)
   },
 

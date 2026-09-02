@@ -3,7 +3,14 @@ import type { ScreenOverrides, Settings } from '../types'
 export type ProjectTarget = { id: string; sizeId: string; deviceId: string; out: string }
 export type ProjectLocale = { id: string; store: Record<string, string> }
 export type SlotKind = 'screen' | 'artwork'
-export type ProjectSlot = { id: string; kind: SlotKind; screen: string; overrides: ScreenOverrides }
+export type ProjectSlot = {
+  id: string
+  kind: SlotKind
+  screen: string
+  overrides: ScreenOverrides
+  /** open feedback for whoever regenerates this screenshot; never part of the approval hash */
+  note?: string
+}
 export type Approval = { hash: string; by: string; at: string }
 export type ProjectSettings = Omit<Settings, 'sizeId' | 'deviceId'>
 

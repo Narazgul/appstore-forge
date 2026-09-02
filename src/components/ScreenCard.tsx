@@ -26,6 +26,8 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
   const selectScreen = useStore((s) => s.selectScreen)
   // A project takes its screenshots from the repo; replacing or clearing one here does nothing.
   const project = useStore((s) => s.project)
+  const note = useStore((s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.note ?? '')
+  const setSlotNote = useStore((s) => s.setSlotNote)
   const fileRef = useRef<HTMLInputElement>(null)
   const span = useStore((s) => sceneSpan(screen, s.settings))
 
@@ -89,6 +91,15 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
             placeholder="Subtitle (optional)"
             onChange={(e) => updateScreen(screen.id, { subhead: e.target.value })}
           />
+          {project && (
+            <textarea
+              className="field note"
+              rows={2}
+              value={note}
+              placeholder="Feedback for the agent (what should change on this screen?)"
+              onChange={(e) => setSlotNote(screen.id, e.target.value)}
+            />
+          )}
         </div>
       )}
 

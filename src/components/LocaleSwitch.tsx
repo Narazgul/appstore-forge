@@ -1,3 +1,4 @@
+import { localeLabel } from '../project/localeLabel'
 import { useStore } from '../store'
 
 /** The locale picker of a project set: it swaps the copy under the preview, nothing else. */
@@ -12,7 +13,7 @@ export function LocaleSwitch() {
       <select className="field" value={localeId} onChange={(e) => setLocale(e.target.value)}>
         {project.set.locales.map((l) => (
           <option key={l.id} value={l.id}>
-            {l.id}
+            {localeLabel(l)}
           </option>
         ))}
       </select>

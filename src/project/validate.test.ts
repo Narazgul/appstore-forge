@@ -95,6 +95,20 @@ describe('validateProject', () => {
     expect(messages).toContain('Duplicate slot id a')
   })
 
+  it('reports an open note as a warning', () => {
+    const p = base()
+    p.set.slots[0].note = ' Headline too long '
+    expect(validateProject(p, always)).toEqual([
+      { level: 'warn', message: 'Open feedback: Headline too long', slot: 'a' },
+    ])
+  })
+
+  it('stays silent on an empty note', () => {
+    const p = base()
+    p.set.slots[0].note = '   '
+    expect(validateProject(p, always)).toEqual([])
+  })
+
   it('rejects artwork slots until they are implemented', () => {
     const p = base()
     p.set.slots[0].kind = 'artwork'

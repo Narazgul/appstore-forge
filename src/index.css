@@ -345,6 +345,36 @@ input[type='color'] {
   font-size: 10px;
   color: var(--muted);
 }
+/* Google Play chrome: the same mock page, the other store's furniture. */
+.store-icon[data-play] {
+  border-radius: 14px;
+}
+.store-install {
+  display: inline-block;
+  border-radius: 8px;
+  background: #01875f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 26px;
+}
+.store-playstats {
+  margin: 22px 0 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* The feedback note on a screen card and under its review tile. */
+.note {
+  resize: vertical;
+  min-height: 44px;
+  line-height: 1.35;
+}
+
 .store-section {
   margin: 18px 0 10px;
   font-size: 16px;
