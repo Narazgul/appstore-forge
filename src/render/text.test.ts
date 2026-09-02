@@ -151,3 +151,31 @@ describe('availableTextHeight', () => {
     expect(availableTextHeight(layout, 1000)).toBeGreaterThanOrEqual(layout.text!.height * 1000)
   })
 })
+
+describe('wrap with a language', () => {
+  it('breaks Chinese inside a run of characters instead of keeping it on one line', () => {
+    const words = parseMarkup('见证财富增长每一天')
+    const lines = wrap(measurer(10), words, 45, 'zh')
+    expect(lines.length).toBeGreaterThan(1)
+    for (const line of lines) expect(line.width).toBeLessThanOrEqual(45)
+  })
+
+  it('marks segmenter pieces as glued so no space is inserted between them', () => {
+    const lines = wrap(measurer(10), parseMarkup('见证财富'), 1000, 'zh')
+    const words = lines.flatMap((l) => l.words)
+    expect(words.length).toBeGreaterThan(1)
+    expect(words.slice(1).every((w) => w.glue)).toBe(true)
+    expect(lines[0].width).toBe(40)
+  })
+
+  it('keeps a Latin word whole', () => {
+    const lines = wrap(measurer(10), parseMarkup('budget meistern'), 1000, 'de')
+    expect(lines[0].words.map((w) => w.text)).toEqual(['budget', 'meistern'])
+    expect(lines[0].width).toBe(150)
+  })
+
+  it('keeps the highlight span on every glued piece', () => {
+    const lines = wrap(measurer(10), parseMarkup('*财富增长*'), 1000, 'zh')
+    expect(lines[0].words.every((w) => w.span === 0)).toBe(true)
+  })
+})
