@@ -15,6 +15,7 @@ const NEXT_LABEL: Record<string, string> = {
 export function Footer({ onExport, exporting }: { onExport: () => void; exporting: boolean }) {
   const step = useStore((s) => s.step)
   const setStep = useStore((s) => s.setStep)
+  const project = useStore((s) => s.project)
   const screens = useStore((s) => s.screens)
   const settings = useStore((s) => s.settings)
   const template = useStore((s) => getTemplateSpec(s.templateId))
@@ -46,7 +47,11 @@ export function Footer({ onExport, exporting }: { onExport: () => void; exportin
             ← Back
           </button>
         )}
-        {step === 'review' ? (
+        {step === 'review' && project ? (
+          <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
+            Render with: forge render --project &lt;dir&gt; --require-approval
+          </span>
+        ) : step === 'review' ? (
           <button className="btn-primary" disabled={!r.canExport || exporting} onClick={onExport}>
             {exportLabel}
           </button>
