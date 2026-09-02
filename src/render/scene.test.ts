@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { composeDevices, sceneSpan } from './scene'
+import { composeDevices, sceneSpan, textFloor } from './scene'
 import { getLayout } from '../presets/layouts'
 import { POSITIONS, getPosition } from '../presets/positions'
 import { DEFAULT_SETTINGS } from '../store'
@@ -60,6 +60,43 @@ describe('composeDevices', () => {
     const layout = getLayout('hero')
     const [{ box }] = composeDevices(layout, 'center', TILE.w, TILE.h, ASPECT, 1, 0)
     expect(box.w).toBeCloseTo(TILE.w * layout.device.width!, 5)
+  })
+
+  it('pushes a fixed-width device below minTop instead of letting it climb into the text', () => {
+    const layout = getLayout('hero')
+    const tall = { w: 1080, h: 1920 }
+    const [{ box }] = composeDevices(layout, 'center', tall.w, tall.h, ASPECT, 1, 0, tall.h * 0.3)
+    expect(box.y).toBeGreaterThanOrEqual(tall.h * 0.3)
+  })
+
+  it('does not move a device that already sits below minTop', () => {
+    const layout = getLayout('text-top')
+    const [a] = composeDevices(layout, 'center', TILE.w, TILE.h, ASPECT, 1, 0)
+    const [b] = composeDevices(layout, 'center', TILE.w, TILE.h, ASPECT, 1, 0, 10)
+    expect(b.box).toEqual(a.box)
+  })
+})
+
+describe('textFloor', () => {
+  it('clears the bottom of a headline that sits above the device', () => {
+    const layout = getLayout('hero')
+    const band = layout.text!
+    expect(textFloor(layout, TILE.h)).toBeCloseTo(TILE.h * (band.top + band.height) + TILE.h * 0.02, 5)
+  })
+
+  it('yields no floor when the copy sits below the device', () => {
+    expect(textFloor(getLayout('text-bottom'), TILE.h)).toBeUndefined()
+  })
+
+  it('yields no floor for a layout without copy', () => {
+    expect(textFloor(getLayout('centered'), TILE.h)).toBeUndefined()
+  })
+
+  it('leaves a text-below composition where the layout put it', () => {
+    const layout = getLayout('text-bottom')
+    const [plain] = composeDevices(layout, 'center', TILE.w, TILE.h, ASPECT, 1, 0)
+    const [floored] = composeDevices(layout, 'center', TILE.w, TILE.h, ASPECT, 1, 0, textFloor(layout, TILE.h))
+    expect(floored.box).toEqual(plain.box)
   })
 })
 
