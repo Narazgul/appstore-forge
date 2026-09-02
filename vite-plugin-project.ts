@@ -12,11 +12,26 @@ import type { Project } from './src/project/types'
 const OWN_WRITE_QUIET_MS = 500
 /** fs.watch reports one save as several events; wait for the burst to end. */
 const WATCH_DEBOUNCE_MS = 150
+const MAX_BODY_BYTES = 5 * 1024 * 1024
+
+/** `writeProject` turns the set id and the locale keys into file names, so a body from the
+ *  page decides where the server writes. Only names that stay inside the project pass. */
+const SAFE_ID = /^[A-Za-z0-9_-]+$/
+
+export function validatePutBody(body: unknown, setId: string): string | null {
+  const project = body as Project | null
+  if (!project || typeof project !== 'object') return 'Body must be a project object'
+  if (project.set?.id !== setId) return `Project set id must be "${setId}"`
+  if (!project.copies || typeof project.copies !== 'object') return 'Project copies must be an object'
+  const bad = Object.keys(project.copies).find((localeId) => !SAFE_ID.test(localeId))
+  return bad === undefined ? null : `Invalid locale id "${bad}"`
+}
 
 export function projectPlugin({ projectDir, setId }: { projectDir: string; setId: string }): Plugin {
   const repoRoot = repoRootOf(projectDir)
   let lastWritten = ''
   let lastWriteAt = 0
+  let writing = 0
 
   /** The copy files count too: an agent editing only `copy/de.json` must reach the GUI. */
   async function projectDigest(): Promise<string> {
@@ -31,6 +46,81 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
     return hash.digest('hex')
   }
 
+  async function readBody(req: IncomingMessage, res: ServerResponse): Promise<Buffer | null> {
+    const chunks: Buffer[] = []
+    let size = 0
+    for await (const chunk of req) {
+      size += (chunk as Buffer).length
+      if (size > MAX_BODY_BYTES) {
+        res.statusCode = 413
+        res.end('Project too large')
+        req.destroy()
+        return null
+      }
+      chunks.push(chunk as Buffer)
+    }
+    return Buffer.concat(chunks)
+  }
+
+  async function putProject(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req, res)
+    if (!body) return
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(body.toString('utf8'))
+    } catch {
+      res.statusCode = 400
+      res.end('Body is not valid JSON')
+      return
+    }
+    const problem = validatePutBody(parsed, setId)
+    if (problem) {
+      res.statusCode = 400
+      res.end(problem)
+      return
+    }
+    // The window has to cover the write itself, not just what follows it.
+    writing++
+    lastWriteAt = Date.now()
+    try {
+      await writeProject(projectDir, parsed as Project)
+      lastWritten = await projectDigest()
+      lastWriteAt = Date.now()
+    } finally {
+      writing--
+    }
+    res.statusCode = 204
+    res.end()
+  }
+
+  async function sendSource(url: string, res: ServerResponse): Promise<void> {
+    const [, , locale, file] = url.split('/')
+    let path: string
+    try {
+      const screen = decodeURIComponent(file ?? '').replace(/\.png$/, '')
+      const project = await readProject(projectDir, setId)
+      path = normalize(join(repoRoot, sourcePath(project.set, decodeURIComponent(locale ?? ''), screen)))
+    } catch (err) {
+      if (!(err instanceof URIError)) throw err
+      res.statusCode = 400
+      res.end('Malformed source path')
+      return
+    }
+    // A sibling of the repo root shares its prefix, so the separator has to be part of the test.
+    if (!path.startsWith(`${repoRoot}${sep}`)) {
+      res.statusCode = 403
+      res.end()
+      return
+    }
+    try {
+      res.setHeader('content-type', 'image/png')
+      res.end(await readFile(path))
+    } catch {
+      res.statusCode = 404
+      res.end()
+    }
+  }
+
   async function serve(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = req.url ?? ''
     if (url === '/api/project' && req.method === 'GET') {
@@ -40,36 +130,11 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
       return true
     }
     if (url === '/api/project' && req.method === 'PUT') {
-      const chunks: Buffer[] = []
-      for await (const c of req) chunks.push(c as Buffer)
-      const project = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Project
-      await writeProject(projectDir, project)
-      lastWritten = await projectDigest()
-      lastWriteAt = Date.now()
-      res.statusCode = 204
-      res.end()
+      await putProject(req, res)
       return true
     }
     if (url.startsWith('/sources/')) {
-      const [, , locale, file] = url.split('/')
-      const screen = decodeURIComponent(file ?? '').replace(/\.png$/, '')
-      const project = await readProject(projectDir, setId)
-      const path = normalize(
-        join(repoRoot, sourcePath(project.set, decodeURIComponent(locale ?? ''), screen)),
-      )
-      // A sibling of the repo root shares its prefix, so the separator has to be part of the test.
-      if (!path.startsWith(`${repoRoot}${sep}`)) {
-        res.statusCode = 403
-        res.end()
-        return true
-      }
-      try {
-        res.setHeader('content-type', 'image/png')
-        res.end(await readFile(path))
-      } catch {
-        res.statusCode = 404
-        res.end()
-      }
+      await sendSource(url, res)
       return true
     }
     return false
@@ -80,10 +145,13 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
     config: () => ({ define: { __FORGE_PROJECT__: 'true' } }),
     configureServer(server) {
       let settle: ReturnType<typeof setTimeout> | null = null
-      const watcher = watch(projectDir, { recursive: true }, () => {
+      const onFileEvent = () => {
         if (settle) clearTimeout(settle)
         settle = setTimeout(() => {
-          // Our own PUT also fires the watcher; the GUI already holds that state.
+          settle = null
+          // Comparing while our own write is still running would read a half-written project
+          // against the previous digest and announce a change the GUI already holds.
+          if (writing > 0) return onFileEvent()
           if (Date.now() - lastWriteAt < OWN_WRITE_QUIET_MS) return
           projectDigest()
             .then((digest) => {
@@ -91,7 +159,8 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
             })
             .catch(() => undefined)
         }, WATCH_DEBOUNCE_MS)
-      })
+      }
+      const watcher = watch(projectDir, { recursive: true }, onFileEvent)
       server.httpServer?.once('close', () => {
         if (settle) clearTimeout(settle)
         watcher.close()

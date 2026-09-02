@@ -14,11 +14,19 @@ import { useStore } from './store'
 
 // Canvas measures text against whatever is actually loaded, and the preview must match the
 // export exactly — so every family is fetched before the first paint.
-preloadFonts().then(async () => {
-  if (__FORGE_PROJECT__) await useStore.getState().openProject(fileProjectStore())
-  createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  )
-})
+preloadFonts()
+  .then(async () => {
+    if (__FORGE_PROJECT__) await useStore.getState().openProject(fileProjectStore())
+    createRoot(document.getElementById('root')!).render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    )
+  })
+  .catch((error: unknown) => {
+    // Fonts and the project are loaded before the first paint, so a failure here would
+    // otherwise leave a white page with nothing to go on.
+    const root = document.getElementById('root')!
+    root.style.padding = '24px'
+    root.textContent = `AppStore Forge could not start: ${error instanceof Error ? error.message : String(error)}`
+  })
