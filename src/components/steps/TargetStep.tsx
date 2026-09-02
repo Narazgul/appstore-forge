@@ -9,13 +9,45 @@ const STORES = ['App Store', 'Google Play'] as const
 export function TargetStep() {
   const settings = useStore((s) => s.settings)
   const setSettings = useStore((s) => s.setSettings)
+  const project = useStore((s) => s.project)
+  const targetId = useStore((s) => s.targetId)
+  const setTarget = useStore((s) => s.setTarget)
+  const updateTarget = useStore((s) => s.updateTarget)
   const current = EXPORT_SIZES.find((s) => s.id === settings.sizeId) ?? EXPORT_SIZES[0]
+  // In project mode size and frame belong to the selected target, otherwise to the loose settings.
+  const put = (patch: { sizeId?: string; deviceId?: string }) =>
+    project ? updateTarget(targetId, patch) : setSettings(patch)
 
   return (
     <StepFrame
       title="Where is this set going?"
       lead="The store and device family decide the canvas size, and the size is shared by every screenshot in the set. Only the largest device per family is required — the stores downscale for the rest."
     >
+      {project && (
+        <section className="flex flex-col gap-2">
+          <h2 className="label">Target</h2>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {project.set.targets.map((t) => (
+              <button
+                key={t.id}
+                className="option-card"
+                data-active={targetId === t.id}
+                onClick={() => setTarget(t.id)}
+              >
+                <span className="text-[13px] font-semibold">{t.id}</span>
+                <span className="text-[11px] tabular-nums" style={{ color: 'var(--muted)' }}>
+                  {t.out}
+                </span>
+              </button>
+            ))}
+          </div>
+          <Tip>
+            Every target renders from the same slots and copy. Size and frame below belong to the selected
+            target.
+          </Tip>
+        </section>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
         {STORES.map((store) => (
           <button
@@ -23,8 +55,7 @@ export function TargetStep() {
             className="option-card"
             data-active={current.store === store}
             onClick={() => {
-              if (current.store !== store)
-                setSettings({ sizeId: EXPORT_SIZES.find((s) => s.store === store)!.id })
+              if (current.store !== store) put({ sizeId: EXPORT_SIZES.find((s) => s.store === store)!.id })
             }}
           >
             <span className="text-[15px] font-semibold">{store}</span>
@@ -45,7 +76,7 @@ export function TargetStep() {
               key={s.id}
               className="option-card"
               data-active={settings.sizeId === s.id}
-              onClick={() => setSettings({ sizeId: s.id })}
+              onClick={() => put({ sizeId: s.id })}
             >
               <span className="text-[13px] font-semibold">{s.label}</span>
               <span className="text-[12px] tabular-nums" style={{ color: 'var(--muted)' }}>
@@ -63,7 +94,7 @@ export function TargetStep() {
             className="field"
             style={{ width: 260 }}
             value={settings.deviceId}
-            onChange={(e) => setSettings({ deviceId: e.target.value })}
+            onChange={(e) => put({ deviceId: e.target.value })}
           >
             {DEVICE_GROUPS.map((group) => (
               <optgroup key={group} label={group}>

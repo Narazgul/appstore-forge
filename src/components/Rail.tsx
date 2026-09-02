@@ -3,6 +3,7 @@ import { getRhythm } from '../presets/rhythms'
 import { getSize } from '../presets/sizes'
 import { getTemplateSpec } from '../presets/templates'
 import { STEPS, useStore, type StepId } from '../store'
+import { LocaleSwitch } from './LocaleSwitch'
 
 type Status = 'done' | 'attention' | 'todo' | 'optional'
 
@@ -75,6 +76,7 @@ export function Rail() {
         <div className="text-[11px]" style={{ color: 'var(--muted)' }}>
           v{__APP_VERSION__}
         </div>
+        <LocaleSwitch />
       </div>
       <ol className="flex flex-col gap-0.5 px-2">
         {STEPS.map((id, i) => {
