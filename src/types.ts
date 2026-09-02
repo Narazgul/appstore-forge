@@ -97,6 +97,8 @@ export type Screen = {
   imageId: string | null
   /** per-screen overrides; any key absent here inherits from the global settings */
   overrides: ScreenOverrides
+  /** BCP-47 language of the copy; picks the script font and text direction. Absent = Latin, LTR. */
+  lang?: string
 }
 
 /** Export size is deliberately global — every shot in a set must share one canvas size. */
