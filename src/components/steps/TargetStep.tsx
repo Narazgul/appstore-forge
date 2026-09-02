@@ -1,5 +1,5 @@
 import { DEVICES, DEVICE_GROUPS, FRAME_COLORS } from '../../presets/devices'
-import { EXPORT_SIZES } from '../../presets/sizes'
+import { EXPORT_SIZES, getSize } from '../../presets/sizes'
 import { useStore } from '../../store'
 import { StepFrame, Tip } from './StepFrame'
 
@@ -34,7 +34,9 @@ export function TargetStep() {
                 data-active={targetId === t.id}
                 onClick={() => setTarget(t.id)}
               >
-                <span className="text-[13px] font-semibold">{t.id}</span>
+                <span className="text-[13px] font-semibold">
+                  {t.id} · {getSize(t.sizeId).store}
+                </span>
                 <span className="text-[11px] tabular-nums" style={{ color: 'var(--muted)' }}>
                   {t.out}
                 </span>
@@ -43,30 +45,32 @@ export function TargetStep() {
           </div>
           <Tip>
             Every target renders from the same slots and copy. Size and frame below belong to the selected
-            target.
+            target, and only sizes of its store are offered — a target cannot cross over to the other store.
           </Tip>
         </section>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {STORES.map((store) => (
-          <button
-            key={store}
-            className="option-card"
-            data-active={current.store === store}
-            onClick={() => {
-              if (current.store !== store) put({ sizeId: EXPORT_SIZES.find((s) => s.store === store)!.id })
-            }}
-          >
-            <span className="text-[15px] font-semibold">{store}</span>
-            <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
-              {store === 'App Store'
-                ? 'Up to 10 screenshots per device. PNG or JPEG, no alpha channel.'
-                : '2 to 8 phone screenshots, max 2:1 aspect. PNG or JPEG.'}
-            </span>
-          </button>
-        ))}
-      </div>
+      {!project && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {STORES.map((store) => (
+            <button
+              key={store}
+              className="option-card"
+              data-active={current.store === store}
+              onClick={() => {
+                if (current.store !== store) put({ sizeId: EXPORT_SIZES.find((s) => s.store === store)!.id })
+              }}
+            >
+              <span className="text-[15px] font-semibold">{store}</span>
+              <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
+                {store === 'App Store'
+                  ? 'Up to 10 screenshots per device. PNG or JPEG, no alpha channel.'
+                  : '2 to 8 phone screenshots, max 2:1 aspect. PNG or JPEG.'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <section className="flex flex-col gap-2">
         <h2 className="label">Canvas size</h2>
