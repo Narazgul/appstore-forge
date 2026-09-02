@@ -39,9 +39,8 @@ body:
     attributes:
       label: How are you running it
       options:
-        - Built and installed with pnpm install:app
-        - pnpm electron:dev
         - pnpm dev (browser)
+        - forge dev (installed package)
     validations:
       required: true
   - type: input

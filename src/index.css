@@ -1,5 +1,42 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'Noto Sans Arabic';
+  src: url('../fonts/NotoSansArabic.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans Thai';
+  src: url('../fonts/NotoSansThai.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('../fonts/NotoSansSC.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans TC';
+  src: url('../fonts/NotoSansTC.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans KR';
+  src: url('../fonts/NotoSansKR.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Noto Sans JP';
+  src: url('../fonts/NotoSansJP.ttf');
+  font-weight: 100 900;
+  font-display: block;
+}
+
 :root {
   --shell: #f6f6f7;
   --panel: #ffffff;
@@ -364,13 +401,8 @@ input[type='color'] {
   background: var(--panel);
   border-right: 1px solid var(--line);
 }
-/* The rail head is the window drag strip in the packaged app and clears the traffic lights. */
 .rail-head {
   padding: 18px 16px 14px;
-}
-body.is-desktop .rail-head {
-  padding-top: 44px;
-  -webkit-app-region: drag;
 }
 
 .rail-step {

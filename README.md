@@ -2,12 +2,11 @@
 
 <p align="center">
   Turn raw app screenshots into store-ready App Store and Google Play assets.<br>
-  A local Mac app. No account, no upload, no server — the images never leave your machine.
+  Runs locally in your browser. No account, no upload, no server — the images never leave your machine.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey.svg">
 </p>
 
 <p align="center">
@@ -17,7 +16,7 @@
 ---
 
 Drop your PNGs in, pick a background and a device frame, write a headline per
-screen, save the folder. Six steps, and the app tells you at every point what is
+screen, download the set. Six steps, and the app tells you at every point what is
 still missing before the set can be uploaded.
 
 - **Frames without artwork.** Devices are drawn with canvas primitives from a
@@ -33,40 +32,33 @@ still missing before the set can be uploaded.
 
 ## Build and run it
 
-There is no download. This is a build-it-yourself tool — you need Node and
-[pnpm](https://pnpm.io/installation), and three commands:
+You need Node and [pnpm](https://pnpm.io/installation):
 
 ```bash
 git clone https://github.com/hebertporto/appstore-forge.git
 cd appstore-forge
 pnpm install
-pnpm install:app     # build, install to /Applications, launch
+pnpm dev             # browser version on :4324
 ```
 
-That last command builds the app, drops it in `/Applications`, and opens it.
-From then on it is a normal Mac app — no terminal, no dev server, and it keeps
-working after you close the shell you built it from.
+Installed as a package, the same editor starts from any project folder:
 
-Just want to look at it first? `pnpm dev` runs it in a browser on `:4324` with
-no build step. Everything works there except the native folder picker — export
-falls back to a zip download.
+```bash
+forge dev --project ./store-screenshots
+```
 
-| Command             | What it does                                                         |
-| ------------------- | -------------------------------------------------------------------- |
-| `pnpm install:app`  | Build, install to `/Applications`, launch                            |
-| `pnpm dist`         | Installable `.dmg` in `release/`, if you want one                    |
-| `pnpm app`          | Unpacked `.app` in `release/mac-arm64/` — faster, for trying changes |
-| `pnpm electron:dev` | App window with hot reload, for development                          |
-| `pnpm dev`          | Plain browser version on `:4324`                                     |
+| Command          | What it does                       |
+| ---------------- | ---------------------------------- |
+| `pnpm dev`       | The editor in a browser on `:4324` |
+| `pnpm build`     | Static build in `dist/`            |
+| `pnpm typecheck` | TypeScript, no emit                |
+| `pnpm lint`      | ESLint                             |
+| `pnpm test`      | Vitest — pure logic only           |
 
 ### What you should expect
 
-- **macOS on Apple Silicon.** That is the only packaging target today. The web
-  build (`pnpm dev`) runs anywhere.
-- **The build is unsigned**, deliberately — there is no Apple Developer account
-  behind it. Because _you_ built it locally macOS does not quarantine it, so it
-  opens normally. Copy that `.app` to another Mac and Gatekeeper will block it
-  until you right-click → **Open** once. That is expected, not a broken build.
+- **It runs anywhere Node runs.** There is no packaged app and no platform
+  restriction; the editor is a normal web build served from your own machine.
 - **No releases, no binaries.** Nothing to download and nothing to trust — the
   source is the distribution.
 
@@ -81,8 +73,6 @@ export run the same code.**
 the two, so what is on screen is exactly what lands on disk.
 
 ```
-electron/main.cjs      window, native folder picker, file writes, Finder reveal
-electron/preload.cjs   context-isolated bridge exposed as window.desktop
 src/
   render/scene.ts      the renderer — background, backdrop, device placement
   render/text.ts       markup, line breaking, auto-shrink, marker bands
@@ -90,8 +80,9 @@ src/
   presets/             devices, backgrounds, fonts, layouts, rhythms, templates, sizes
   components/steps/    one file per step of the guided flow
   components/tune/     one file per section of the fine-tune panel
-  lib/export.ts        renders every screen full-size, then saves or zips
+  lib/export.ts        renders every screen full-size, then zips the set
   store.ts             zustand: screens, decoded images, settings
+fonts/                 the bundled faces, one per writing system
 samples/               four fake app screenshots for trying it out
 _context/              domain model, invariants, and workflows — read before changing code
 ```
@@ -104,10 +95,8 @@ up the second colour.
 
 ## Export
 
-Export opens a native folder picker, writes the PNGs into
-`<chosen>/store-screenshots-<size-id>/`, and reveals the folder in Finder. The
-same build running in a plain browser has no filesystem, so it falls back to a
-zip download.
+Export renders every screen at full store resolution and downloads them as
+`store-screenshots-<size-id>.zip`.
 
 Only the largest device per family is required — both stores downscale for the rest.
 
@@ -125,18 +114,16 @@ Only the largest device per family is required — both stores downscale for the
 
 ## Automation
 
-The zustand store is exposed as `window.__store`, in packaged builds too, so an
-agent driving the app over CDP (Argent, Playwright) or the devtools console can
-script it:
+The zustand store is exposed as `window.__store`, so an agent driving the app
+over CDP (Argent, Playwright) or the devtools console can script it:
 
 ```js
 await window.__store.getState().addFiles([file])
 window.__store.getState().setSettings({ layout: 'bleed', sizeId: 'android-phone' })
 ```
 
-`window.__renderExport` runs the real export renderer without the native dialog,
-and `window.desktop` exposes the Electron bridge (`chooseFolder`, `writeFiles`,
-`revealPath`). This is a local tool with no untrusted content — scripting it is a
+`window.__renderExport` runs the real export renderer without triggering a
+download. This is a local tool with no untrusted content — scripting it is a
 feature, not an exposure.
 
 ## Contributing
@@ -150,7 +137,7 @@ preferences, breaking them produces wrong exported pixels.
 
 ```bash
 pnpm install
-pnpm electron:dev
+pnpm dev
 pnpm typecheck && pnpm lint && pnpm test
 ```
 
@@ -158,9 +145,7 @@ pnpm typecheck && pnpm lint && pnpm test
 
 - Pulling screenshots straight off a booted simulator or emulator
 - Exporting every required size in one pass
-- Persisting a project between launches
-- Windows and Linux builds
-- Auto-update (rebuild to update)
+- A bundled Hebrew face — `he` is detected as RTL but renders in the system font
 
 ## License
 

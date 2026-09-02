@@ -84,14 +84,12 @@ add a rule there and every surface picks it up. A new step is a `StepId` in
 
 ## Automation hooks
 
-Exposed in packaged builds too — this is a local tool with no untrusted content,
-and scripting it is a feature.
+This is a local tool with no untrusted content, and scripting it is a feature.
 
 ```js
 window.__store // the zustand store; __store.getState().setStep('review') jumps steps
 window.__renderExport(screens, settings, images, 'png')
-// the real export renderer, no native dialog
-window.desktop // { platform, chooseFolder, writeFiles, revealPath }
+// the real export renderer, no download
 ```
 
 Load images without faking drag-and-drop:
@@ -125,14 +123,9 @@ their automation handles).
 
 ## Verifying a visual change
 
-Drive the packaged app over CDP:
-
-```
-boot-device { electronAppPath: "release/mac-arm64/AppStore Forge.app", force: true }
-```
-
-`force: true` matters — a stale instance with leftover state will otherwise be
-reused and you will verify the wrong thing.
+Drive the dev server (`pnpm dev`, `:4324`) over CDP. Start from a fresh page —
+a stale tab with leftover state will otherwise be reused and you will verify the
+wrong thing.
 
 Then:
 
@@ -161,10 +154,7 @@ it fell back.
 
 ```bash
 pnpm typecheck && pnpm lint && pnpm test
-pkill -f "AppStore Forge.app"; sleep 1
 pnpm version patch --no-git-tag-version
-pnpm install:app
 ```
 
-Then confirm the bundle: `CFBundleShortVersionString` matches, the sidebar
-subtitle shows the new version, and the DMG in `release/` is named for it.
+Then confirm the sidebar subtitle shows the new version.

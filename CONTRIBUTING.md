@@ -8,29 +8,21 @@ without a server, an account, or a subscription.
 
 ```bash
 pnpm install
-pnpm electron:dev     # the app, with hot reload — what you want while developing
+pnpm dev              # the editor on :4324, with hot reload
 ```
 
 Other useful commands:
 
-| Command           | What it does                                                     |
-| ----------------- | ---------------------------------------------------------------- |
-| `pnpm dev`        | Plain browser version on `:4324` — fastest loop for UI work      |
-| `pnpm typecheck`  | TypeScript, no emit                                              |
-| `pnpm lint`       | ESLint                                                           |
-| `pnpm test`       | Vitest, once                                                     |
-| `pnpm test:watch` | Vitest, watching                                                 |
-| `pnpm format`     | Prettier over the repo                                           |
-| `pnpm app`        | Unpacked `.app` in `release/mac-arm64/` — fastest packaged build |
-| `pnpm dist`       | Installable `.dmg` in `release/`                                 |
+| Command           | What it does            |
+| ----------------- | ----------------------- |
+| `pnpm build`      | Static build in `dist/` |
+| `pnpm typecheck`  | TypeScript, no emit     |
+| `pnpm lint`       | ESLint                  |
+| `pnpm test`       | Vitest, once            |
+| `pnpm test:watch` | Vitest, watching        |
+| `pnpm format`     | Prettier over the repo  |
 
-macOS with Apple Silicon is the only packaging target today. The web build
-(`pnpm dev`) runs anywhere, and everything except the native folder picker works
-there — export falls back to a zip download.
-
-> **Quit the app before repackaging.** `electron-builder` deletes
-> `release/mac-arm64/` while it builds. If the app is running from there it dies
-> without a crash report. `pkill -f "AppStore Forge.app"` first.
+It runs anywhere Node runs — there is no packaged app and no platform target.
 
 ## Read this before changing rendering code
 
@@ -39,7 +31,7 @@ there — export falls back to a zip download.
 - **`_context/domain.md`** — the vocabulary and the data model. Read first.
 - **`_context/rules.md`** — the invariants. These are not style preferences;
   breaking them produces wrong exported pixels.
-- **`_context/workflows.md`** — build, install, version, verify.
+- **`_context/workflows.md`** — build, run, version, verify.
 
 The single most important one: **the preview and the export run the same code.**
 `renderScene(ctx, w, h, screen, settings, sources)` is called at ~230px wide for
@@ -50,8 +42,6 @@ what the user sees stops being what they get.
 ## How the code is laid out
 
 ```
-electron/main.cjs        window, native folder picker, file writes, Finder reveal
-electron/preload.cjs     context-isolated bridge exposed as window.desktop
 src/
   render/scene.ts        the renderer — background, backdrop, device placement
   render/text.ts         markup, line breaking, auto-shrink, marker bands
@@ -59,7 +49,7 @@ src/
   presets/               devices, backgrounds, fonts, layouts, rhythms, templates, sizes
   components/steps/      one file per step of the guided flow
   components/tune/       one file per section of the fine-tune panel
-  lib/export.ts          renders every screen full-size, then saves or zips
+  lib/export.ts          renders every screen full-size, then zips the set
   store.ts               zustand: screens, decoded images, settings
 ```
 

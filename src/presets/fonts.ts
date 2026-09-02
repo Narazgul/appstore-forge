@@ -1,3 +1,5 @@
+import { SCRIPT_FONTS } from './scripts'
+
 export type FontOption = {
   id: string
   label: string
@@ -38,6 +40,11 @@ export async function preloadFonts(): Promise<void> {
   const jobs: Promise<unknown>[] = []
   for (const font of FONTS) {
     if (!font.family) continue
+    for (const weight of [400, 700]) {
+      jobs.push(document.fonts.load(`${weight} 64px "${font.family}"`).catch(() => undefined))
+    }
+  }
+  for (const font of SCRIPT_FONTS) {
     for (const weight of [400, 700]) {
       jobs.push(document.fonts.load(`${weight} 64px "${font.family}"`).catch(() => undefined))
     }
