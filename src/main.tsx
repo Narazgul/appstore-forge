@@ -8,6 +8,7 @@ import './index.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { fileProjectStore } from './adapters/fileClient'
+import { firestoreProjectStore, type CompatFirebase } from './adapters/firestoreClient'
 import { App } from './App'
 import { preloadFonts } from './presets/fonts'
 import { useStore } from './store'
@@ -16,7 +17,14 @@ import { useStore } from './store'
 // export exactly — so every family is fetched before the first paint.
 preloadFonts()
   .then(async () => {
-    if (__FORGE_PROJECT__) await useStore.getState().openProject(fileProjectStore())
+    if (import.meta.env.VITE_FORGE_ADAPTER === 'firestore') {
+      const host = (window.parent as unknown as { firebase?: CompatFirebase }).firebase
+      if (!host) throw new Error('Forge im Backoffice braucht window.parent.firebase')
+      const setId = new URLSearchParams(location.search).get('set') ?? 'default'
+      await useStore.getState().openProject(firestoreProjectStore({ setId, firebase: host }))
+    } else if (__FORGE_PROJECT__) {
+      await useStore.getState().openProject(fileProjectStore())
+    }
     createRoot(document.getElementById('root')!).render(
       <StrictMode>
         <App />
