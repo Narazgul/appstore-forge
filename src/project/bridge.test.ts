@@ -82,6 +82,10 @@ describe('paths', () => {
   it('fills the source template', () => {
     expect(sourcePath(project.set, 'de', 'budget_screen')).toBe('outputs/screenshots/de/budget_screen.png')
   })
+  it('fills every occurrence in the source template', () => {
+    const set = { ...project.set, sources: 'outputs/{locale}/{screen}/{locale}-{screen}.png' }
+    expect(sourcePath(set, 'de', 'budget_screen')).toBe('outputs/de/budget_screen/de-budget_screen.png')
+  })
   it('fills the out template with the store locale and a 1-based index', () => {
     expect(outPath(project.set.targets[0], 'de-DE', 1)).toBe('fastlane/screenshots/ios/de-DE/1_de-DE.png')
   })

@@ -28,7 +28,7 @@ export function settingsFor(project: Project, targetId: string): Settings {
 }
 
 export const sourcePath = (set: ProjectSet, localeId: string, screen: string) =>
-  set.sources.replace('{locale}', localeId).replace('{screen}', screen)
+  set.sources.replaceAll('{locale}', localeId).replaceAll('{screen}', screen)
 
 export const outPath = (target: ProjectTarget, storeLocale: string, n: number) =>
   target.out.replaceAll('{storeLocale}', storeLocale).replace('{n}', String(n))

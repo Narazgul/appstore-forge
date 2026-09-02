@@ -18,7 +18,7 @@ export function validateProject(
     if (!EXPORT_SIZES.some((s) => s.id === target.sizeId)) error(`Unknown size ${target.sizeId}`)
     if (!DEVICES.some((d) => d.id === target.deviceId)) error(`Unknown device ${target.deviceId}`)
     for (const locale of set.locales) {
-      if (!locale.store[target.id]) error(`No store locale for target ${target.id}`, { locale: locale.id })
+      if (!locale.store?.[target.id]) error(`No store locale for target ${target.id}`, { locale: locale.id })
     }
   }
 
@@ -37,7 +37,7 @@ export function validateProject(
           slot: slot.id,
           locale: locale.id,
         })
-      if (!copy[slot.id]?.headline.trim()) error('Headline missing', { slot: slot.id, locale: locale.id })
+      if (!copy[slot.id]?.headline?.trim()) error('Headline missing', { slot: slot.id, locale: locale.id })
     }
     for (const slotId of Object.keys(copy)) {
       if (!seen.has(slotId))

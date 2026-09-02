@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { validateProject } from './validate'
-import type { Project } from './types'
+import type { Project, ProjectLocale, SlotCopy } from './types'
 
 const base = (): Project => ({
   set: {
@@ -38,6 +38,27 @@ describe('validateProject', () => {
       level: 'error',
       message: 'Headline missing',
       slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('flags a copy entry without a headline instead of crashing', () => {
+    const p = base()
+    p.copies.en.a = { subhead: '' } as SlotCopy
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Headline missing',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('flags a locale without a store map instead of crashing', () => {
+    const p = base()
+    delete (p.set.locales[0] as Partial<ProjectLocale>).store
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'No store locale for target appstore',
       locale: 'en',
     })
   })
