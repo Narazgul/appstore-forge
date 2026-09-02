@@ -6,6 +6,9 @@ import { PNG } from 'pngjs'
 import { imageIdFor, outPath, screensFor, settingsFor, sourcePath } from '../src/project/bridge'
 import type { Project } from '../src/project/types'
 import { renderScene, sceneSpan } from '../src/render/scene'
+import { measureTextBlock, type TextMeasurer } from '../src/render/text'
+import { effectiveSettings } from '../src/lib/settings'
+import { getLayout } from '../src/presets/layouts'
 import { getSize } from '../src/presets/sizes'
 import { CliError } from './errors'
 import { registerFonts } from './fonts'
@@ -60,6 +63,24 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
         const span = sceneSpan(screen, settings)
         const canvas = createCanvas(size.w * span, size.h)
         const ctx = canvas.getContext('2d') as unknown as CanvasRenderingContext2D
+        // Shrunk-to-the-floor copy still renders, just unreadably small. The GUI shows it;
+        // an unattended render has to say so instead.
+        const resolved = effectiveSettings(screen, settings)
+        const block = measureTextBlock(
+          ctx as unknown as TextMeasurer,
+          size.w * span,
+          size.w,
+          size.h,
+          getLayout(resolved.layout),
+          screen,
+          resolved,
+        )
+        if (block && !block.fits) {
+          throw new CliError(
+            `Headline does not fit for slot ${screen.id}, locale ${locale.id}: shorten the copy or lower headlineScale`,
+            2,
+          )
+        }
         const at = (k: number) => images[screens[(k + screens.length) % screens.length].imageId!] ?? null
         renderScene(ctx, size.w, size.h, screen, settings, {
           self: at(i) as unknown as CanvasImageSource,

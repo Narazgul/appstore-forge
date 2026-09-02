@@ -67,15 +67,44 @@ function pieces(word: Word, lang: string | undefined): Word[] {
 export function wrap(ctx: TextMeasurer, words: Word[], maxWidth: number, lang?: string): Line[] {
   if (!words.length) return []
   const space = ctx.measureText(' ').width
+  const all = words.flatMap((w) => pieces(w, lang))
+  const widths = all.map((w) => ctx.measureText(w.text).width)
+  const measure = (ws: Word[], wd: number[]) =>
+    wd.reduce((sum, width, i) => sum + (i && !ws[i].glue ? space : 0) + width, 0)
+
+  /** A span is one contiguous run, so its whole width is the sum over its pieces. */
+  const spanWidth = (span: number) => {
+    let total = 0
+    let started = false
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].span !== span) continue
+      total += (started && !all[i].glue ? space : 0) + widths[i]
+      started = true
+    }
+    return total
+  }
+
   const lines: Line[] = []
   let line: Line = { words: [], widths: [], width: 0 }
-  for (const word of words.flatMap((w) => pieces(w, lang))) {
-    const ww = ctx.measureText(word.text).width
+  for (const [i, word] of all.entries()) {
+    const ww = widths[i]
     const gap = line.words.length && !word.glue ? space : 0
     const next = line.width + gap + ww
     if (line.words.length && next > maxWidth) {
+      // A marker band split over two lines reads as two bands, so the earlier words of the
+      // span travel down with it — unless the span is too wide to sit on one line anyway.
+      let take = 0
+      if (word.span >= 0 && spanWidth(word.span) <= maxWidth) {
+        while (take < line.words.length - 1 && line.words[line.words.length - 1 - take].span === word.span)
+          take++
+      }
+      const moved = line.words.splice(line.words.length - take, take)
+      const movedWidths = line.widths.splice(line.widths.length - take, take)
+      if (take) line.width = measure(line.words, line.widths)
       lines.push(line)
-      line = { words: [{ ...word, glue: false }], widths: [ww], width: ww }
+      const startWords = [...moved, word].map((w, j) => (j === 0 ? { ...w, glue: false } : w))
+      const startWidths = [...movedWidths, ww]
+      line = { words: startWords, widths: startWidths, width: measure(startWords, startWidths) }
     } else {
       line.words.push(word)
       line.widths.push(ww)
@@ -104,6 +133,8 @@ export type TextLayout = {
   headLines: Line[]
   subLines: Line[]
   gap: number
+  /** false when the block only "fits" because the shrink hit its floor — the copy is too long */
+  fits: boolean
 }
 
 export const HEAD_LH = 1.14
@@ -143,12 +174,13 @@ export function layoutText(
     const headLines = wrap(ctx, headWords, maxWidth, screen.lang)
     setSubFont(ctx, subSize, settings, screen.lang)
     const subLines = wrap(ctx, subWords, maxWidth, screen.lang)
-    const candidate = { headSize, subSize, headLines, subLines, gap }
-    if (blockHeight(candidate) <= maxHeight || headSize < h * 0.014) return candidate
+    const candidate = { headSize, subSize, headLines, subLines, gap, fits: true }
+    if (blockHeight(candidate) <= maxHeight) return candidate
+    if (headSize < h * 0.014) return { ...candidate, fits: false }
     headSize *= 0.94
     subSize *= 0.94
   }
-  return { headSize, subSize, headLines: [], subLines: [], gap }
+  return { headSize, subSize, headLines: [], subLines: [], gap, fits: false }
 }
 
 /** Draw one line of words at `y` (top of the em box), with marker bands under starred spans. */
@@ -202,6 +234,31 @@ function drawLine(
   line.words.forEach((word, i) => ctx.fillText(word.text, xs[i], y))
 }
 
+/** The text box: the tile minus padding by default, or wherever the layout puts it. */
+const textBox = (layout: Layout, W: number, tileW: number) => ({
+  left: layout.text!.left !== undefined ? W * layout.text!.left : tileW * layout.padX,
+  maxWidth: layout.text!.width !== undefined ? W * layout.text!.width : tileW * (1 - layout.padX * 2),
+})
+
+/**
+ * The measurement `drawTextBlock` does, without drawing. The CLI runs it up front so copy
+ * that only "fits" by shrinking past the floor aborts the render instead of shipping tiny.
+ * Returns null for a composition that carries no copy.
+ */
+export function measureTextBlock(
+  ctx: TextMeasurer,
+  W: number,
+  tileW: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+): TextLayout | null {
+  if (!layout.text || (!screen.headline && !screen.subhead)) return null
+  const { maxWidth } = textBox(layout, W, tileW)
+  return layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h)
+}
+
 export function drawTextBlock(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -213,9 +270,7 @@ export function drawTextBlock(
 ) {
   if (!layout.text || (!screen.headline && !screen.subhead)) return
 
-  // The text box: the tile minus padding by default, or wherever the layout puts it.
-  const boxLeft = layout.text.left !== undefined ? W * layout.text.left : tileW * layout.padX
-  const maxWidth = layout.text.width !== undefined ? W * layout.text.width : tileW * (1 - layout.padX * 2)
+  const { left: boxLeft, maxWidth } = textBox(layout, W, tileW)
   const bandTop = layout.text.top * h
   const bandHeight = layout.text.height * h
   const block = layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h)
@@ -234,6 +289,9 @@ export function drawTextBlock(
   ctx.save()
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
+  // The words are placed by hand; `direction` is what makes the engine shape and order the
+  // glyphs inside one word right to left.
+  ctx.direction = rtl ? 'rtl' : 'ltr'
   ctx.fillStyle = settings.textColor
 
   setHeadFont(ctx, headSize, settings, screen.lang)

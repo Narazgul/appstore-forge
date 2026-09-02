@@ -94,6 +94,23 @@ describe('wrap', () => {
     expect(wrap(ctx, [], 500)).toEqual([])
   })
 
+  it('moves a whole marker span to the next line rather than splitting the band', () => {
+    // 'Jeder Euro ein' is 140 wide, adding ' Ziel' makes 190 — the span is 80 and fits alone.
+    const lines = wrap(ctx, parseMarkup('Jeder Euro *ein Ziel*'), 150)
+    expect(lines.map((l) => l.words.map((w) => w.text).join(' '))).toEqual(['Jeder Euro', 'ein Ziel'])
+    expect(lines.map((l) => l.width)).toEqual([100, 80])
+  })
+
+  it('still breaks inside a span that is wider than the line', () => {
+    const lines = wrap(ctx, parseMarkup('*aaaa bbbb cccc*'), 90)
+    expect(lines.map((l) => l.words.map((w) => w.text).join(' '))).toEqual(['aaaa bbbb', 'cccc'])
+  })
+
+  it('leaves words outside a span where they were', () => {
+    const lines = wrap(ctx, parseMarkup('Jeder Euro ein Ziel'), 150)
+    expect(lines.map((l) => l.words.map((w) => w.text).join(' '))).toEqual(['Jeder Euro ein', 'Ziel'])
+  })
+
   it('records a per-word width for every word, which drawing relies on', () => {
     const [line] = wrap(ctx, parseMarkup('a bb ccc'), 1000)
     expect(line.widths).toEqual([10, 20, 30])
@@ -119,6 +136,24 @@ describe('layoutText', () => {
   it('stops shrinking at the floor instead of vanishing', () => {
     const block = layoutText(measurer(), screen('a b c d e f g h'), DEFAULT_SETTINGS, 10, 1, H)
     expect(block.headSize).toBeGreaterThan(0)
+  })
+
+  it('reports a fit when the copy is inside the available height', () => {
+    expect(layoutText(measurer(), screen('Short'), DEFAULT_SETTINGS, 10_000, H, H).fits).toBe(true)
+    const shrunk = layoutText(
+      measurer(),
+      screen('one two three four five six seven eight nine ten eleven twelve'),
+      DEFAULT_SETTINGS,
+      400,
+      H * 0.05,
+      H,
+    )
+    expect(shrunk.fits).toBe(true)
+  })
+
+  it('reports no fit when the shrink hits the floor', () => {
+    const block = layoutText(measurer(), screen('a b c d e f g h'), DEFAULT_SETTINGS, 10, 1, H)
+    expect(block.fits).toBe(false)
   })
 
   it('scales with the headline multiplier', () => {
@@ -207,6 +242,7 @@ describe('drawTextBlock geometry', () => {
       letterSpacing: '0px',
       textAlign: 'left',
       textBaseline: 'top',
+      direction: 'ltr',
       fillStyle: '',
       globalAlpha: 1,
       measureText: (text: string) => ({ width: text.length * 10 }),
@@ -217,7 +253,7 @@ describe('drawTextBlock geometry', () => {
       roundRect: (x: number, _y: number, w: number) => bands.push({ left: x, right: x + w }),
       fillText: (text: string, x: number) => texts.push({ text, x }),
     }
-    return { ctx: ctx as unknown as CanvasRenderingContext2D, texts, bands }
+    return { ctx: ctx as unknown as CanvasRenderingContext2D, texts, bands, state: ctx }
   }
 
   // 'panorama' pins the text box explicitly, so boxLeft and maxWidth are exact.
@@ -246,6 +282,11 @@ describe('drawTextBlock geometry', () => {
     const { texts } = render('de')
     expect(texts[0].x).toBeCloseTo(boxLeft, 6)
     expect(texts[1].x).toBeCloseTo(boxLeft + 120, 6)
+  })
+
+  it('puts the context into RTL so the engine shapes the run right to left', () => {
+    expect(render('ar').state.direction).toBe('rtl')
+    expect(render('de').state.direction).toBe('ltr')
   })
 
   it('spans the marker band across an RTL phrase whatever the word order', () => {
