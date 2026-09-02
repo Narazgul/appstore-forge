@@ -39,14 +39,29 @@ export const stripMarkup = (text: string) =>
 
 export type Line = { words: Word[]; widths: number[]; width: number }
 
-/** Split a whitespace-free word into segmenter pieces; Latin words come back whole. */
+/**
+ * Split a whitespace-free word into segmenter pieces; Latin words come back whole.
+ * Punctuation is never a piece of its own — the segmenter reports it separately, but a break
+ * in front of it would strand a comma at the start of a CJK line and tear `$9.99` in two.
+ */
 function pieces(word: Word, lang: string | undefined): Word[] {
   if (!lang || typeof Intl.Segmenter !== 'function') return [word]
-  const segments = Array.from(new Intl.Segmenter(lang, { granularity: 'word' }).segment(word.text))
-    .map((s) => s.segment)
-    .filter((s) => s.trim())
-  if (segments.length <= 1) return [word]
-  return segments.map((text, i) => ({ text, span: word.span, glue: i > 0 }))
+  const out: Word[] = []
+  let lead = ''
+  for (const { segment, isWordLike } of new Intl.Segmenter(lang, { granularity: 'word' }).segment(
+    word.text,
+  )) {
+    if (!segment.trim()) continue
+    if (isWordLike) {
+      out.push({ text: lead + segment, span: word.span, glue: out.length > 0 })
+      lead = ''
+    } else if (out.length) {
+      out[out.length - 1].text += segment
+    } else {
+      lead += segment
+    }
+  }
+  return out.length > 1 ? out : [word]
 }
 
 export function wrap(ctx: TextMeasurer, words: Word[], maxWidth: number, lang?: string): Line[] {
