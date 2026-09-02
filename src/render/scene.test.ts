@@ -95,7 +95,16 @@ describe('textFloor', () => {
   it('leaves a text-below composition where the layout put it', () => {
     const layout = getLayout('text-bottom')
     const [plain] = composeDevices(layout, 'center', TILE.w, TILE.h, ASPECT, 1, 0)
-    const [floored] = composeDevices(layout, 'center', TILE.w, TILE.h, ASPECT, 1, 0, textFloor(layout, TILE.h))
+    const [floored] = composeDevices(
+      layout,
+      'center',
+      TILE.w,
+      TILE.h,
+      ASPECT,
+      1,
+      0,
+      textFloor(layout, TILE.h),
+    )
     expect(floored.box).toEqual(plain.box)
   })
 })
