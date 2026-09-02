@@ -64,7 +64,7 @@ src/render/frames.ts  device body, bezel, screen clip, Dynamic Island / punch-ho
 src/presets/          backgrounds, devices, fonts, layouts, rhythms, templates, positions, sizes
 src/render/placeholder.ts  drawn stand-in screenshot for template thumbnails
 src/lib/settings.ts   override resolution + section grouping
-src/lib/export.ts     full-size render → native save, or zip in a browser
+src/lib/export.ts     full-size render → zip download
 src/store.ts          zustand: screens, decoded images, settings, selection, step
 src/lib/progress.ts   readiness(): the one reading of "how far along is the set" — rail, footer and review all use it
 src/components/Rail.tsx          the guided flow: six steps with status; navigation, never a gate
@@ -74,7 +74,7 @@ src/components/TunePanel.tsx     the full control set, scoped to all screens or 
 src/components/StorePreview.tsx  the set inside a mock App Store product page (Review step)
 src/render/placeholder.ts  drawn stand-in screenshot for template thumbnails
 src/lib/settings.ts   override resolution + section grouping
-src/lib/export.ts     full-size render → native save, or zip in a browser
+src/lib/export.ts     full-size render → zip download
 src/store.ts          zustand: screens, decoded images, settings, selection, page
 ```
 

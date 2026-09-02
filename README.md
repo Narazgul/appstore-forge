@@ -145,6 +145,7 @@ pnpm typecheck && pnpm lint && pnpm test
 
 - Pulling screenshots straight off a booted simulator or emulator
 - Exporting every required size in one pass
+- A bundled Hebrew face — `he` is detected as RTL but renders in the system font
 
 ## License
 

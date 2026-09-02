@@ -8,7 +8,7 @@ const { version } = JSON.parse(readFileSync('./package.json', 'utf8'))
 export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(version) },
   plugins: [react(), tailwindcss()],
-  // Packaged builds load over file://, which has no site root — assets must be relative.
+  // Consumers may serve the bundle from a sub-path, so assets stay relative.
   base: './',
   build: { outDir: 'dist', emptyOutDir: true },
   // Only pure logic is unit-tested — anything touching a real canvas is verified visually

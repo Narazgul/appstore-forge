@@ -14,7 +14,7 @@ export const SCRIPT_FONTS: ScriptFont[] = [
   {
     family: 'Noto Sans TC',
     file: 'NotoSansTC.ttf',
-    test: (l) => l === 'zh-TW' || l === 'zh-Hant' || l.startsWith('zh-Hant'),
+    test: (l) => l.startsWith('zh-Hant') || starts('zh-TW', 'zh-HK', 'zh-MO')(l),
   },
   { family: 'Noto Sans SC', file: 'NotoSansSC.ttf', test: starts('zh') },
   { family: 'Noto Sans KR', file: 'NotoSansKR.ttf', test: starts('ko') },
@@ -24,6 +24,7 @@ export const SCRIPT_FONTS: ScriptFont[] = [
 export const scriptFontFor = (lang: string | undefined): ScriptFont | null =>
   lang ? (SCRIPT_FONTS.find((f) => f.test(lang)) ?? null) : null
 
+/** Hebrew is detected here but has no bundled face; `he` falls back to the system font. */
 export const isRtl = (lang: string | undefined): boolean => !!lang && starts('ar', 'he', 'fa', 'ur')(lang)
 
 export function fontStackFor(fontId: string, lang: string | undefined): string {
