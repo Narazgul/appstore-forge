@@ -7,6 +7,7 @@ import { imageIdFor, outPath, screensFor, settingsFor, sourcePath } from '../src
 import type { Project } from '../src/project/types'
 import { renderScene, sceneSpan } from '../src/render/scene'
 import { getSize } from '../src/presets/sizes'
+import { CliError } from './errors'
 import { registerFonts } from './fonts'
 
 type Options = { project: Project; repoRoot: string; targetIds?: string[]; localeIds?: string[] }
@@ -17,6 +18,14 @@ function rgbPng(width: number, height: number, rgba: Uint8ClampedArray): Buffer 
   return PNG.sync.write(png, { colorType: 2 })
 }
 
+function pick<T extends { id: string }>(all: T[], wanted: string[] | undefined, kind: string): T[] {
+  if (!wanted) return all
+  for (const id of wanted) {
+    if (!all.some((item) => item.id === id)) throw new CliError(`Unknown ${kind} ${id}`, 2)
+  }
+  return all.filter((item) => wanted.includes(item.id))
+}
+
 async function clearPngs(dir: string) {
   await mkdir(dir, { recursive: true })
   for (const name of await readdir(dir)) if (name.endsWith('.png')) await unlink(join(dir, name))
@@ -25,9 +34,12 @@ async function clearPngs(dir: string) {
 export async function renderProject({ project, repoRoot, targetIds, localeIds }: Options): Promise<string[]> {
   registerFonts()
   const { set } = project
-  const targets = set.targets.filter((t) => !targetIds || targetIds.includes(t.id))
-  const locales = set.locales.filter((l) => !localeIds || localeIds.includes(l.id))
+  const targets = pick(set.targets, targetIds, 'target')
+  const locales = pick(set.locales, localeIds, 'locale')
   const written: string[] = []
+  // One render pass owns each output folder: clearing per locale would wipe what an earlier
+  // locale wrote whenever two locales or two targets share a directory.
+  const cleared = new Set<string>()
 
   for (const locale of locales) {
     const images: Record<string, Image> = {}
@@ -43,7 +55,6 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
       const settings = settingsFor(project, target.id)
       const size = getSize(settings.sizeId)
       const storeLocale = locale.store[target.id]
-      const cleared = new Set<string>()
       let n = 0
       for (const [i, screen] of screens.entries()) {
         const span = sceneSpan(screen, settings)

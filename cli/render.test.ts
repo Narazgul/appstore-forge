@@ -85,6 +85,24 @@ describe('renderProject', () => {
     await expect(readFile(join(repo, 'android/de-DE/9_de-DE.png'))).rejects.toThrow()
   })
 
+  it('keeps files from an earlier locale when two locales share an output folder', async () => {
+    const { repo, project } = await fixture()
+    for (const target of project.set.targets) target.out = 'shared/{n}_{storeLocale}.png'
+    await renderProject({ project, repoRoot: repo, targetIds: ['play'] })
+    expect(await readFile(join(repo, 'shared/1_en-US.png'))).toBeTruthy()
+    expect(await readFile(join(repo, 'shared/1_de-DE.png'))).toBeTruthy()
+  })
+
+  it('fails when a requested target or locale is unknown', async () => {
+    const { repo, project } = await fixture()
+    await expect(renderProject({ project, repoRoot: repo, targetIds: ['nope'] })).rejects.toThrow(
+      /Unknown target nope/,
+    )
+    await expect(renderProject({ project, repoRoot: repo, localeIds: ['xx'] })).rejects.toThrow(
+      /Unknown locale xx/,
+    )
+  })
+
   it('fails with slot and locale when a source is missing', async () => {
     const { repo, project } = await fixture()
     project.set.slots[0].screen = 'missing'
