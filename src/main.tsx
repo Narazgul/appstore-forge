@@ -15,6 +15,12 @@ import { useStore } from './store'
 
 // Canvas measures text against whatever is actually loaded, and the preview must match the
 // export exactly — so every family is fetched before the first paint.
+const root = document.getElementById('root')!
+root.style.padding = '24px'
+root.style.font = '14px system-ui, sans-serif'
+root.style.color = '#666'
+root.textContent = 'AppStore Forge lädt Schriften und Quellbilder …'
+
 preloadFonts()
   .then(async () => {
     if (import.meta.env.VITE_FORGE_ADAPTER === 'firestore') {
@@ -25,7 +31,9 @@ preloadFonts()
     } else if (__FORGE_PROJECT__) {
       await useStore.getState().openProject(fileProjectStore())
     }
-    createRoot(document.getElementById('root')!).render(
+    root.removeAttribute('style')
+    root.textContent = ''
+    createRoot(root).render(
       <StrictMode>
         <App />
       </StrictMode>,
@@ -34,7 +42,6 @@ preloadFonts()
   .catch((error: unknown) => {
     // Fonts and the project are loaded before the first paint, so a failure here would
     // otherwise leave a white page with nothing to go on.
-    const root = document.getElementById('root')!
     root.style.padding = '24px'
     root.textContent = `AppStore Forge could not start: ${error instanceof Error ? error.message : String(error)}`
   })
