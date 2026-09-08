@@ -384,10 +384,20 @@ function scheduleSave(get: () => State) {
         if (get().lastError?.startsWith(SAVE_FAILED)) setLastError(null)
       },
       (error: unknown) => {
-        setLastError(`${SAVE_FAILED} ${error instanceof Error ? error.message : String(error)}`)
+        setLastError(`${SAVE_FAILED} ${describeError(error)}`)
       },
     )
   }, 300)
+}
+
+/**
+ * A Firestore rejection carries the useful half in `code`: permission-denied, not-found and
+ * invalid-argument point at three completely different causes and the message alone hides which.
+ */
+export function describeError(error: unknown): string {
+  const code = (error as { code?: string } | null)?.code
+  const message = error instanceof Error ? error.message : String(error)
+  return code ? `${message} (${code})` : message
 }
 
 /** Prefix, so a later success can clear exactly this message and not someone else's. */
@@ -794,7 +804,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       await projectStore.save(next)
     } catch (error) {
-      set({ lastError: `Approval not saved: ${error instanceof Error ? error.message : String(error)}` })
+      set({ lastError: `Approval not saved: ${describeError(error)}` })
       return
     }
     if (get().project !== project) return

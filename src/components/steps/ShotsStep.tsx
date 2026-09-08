@@ -63,8 +63,8 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
         <div className="flex min-w-0 flex-1 flex-wrap gap-5" onClick={() => selectScreen(null)}>
           {r.total === 0 && !canAdd ? (
             <p className="text-[13px]" style={{ color: 'var(--muted)' }}>
-              Add screenshots to see the controls take effect. Changes to all screens still apply to
-              screens you add later.
+              Add screenshots to see the controls take effect. Changes to all screens still apply to screens
+              you add later.
             </p>
           ) : (
             screens.map((screen, i) => (
@@ -99,8 +99,8 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
       </div>
 
       <Tip>
-        Lead with what the user gets, not the feature name: "Hands full? *Just say it.*" beats "Voice
-        input". Captures are fitted top-anchored, so the status bar stays and the bottom crops.
+        Lead with what the user gets, not the feature name: "Hands full? *Just say it.*" beats "Voice input".
+        Captures are fitted top-anchored, so the status bar stays and the bottom crops.
       </Tip>
     </StepFrame>
   )

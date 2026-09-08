@@ -10,7 +10,9 @@ import type { Project, ProjectCopies, ProjectSet } from '../project/types'
 export type CompatFirebase = {
   firestore(): { collection(path: string): { doc(id: string): CompatDoc } }
   storage(): { ref(path: string): { getDownloadURL(): Promise<string> } }
-  auth(): { currentUser: { email: string | null } | null }
+  auth(): {
+    currentUser: { email: string | null; getIdToken(forceRefresh?: boolean): Promise<string> } | null
+  }
 }
 type CompatDoc = {
   get(): Promise<{ exists: boolean; data(): unknown }>
@@ -47,6 +49,9 @@ export function parseGalleryDoc(data: unknown): Record<string, Gallery> {
 const MISSING_SOURCE = 'data:image/png;base64,'
 
 const unique = (names: string[]) => [...new Set(names)]
+
+const isPermissionDenied = (error: unknown) =>
+  (error as { code?: string } | null)?.code === 'permission-denied'
 
 export function firestoreProjectStore({
   setId,
@@ -102,8 +107,19 @@ export function firestoreProjectStore({
       }
       ownWrite = payload.updatedAt
       // `update` and not `set`: the document also carries the gallery lists, which belong to the
-      // sync and not to the GUI. A full write would drop them until the next build:aso.
-      await doc().update(payload)
+      // sync and not to the GUI. A full write would drop them until the next build:aso. And not
+      // `set(…, {merge: true})` either — that merges deeply, so a removed slot would linger as a
+      // ghost in copies.<locale> and keep counting towards the approval hash.
+      try {
+        await doc().update(payload)
+      } catch (error) {
+        if (!isPermissionDenied(error)) throw error
+        // The rule wants request.auth.token.admin, and a custom claim lives in the ID token, not
+        // in the account: a tab left open long enough still carries a token from before the claim.
+        // Reading keeps working, only the write is refused — so refresh once and try again.
+        await firebase.auth().currentUser?.getIdToken(true)
+        await doc().update(payload)
+      }
     },
     sourceUrl(localeId, screen) {
       return urls.get(`${localeId}/${screen}`) ?? MISSING_SOURCE

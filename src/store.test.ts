@@ -13,6 +13,7 @@ import {
   templateSettings,
   useStore,
   variantFor,
+  describeError,
   freeSlotId,
   hasUnsavedWork,
   OUTSIDE_CHANGE,
@@ -685,5 +686,19 @@ describe('an outside change while this editor holds unsaved work', () => {
     expect(useStore.getState().lastError).toMatch(SAVE_FAILED)
     outsideWrite()
     expect(useStore.getState().project!.copies.en.a.headline).toBe('Meine Arbeit')
+  })
+})
+
+describe('describeError', () => {
+  it('keeps the Firestore code, which names the cause the message hides', () => {
+    const denied = Object.assign(new Error('Missing or insufficient permissions.'), {
+      code: 'permission-denied',
+    })
+    expect(describeError(denied)).toBe('Missing or insufficient permissions. (permission-denied)')
+  })
+
+  it('falls back to the plain message when there is no code', () => {
+    expect(describeError(new Error('offline'))).toBe('offline')
+    expect(describeError('something')).toBe('something')
   })
 })

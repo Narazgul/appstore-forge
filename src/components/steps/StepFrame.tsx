@@ -14,10 +14,7 @@ export function StepFrame({
   children: React.ReactNode
 }) {
   return (
-    <div
-      className="mx-auto flex w-full flex-col gap-6"
-      style={{ maxWidth: wide ? '1600px' : '72rem' }}
-    >
+    <div className="mx-auto flex w-full flex-col gap-6" style={{ maxWidth: wide ? '1600px' : '72rem' }}>
       <div className="flex items-end justify-between gap-6">
         <div>
           <h1 className="text-[20px] font-semibold tracking-tight">{title}</h1>
