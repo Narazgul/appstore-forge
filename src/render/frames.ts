@@ -18,6 +18,20 @@ function drawCoverTop(ctx: CanvasRenderingContext2D, img: CanvasImageSource, b: 
   ctx.drawImage(img, b.x + (b.w - dw) / 2, b.y, dw, dh)
 }
 
+/**
+ * An image on its own: contain-fitted and centred in the box, no body, no bezel, no notch.
+ * Nothing is filled behind it, so a PNG with an alpha channel keeps the background showing through.
+ */
+export function drawArtwork(ctx: CanvasRenderingContext2D, box: Box, img: CanvasImageSource) {
+  const iw = (img as HTMLImageElement).naturalWidth || (img as HTMLCanvasElement).width
+  const ih = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height
+  if (!iw || !ih) return
+  const scale = Math.min(box.w / iw, box.h / ih)
+  const dw = iw * scale
+  const dh = ih * scale
+  ctx.drawImage(img, box.x + (box.w - dw) / 2, box.y + (box.h - dh) / 2, dw, dh)
+}
+
 function drawNotch(ctx: CanvasRenderingContext2D, screen: Box, device: DeviceSpec, frameW: number) {
   if (device.notch === 'island') {
     const w = frameW * 0.3

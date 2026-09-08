@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { preloadScriptFonts } from './presets/fonts'
 import { getRhythm, rhythmStep } from './presets/rhythms'
 import { getTemplateSpec } from './presets/templates'
-import { imageIdFor, screensFor, settingsFor } from './project/bridge'
+import { artworkIdFor, imageIdFor, screensFor, settingsFor } from './project/bridge'
 import { approvalHash } from './project/hash'
 import type { ProjectStore } from './project/store'
 import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy } from './project/types'
@@ -231,8 +231,17 @@ async function loadProjectImages(
   project: Project,
   store: ProjectStore,
 ): Promise<Record<string, HTMLImageElement>> {
+  const artworkUrl = store.artworkUrl?.bind(store)
   const keys = project.set.locales.flatMap((l) =>
-    project.set.slots.map((s) => ({ id: imageIdFor(l.id, s.screen), url: store.sourceUrl(l.id, s.screen) })),
+    project.set.slots.flatMap((s) => {
+      const rows = [{ id: imageIdFor(l.id, s.screen), url: store.sourceUrl(l.id, s.screen) }]
+      for (const screen of [s.pair, s.pairPrev]) {
+        if (screen) rows.push({ id: imageIdFor(l.id, screen), url: store.sourceUrl(l.id, screen) })
+      }
+      if (s.artwork && artworkUrl)
+        rows.push({ id: artworkIdFor(l.id, s.artwork), url: artworkUrl(l.id, s.artwork) })
+      return rows
+    }),
   )
   const results = await Promise.allSettled(keys.map(({ url }) => loadImageUrl(url)))
   const images: Record<string, HTMLImageElement> = {}
@@ -603,7 +612,11 @@ export const useStore = create<State>((set, get) => ({
   approve: async (by) => {
     const { project, projectStore } = get()
     if (!project || !projectStore) return
-    const hash = await approvalHash(project, (l, s) => projectStore.sourceBytes(l, s))
+    const hash = await approvalHash(
+      project,
+      (l, s) => projectStore.sourceBytes(l, s),
+      projectStore.artworkBytes?.bind(projectStore),
+    )
     // An edit while the hash was computing wins; approving the older project would be a lie.
     if (get().project !== project) return
     const next: Project = {
@@ -626,7 +639,11 @@ export const useStore = create<State>((set, get) => ({
     const { project, projectStore } = get()
     if (!project || !projectStore) return set({ approvalOk: null })
     if (!project.set.approval) return set({ approvalOk: false })
-    const hash = await approvalHash(project, (l, s) => projectStore.sourceBytes(l, s))
+    const hash = await approvalHash(
+      project,
+      (l, s) => projectStore.sourceBytes(l, s),
+      projectStore.artworkBytes?.bind(projectStore),
+    )
     if (get().project !== project) return
     const ok = hash === project.set.approval.hash
     // A stamp that no longer matches the files is stale in exactly the sense an edit makes it.

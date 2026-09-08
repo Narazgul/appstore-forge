@@ -55,7 +55,13 @@ appear in the picker as "<Template> (template)".
 `src/presets/positions.ts`. Placements draw back to front. `dx`/`dy` are offsets
 from the slot centre as fractions of canvas width/height. `source` picks which
 screenshot fills that frame — `'self' | 'next' | 'prev'` — and indices wrap, so a
-multi-device arrangement still works with one screen loaded.
+multi-device arrangement still works with one screen loaded. A project slot's
+`pair` replaces what `'next'` resolves to.
+
+`source: 'artwork'` is the exception: it takes the slot's own `artwork` image, has
+no fallback to `self`, and with `frameless: true` is drawn contain-fitted and bare
+instead of inside a device. Without an artwork nothing is drawn there — which is
+why `validateProject` refuses a slot whose arrangement asks for one and has none.
 
 Watch the edges: flanking devices bleeding off-canvas is fine, but cutting into
 legible content in the neighbouring screenshot is not.

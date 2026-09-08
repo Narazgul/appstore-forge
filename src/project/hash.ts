@@ -14,10 +14,15 @@ export function canonicalJson(value: unknown): string {
 const hex = (buf: ArrayBuffer) =>
   Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('')
 
-/** Text parts first, then every referenced source image in locale × slot order. */
+/**
+ * Text parts first, then every referenced source image in locale × slot order, then the paired
+ * screens and the artwork of the slots that name one. Those two come last and only when a slot
+ * has them, so a set with neither keeps the exact hash it had before the feature existed.
+ */
 export async function approvalHash(
   project: Project,
   sourceBytes: (localeId: string, screen: string) => Promise<Uint8Array>,
+  artworkBytes?: (localeId: string, artwork: string) => Promise<Uint8Array>,
 ): Promise<string> {
   const { approval: _ignored, ...set } = project.set
   // A note is a message about the set, not part of it — hashing it would make feedback stale an approval.
@@ -27,6 +32,20 @@ export async function approvalHash(
   ]
   for (const locale of set.locales) {
     for (const slot of set.slots) parts.push(await sourceBytes(locale.id, slot.screen))
+  }
+  for (const locale of set.locales) {
+    for (const slot of set.slots) {
+      for (const screen of [slot.pair, slot.pairPrev]) {
+        if (screen) parts.push(await sourceBytes(locale.id, screen))
+      }
+    }
+  }
+  if (artworkBytes) {
+    for (const locale of set.locales) {
+      for (const slot of set.slots) {
+        if (slot.artwork) parts.push(await artworkBytes(locale.id, slot.artwork))
+      }
+    }
   }
   const total = parts.reduce((n, p) => n + p.byteLength, 0)
   const joined = new Uint8Array(total)

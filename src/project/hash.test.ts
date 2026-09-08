@@ -54,4 +54,35 @@ describe('approvalHash', () => {
   it('changes when a source image changes', async () => {
     expect(await approvalHash(project(), bytes('img2'))).not.toBe(await approvalHash(project(), bytes('img')))
   })
+
+  it('is unchanged for a set that names no artwork, whether or not a reader is passed', async () => {
+    expect(await approvalHash(project(), bytes('img'), bytes('art'))).toBe(
+      await approvalHash(project(), bytes('img')),
+    )
+  })
+
+  it('changes when a slot gains an artwork', async () => {
+    const p = project()
+    p.set.slots[0].artwork = 'pain-points'
+    expect(await approvalHash(p, bytes('img'), bytes('art'))).not.toBe(
+      await approvalHash(project(), bytes('img'), bytes('art')),
+    )
+  })
+
+  it('changes when the artwork bytes change, exactly like a screenshot', async () => {
+    const p = project()
+    p.set.slots[0].artwork = 'pain-points'
+    expect(await approvalHash(p, bytes('img'), bytes('art2'))).not.toBe(
+      await approvalHash(p, bytes('img'), bytes('art')),
+    )
+  })
+
+  it('changes when the paired screen changes', async () => {
+    const p = project()
+    p.set.slots[0].pair = 'other'
+    const paired = async (_l: string, screen: string) => new TextEncoder().encode(`img-${screen}`)
+    const other = async (_l: string, screen: string) =>
+      new TextEncoder().encode(screen === 'other' ? 'moved' : 'img-shot')
+    expect(await approvalHash(p, paired)).not.toBe(await approvalHash(p, other))
+  })
 })

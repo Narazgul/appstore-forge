@@ -109,6 +109,78 @@ describe('validateProject', () => {
     expect(validateProject(p, always)).toEqual([])
   })
 
+  it('flags a slot whose arrangement needs an artwork but names none', () => {
+    const p = base()
+    p.set.slots[0].overrides = { positionId: 'duo-artwork' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Arrangement duo-artwork needs an artwork, but the slot names none',
+      slot: 'a',
+    })
+  })
+
+  it('takes the arrangement from the set settings when the slot overrides nothing', () => {
+    const p = base()
+    p.set.settings = { positionId: 'duo-artwork' }
+    expect(validateProject(p, always).map((i) => i.message)).toContain(
+      'Arrangement duo-artwork needs an artwork, but the slot names none',
+    )
+  })
+
+  it('flags an artwork file that is not there', () => {
+    const p = base()
+    p.set.slots[0].artwork = 'pain-points'
+    expect(validateProject(p, always, () => false)).toContainEqual({
+      level: 'error',
+      message: 'Artwork image missing: aso/artwork/pain-points.png',
+      slot: 'a',
+    })
+  })
+
+  it('names the language too when the artwork template is per-language', () => {
+    const p = base()
+    p.set.artworkSources = 'art/{locale}/{artwork}.png'
+    p.set.slots[0].artwork = 'pain-points'
+    expect(validateProject(p, always, () => false)).toContainEqual({
+      level: 'error',
+      message: 'Artwork image missing: art/en/pain-points.png',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('accepts a slot whose artwork is there', () => {
+    const p = base()
+    p.set.slots[0].artwork = 'pain-points'
+    p.set.slots[0].overrides = { positionId: 'duo-artwork' }
+    expect(validateProject(p, always, always)).toEqual([])
+  })
+
+  it('insists on an {artwork} placeholder in the template', () => {
+    const p = base()
+    p.set.artworkSources = 'aso/artwork/fixed.png'
+    expect(validateProject(p, always).map((i) => i.message)).toContain(
+      'artworkSources must contain {artwork}',
+    )
+  })
+
+  it('flags a missing source for the paired screen', () => {
+    const p = base()
+    p.set.slots[0].pair = 'other'
+    expect(validateProject(p, (_l, screen) => screen !== 'other')).toContainEqual({
+      level: 'error',
+      message: 'Source image missing: src/en/other.png',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('accepts a pair whose source is there', () => {
+    const p = base()
+    p.set.slots[0].pair = 'other'
+    expect(validateProject(p, always)).toEqual([])
+  })
+
   it('rejects artwork slots until they are implemented', () => {
     const p = base()
     p.set.slots[0].kind = 'artwork'

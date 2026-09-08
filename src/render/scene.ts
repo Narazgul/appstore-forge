@@ -4,7 +4,7 @@ import { getLayout } from '../presets/layouts'
 import { getPosition } from '../presets/positions'
 import { effectiveSettings } from '../lib/settings'
 import { drawTextBlock } from './text'
-import { drawDevice, type Box } from './frames'
+import { drawArtwork, drawDevice, type Box } from './frames'
 
 export function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, bg: Background) {
   if (bg.kind === 'solid') {
@@ -55,7 +55,7 @@ function drawBackdrop(
  */
 export type SceneSources = Partial<Record<PlacementSource, CanvasImageSource | null>>
 
-export type DeviceBox = { box: Box; source: PlacementSource; angle: number }
+export type DeviceBox = { box: Box; source: PlacementSource; angle: number; frameless: boolean }
 
 /**
  * Where every device frame of a composition sits, back to front. `w`/`h` are one store tile.
@@ -99,6 +99,7 @@ export function composeDevices(
       box: { x: cx + placement.dx * W - fw / 2, y: cyClamped + placement.dy * h - fh / 2, w: fw, h: fh },
       source: placement.source,
       angle: placement.rotate + tilt,
+      frameless: placement.frameless === true,
     }
   })
 }
@@ -152,10 +153,12 @@ export function renderScene(
     textFloor(layout, h),
   )
 
-  for (const { box, source, angle } of boxes) {
+  for (const { box, source, angle, frameless } of boxes) {
     // A multi-device arrangement falls back to the current screenshot when there is no
-    // neighbour, so a single-screen project still renders every frame.
-    const img = sources[source] ?? sources.self ?? null
+    // neighbour, so a single-screen project still renders every frame. Artwork gets no such
+    // fallback: an unframed screenshot in that slot would be wrong, not merely a stand-in.
+    const img = source === 'artwork' ? (sources.artwork ?? null) : (sources[source] ?? sources.self ?? null)
+    if (!img && (frameless || source === 'artwork')) continue
 
     ctx.save()
     if (angle !== 0) {
@@ -163,7 +166,8 @@ export function renderScene(
       ctx.rotate((angle * Math.PI) / 180)
       ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2))
     }
-    drawDevice(ctx, box, device, color, img)
+    if (frameless) drawArtwork(ctx, box, img!)
+    else drawDevice(ctx, box, device, color, img)
     ctx.restore()
   }
 }

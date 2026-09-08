@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { imageIdFor, outPath, screensFor, settingsFor, sourcePath } from './bridge'
+import { artworkIdFor, artworkPath, imageIdFor, outPath, screensFor, settingsFor, sourcePath } from './bridge'
 import type { Project } from './types'
 
 const project: Project = {
@@ -61,6 +61,50 @@ describe('screensFor', () => {
   it('never shares the overrides object with the project', () => {
     const [budget] = screensFor(project, 'de')
     expect(budget.overrides).not.toBe(project.set.slots[0].overrides)
+  })
+})
+
+describe('artwork and pair', () => {
+  const withExtras = (): Project => ({
+    ...project,
+    set: {
+      ...project.set,
+      slots: [
+        {
+          id: 'pain',
+          kind: 'screen',
+          screen: 'budget_screen',
+          pair: 'account_screen',
+          artwork: 'pain-points',
+          overrides: {},
+        },
+      ],
+    },
+  })
+
+  it('keys the artwork and the paired screen into the image registry', () => {
+    const [pain] = screensFor(withExtras(), 'de')
+    expect(pain.artworkId).toBe('artwork/de/pain-points')
+    expect(pain.pairId).toBe('de/account_screen')
+  })
+
+  it('leaves both keys null when the slot names neither', () => {
+    const [budget] = screensFor(project, 'de')
+    expect(budget.artworkId).toBeNull()
+    expect(budget.pairId).toBeNull()
+  })
+
+  it('never collides with a screen of the same name', () => {
+    expect(artworkIdFor('de', 'budget_screen')).not.toBe(imageIdFor('de', 'budget_screen'))
+  })
+
+  it('falls back to the default artwork template when the set names none', () => {
+    expect(artworkPath(project.set, 'de', 'pain-points')).toBe('aso/artwork/pain-points.png')
+  })
+
+  it('fills every placeholder of a per-language artwork template', () => {
+    const set = { ...project.set, artworkSources: 'art/{locale}/{artwork}-{locale}.png' }
+    expect(artworkPath(set, 'de', 'pain-points')).toBe('art/de/pain-points-de.png')
   })
 })
 

@@ -8,6 +8,21 @@ export type ProjectSlot = {
   kind: SlotKind
   screen: string
   overrides: ScreenOverrides
+  /**
+   * The screen a multi-device arrangement draws as its `next` frame, instead of the next slot's.
+   * Lets a duo show a screen that is not the neighbour — and need not be in the set at all.
+   */
+  pair?: string
+  /**
+   * The same for the `prev` frame. With both named, a trio arrangement shows three chosen
+   * screens instead of borrowing its neighbours from the strip.
+   */
+  pairPrev?: string
+  /**
+   * File name (no directory, no extension) of the frameless image an arrangement with an
+   * `artwork` placement draws next to the screen. Unrelated to `kind: 'artwork'`.
+   */
+  artwork?: string
   /** open feedback for whoever regenerates this screenshot; never part of the approval hash */
   note?: string
 }
@@ -21,6 +36,8 @@ export type ProjectSet = {
   locales: ProjectLocale[]
   /** template with {locale} and {screen} */
   sources: string
+  /** template with a mandatory {artwork} and an optional {locale}; see DEFAULT_ARTWORK_SOURCES */
+  artworkSources?: string
   settings: Partial<ProjectSettings>
   slots: ProjectSlot[]
   approval: Approval | null
@@ -30,3 +47,7 @@ export type SlotCopy = { headline: string; subhead: string }
 export type LocaleCopy = Record<string, SlotCopy>
 export type ProjectCopies = Record<string, LocaleCopy>
 export type Project = { set: ProjectSet; copies: ProjectCopies }
+
+/** Every source screen a slot draws: its own plus any explicitly named partner. */
+export const slotScreens = (slot: ProjectSlot): string[] =>
+  [slot.screen, slot.pair, slot.pairPrev].filter((s): s is string => !!s)

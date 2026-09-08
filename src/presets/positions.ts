@@ -5,6 +5,7 @@ import type { Position } from '../types'
  * `dx`/`dy` are offsets from the slot centre in fractions of canvas width/height;
  * `source` picks which screenshot goes in that frame, so a multi-device arrangement
  * shows the neighbouring screens rather than repeating the same image.
+ * `source: 'artwork'` takes the slot's own image and, with `frameless`, draws it bare.
  * Placements draw back to front.
  */
 export const POSITIONS: Position[] = [
@@ -61,6 +62,22 @@ export const POSITIONS: Position[] = [
     placements: [
       { source: 'next', dx: -0.18, dy: -0.06, scale: 0.9, rotate: -6 },
       { source: 'self', dx: 0.16, dy: 0.06, scale: 1, rotate: -6 },
+    ],
+  },
+  {
+    id: 'duo-artwork',
+    label: 'Duo artwork',
+    placements: [
+      { source: 'self', dx: -0.24, dy: -0.08, scale: 0.8, rotate: 0 },
+      { source: 'artwork', dx: 0.25, dy: -0.08, scale: 0.84, rotate: 0, frameless: true },
+    ],
+  },
+  {
+    id: 'duo-artwork-tilt',
+    label: 'Duo artwork tilt',
+    placements: [
+      { source: 'self', dx: -0.24, dy: -0.08, scale: 0.8, rotate: -6 },
+      { source: 'artwork', dx: 0.25, dy: -0.08, scale: 0.84, rotate: -6, frameless: true },
     ],
   },
   {

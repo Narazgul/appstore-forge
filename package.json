@@ -1,7 +1,7 @@
 {
   "name": "@narazgul/appstore-forge",
   "private": false,
-  "version": "2.1.1",
+  "version": "2.2.0",
   "packageManager": "pnpm@11.21.0",
   "type": "module",
   "bin": {

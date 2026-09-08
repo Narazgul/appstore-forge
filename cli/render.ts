@@ -3,7 +3,16 @@ import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { PNG } from 'pngjs'
-import { imageIdFor, outPath, screensFor, settingsFor, sourcePath } from '../src/project/bridge'
+import {
+  artworkIdFor,
+  artworkPath,
+  imageIdFor,
+  outPath,
+  screensFor,
+  settingsFor,
+  sourcePath,
+} from '../src/project/bridge'
+import { slotScreens } from '../src/project/types'
 import type { Project } from '../src/project/types'
 import { renderScene, sceneSpan } from '../src/render/scene'
 import { measureTextBlock, type TextMeasurer } from '../src/render/text'
@@ -47,10 +56,18 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
   for (const locale of locales) {
     const images: Record<string, Image> = {}
     for (const slot of set.slots) {
-      const path = join(repoRoot, sourcePath(set, locale.id, slot.screen))
-      if (!existsSync(path))
-        throw new Error(`Source image missing for slot ${slot.id}, locale ${locale.id}: ${path}`)
-      images[imageIdFor(locale.id, slot.screen)] = await loadImage(path)
+      // Own screen plus any named partner — a trio arrangement names two of them.
+      for (const screen of slotScreens(slot)) {
+        const path = join(repoRoot, sourcePath(set, locale.id, screen))
+        if (!existsSync(path))
+          throw new Error(`Source image missing for slot ${slot.id}, locale ${locale.id}: ${path}`)
+        images[imageIdFor(locale.id, screen)] = await loadImage(path)
+      }
+      if (!slot.artwork) continue
+      const art = join(repoRoot, artworkPath(set, locale.id, slot.artwork))
+      if (!existsSync(art))
+        throw new Error(`Artwork image missing for slot ${slot.id}, locale ${locale.id}: ${art}`)
+      images[artworkIdFor(locale.id, slot.artwork)] = await loadImage(art)
     }
     const screens = screensFor(project, locale.id)
 
@@ -84,8 +101,9 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
         const at = (k: number) => images[screens[(k + screens.length) % screens.length].imageId!] ?? null
         renderScene(ctx, size.w, size.h, screen, settings, {
           self: at(i) as unknown as CanvasImageSource,
-          next: at(i + 1) as unknown as CanvasImageSource,
-          prev: at(i - 1) as unknown as CanvasImageSource,
+          next: (screen.pairId ? (images[screen.pairId] ?? null) : at(i + 1)) as unknown as CanvasImageSource,
+          prev: (screen.pairPrevId ? (images[screen.pairPrevId] ?? null) : at(i - 1)) as unknown as CanvasImageSource,
+          artwork: (screen.artworkId ? (images[screen.artworkId] ?? null) : null) as CanvasImageSource | null,
         })
         for (let part = 0; part < span; part++) {
           const rgba = ctx.getImageData(part * size.w, 0, size.w, size.h).data

@@ -2,6 +2,7 @@ import { createCanvas } from '@napi-rs/canvas'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PNG } from 'pngjs'
 import { describe, expect, it } from 'vitest'
 import { renderProject } from './render'
 import type { Project } from '../src/project/types'
@@ -55,6 +56,38 @@ async function fixture() {
 }
 
 const ihdr = (buf: Buffer) => ({ w: buf.readUInt32BE(16), h: buf.readUInt32BE(20), colorType: buf[25] })
+
+/** A set whose single tile is a duo of the screen and a bright, half-transparent artwork. */
+async function artworkFixture() {
+  const { repo, project } = await fixture()
+  await mkdir(join(repo, 'aso', 'artwork'), { recursive: true })
+  const c = createCanvas(200, 200)
+  const ctx = c.getContext('2d')
+  ctx.fillStyle = 'rgba(0, 255, 0, 0.5)'
+  ctx.fillRect(0, 0, 200, 200)
+  await writeFile(join(repo, 'aso', 'artwork', 'pain-points.png'), c.toBuffer('image/png'))
+  project.set.targets = [project.set.targets[0]]
+  project.set.locales = [project.set.locales[0]]
+  project.set.settings = { layout: 'duo', background: { kind: 'solid', color: '#000000' } }
+  project.set.slots = [
+    {
+      id: 'a',
+      kind: 'screen',
+      screen: 'shot',
+      artwork: 'pain-points',
+      overrides: { positionId: 'duo-artwork' },
+    },
+  ]
+  return { repo, project }
+}
+
+const hasGreen = (buf: Buffer) => {
+  const { data } = PNG.sync.read(buf)
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] < 40 && data[i + 1] > 90 && data[i + 2] < 40) return true
+  }
+  return false
+}
 
 describe('renderProject', () => {
   it('writes RGB PNGs at the target size for every locale, slicing panoramas into tiles', async () => {
@@ -114,6 +147,53 @@ describe('renderProject', () => {
   it('fails with slot and locale when a source is missing', async () => {
     const { repo, project } = await fixture()
     project.set.slots[0].screen = 'missing'
+    await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
+      /slot a.*locale en.*missing\.png/s,
+    )
+  })
+
+  it('loads the slot artwork and draws it into the tile, alpha and all', async () => {
+    const { repo, project } = await artworkFixture()
+    const [file] = await renderProject({ project, repoRoot: repo })
+    expect(hasGreen(await readFile(file))).toBe(true)
+  })
+
+  it('leaves the artwork out when the arrangement does not ask for one', async () => {
+    const { repo, project } = await artworkFixture()
+    project.set.slots[0].overrides = { positionId: 'center' }
+    const [file] = await renderProject({ project, repoRoot: repo })
+    expect(hasGreen(await readFile(file))).toBe(false)
+  })
+
+  it('fails with slot and locale when the artwork file is missing', async () => {
+    const { repo, project } = await artworkFixture()
+    project.set.slots[0].artwork = 'nope'
+    await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
+      /Artwork image missing for slot a, locale en.*nope\.png/s,
+    )
+  })
+
+  it('draws the named pair in the next frame instead of the neighbouring slot', async () => {
+    const { repo, project } = await fixture()
+    await mkdir(join(repo, 'outputs', 'en'), { recursive: true })
+    const c = createCanvas(400, 800)
+    const ctx = c.getContext('2d')
+    ctx.fillStyle = '#00ff00'
+    ctx.fillRect(0, 0, 400, 800)
+    await writeFile(join(repo, 'outputs', 'en', 'accounts.png'), c.toBuffer('image/png'))
+    project.set.targets = [project.set.targets[0]]
+    project.set.locales = [project.set.locales[0]]
+    project.set.settings = { layout: 'duo' }
+    project.set.slots = [
+      { id: 'a', kind: 'screen', screen: 'shot', pair: 'accounts', overrides: { positionId: 'duo' } },
+    ]
+    const [file] = await renderProject({ project, repoRoot: repo })
+    expect(hasGreen(await readFile(file))).toBe(true)
+  })
+
+  it('fails when the paired screen has no source', async () => {
+    const { repo, project } = await fixture()
+    project.set.slots[0].pair = 'missing'
     await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
       /slot a.*locale en.*missing\.png/s,
     )

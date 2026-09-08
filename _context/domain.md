@@ -56,7 +56,7 @@ Project = { set: ProjectSet, copies: ProjectCopies }
 ProjectSet = { version: 1, id, targets, locales, sources, settings, slots, approval }
 ProjectTarget = { id, sizeId, deviceId, out } // out: 'store/ios/{storeLocale}/{n}.png'
 ProjectLocale = { id, store: Record<targetId, string> } // { ios: 'en-US', play: 'en-US' }
-ProjectSlot = { id, kind: 'screen' | 'artwork', screen, overrides: ScreenOverrides }
+ProjectSlot = { id, kind: 'screen' | 'artwork', screen, pair?, artwork?, overrides: ScreenOverrides }
 ProjectCopies = Record<localeId, Record<slotId, { headline; subhead }>>
 Approval = { hash, by, at } | null
 ```
@@ -65,6 +65,14 @@ Approval = { hash, by, at } | null
 `Settings` minus `sizeId` and `deviceId`, which the target owns. `kind: 'artwork'`
 exists in the type and is rejected by validation — it is a placeholder, not a
 feature.
+
+A slot's `pair` names the screen the arrangement's `next` frame draws, instead of
+the neighbouring slot's, and resolves through the same `sources` template. Its
+`artwork` names a frameless image resolved through `artworkSources` (default
+`aso/artwork/{artwork}.png`, `{artwork}` mandatory, `{locale}` optional) and drawn
+by a placement with `source: 'artwork'` — contain-fitted, no frame, no fallback to
+the screenshot. Both feed the approval hash, appended after the sources and only
+for the slots that name them, so a set using neither hashes exactly as before.
 
 Headlines carry light markup: `*word*` highlights the word. `parseMarkup` in
 `render/scene.ts` is the only parser; `stripMarkup` feeds filenames.

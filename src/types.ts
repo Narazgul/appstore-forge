@@ -27,7 +27,7 @@ export type FrameColor = {
   edge: string
 }
 
-export type PlacementSource = 'self' | 'next' | 'prev'
+export type PlacementSource = 'self' | 'next' | 'prev' | 'artwork'
 
 export type Placement = {
   /** which screenshot fills this frame */
@@ -37,6 +37,8 @@ export type Placement = {
   dy: number
   scale: number
   rotate: number
+  /** draw the image alone — contain-fitted into the box, no device body, no notch */
+  frameless?: boolean
 }
 
 export type Position = {
@@ -95,6 +97,12 @@ export type Screen = {
   subhead: string
   /** key into the image registry; null while the slot is empty */
   imageId: string | null
+  /** key into the image registry for the slot's frameless artwork; absent = the slot names none */
+  artworkId?: string | null
+  /** key into the image registry for the screen this one pairs with; absent = use the neighbour */
+  pairId?: string | null
+  /** the same for the `prev` frame of a multi-device arrangement; absent = use the neighbour */
+  pairPrevId?: string | null
   /** per-screen overrides; any key absent here inherits from the global settings */
   overrides: ScreenOverrides
   /** BCP-47 language of the copy; picks the script font and text direction. Absent = Latin, LTR. */

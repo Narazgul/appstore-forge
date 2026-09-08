@@ -5,7 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join, normalize, sep } from 'node:path'
 import type { Plugin } from 'vite'
 import { copyDir, readProject, repoRootOf, writeProject } from './cli/project-io'
-import { sourcePath } from './src/project/bridge'
+import { artworkPath, sourcePath } from './src/project/bridge'
 import type { Project } from './src/project/types'
 
 /** One PUT rewrites the set file and every copy file; the window covers the copies too. */
@@ -18,7 +18,8 @@ const MAX_BODY_BYTES = 5 * 1024 * 1024
  *  page decides where the server writes. Only names that stay inside the project pass. */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/
 
-const isProjectRoute = (url: string) => url === '/api/project' || url.startsWith('/sources/')
+const isProjectRoute = (url: string) =>
+  url === '/api/project' || url.startsWith('/sources/') || url.startsWith('/artwork/')
 
 /**
  * The path the browser asked for. Registered after Vite's own middlewares, this handler sees
@@ -107,13 +108,17 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
     res.end()
   }
 
-  async function sendSource(url: string, res: ServerResponse): Promise<void> {
+  async function sendImage(
+    url: string,
+    res: ServerResponse,
+    resolve: (set: Project['set'], locale: string, name: string) => string,
+  ): Promise<void> {
     const [, , locale, file] = url.split('/')
     let path: string
     try {
-      const screen = decodeURIComponent(file ?? '').replace(/\.png$/, '')
+      const name = decodeURIComponent(file ?? '').replace(/\.png$/, '')
       const project = await readProject(projectDir, setId)
-      path = normalize(join(repoRoot, sourcePath(project.set, decodeURIComponent(locale ?? ''), screen)))
+      path = normalize(join(repoRoot, resolve(project.set, decodeURIComponent(locale ?? ''), name)))
     } catch (err) {
       if (!(err instanceof URIError)) throw err
       res.statusCode = 400
@@ -148,7 +153,11 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
       return true
     }
     if (url.startsWith('/sources/')) {
-      await sendSource(url, res)
+      await sendImage(url, res, sourcePath)
+      return true
+    }
+    if (url.startsWith('/artwork/')) {
+      await sendImage(url, res, artworkPath)
       return true
     }
     return false

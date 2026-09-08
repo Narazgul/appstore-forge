@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { sourcePath } from '../src/project/bridge'
+import { artworkPath, sourcePath } from '../src/project/bridge'
 import { approvalHash } from '../src/project/hash'
 import type { Approval, Project } from '../src/project/types'
 import { validateProject, type Issue } from '../src/project/validate'
@@ -21,7 +21,11 @@ async function load(projectDir: string, setId: string) {
     existsSync(join(repoRoot, sourcePath(project.set, locale, screen)))
   const bytes = async (locale: string, screen: string) =>
     new Uint8Array(await readFile(join(repoRoot, sourcePath(project.set, locale, screen))))
-  return { repoRoot, project, exists, bytes }
+  const artExists = (locale: string, artwork: string) =>
+    existsSync(join(repoRoot, artworkPath(project.set, locale, artwork)))
+  const artBytes = async (locale: string, artwork: string) =>
+    new Uint8Array(await readFile(join(repoRoot, artworkPath(project.set, locale, artwork))))
+  return { repoRoot, project, exists, bytes, artExists, artBytes }
 }
 
 function assertValid(issues: Issue[]) {
@@ -29,17 +33,19 @@ function assertValid(issues: Issue[]) {
   if (errors.length) throw new CliError(errors.map(formatIssue).join('\n'), 2)
 }
 
-async function approvalMatches(project: Project, bytes: (l: string, s: string) => Promise<Uint8Array>) {
+type Bytes = (a: string, b: string) => Promise<Uint8Array>
+
+async function approvalMatches(project: Project, bytes: Bytes, artBytes: Bytes) {
   if (!project.set.approval) return false
-  return (await approvalHash(project, bytes)) === project.set.approval.hash
+  return (await approvalHash(project, bytes, artBytes)) === project.set.approval.hash
 }
 
 export async function checkCommand(opts: { projectDir: string; setId: string; requireApproval: boolean }) {
-  const { project, exists, bytes } = await load(opts.projectDir, opts.setId)
-  const issues = validateProject(project, exists)
+  const { project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  const issues = validateProject(project, exists, artExists)
   const approvalOk =
     opts.requireApproval && !issues.some((i) => i.level === 'error')
-      ? await approvalMatches(project, bytes)
+      ? await approvalMatches(project, bytes, artBytes)
       : null
   return { issues, approvalOk }
 }
@@ -51,9 +57,9 @@ export async function renderCommand(opts: {
   localeIds?: string[]
   requireApproval: boolean
 }) {
-  const { repoRoot, project, exists, bytes } = await load(opts.projectDir, opts.setId)
-  assertValid(validateProject(project, exists))
-  if (opts.requireApproval && !(await approvalMatches(project, bytes))) {
+  const { repoRoot, project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  assertValid(validateProject(project, exists, artExists))
+  if (opts.requireApproval && !(await approvalMatches(project, bytes, artBytes))) {
     throw new CliError(
       project.set.approval
         ? `Approval by ${project.set.approval.by} at ${project.set.approval.at} no longer matches: set, copy or a source image changed since. Approve again in the GUI or with forge approve.`
@@ -69,10 +75,10 @@ export async function approveCommand(opts: {
   setId: string
   by: string
 }): Promise<Approval> {
-  const { project, exists, bytes } = await load(opts.projectDir, opts.setId)
-  assertValid(validateProject(project, exists))
+  const { project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  assertValid(validateProject(project, exists, artExists))
   const approval: Approval = {
-    hash: await approvalHash(project, bytes),
+    hash: await approvalHash(project, bytes, artBytes),
     by: opts.by,
     at: new Date().toISOString(),
   }

@@ -155,20 +155,54 @@ second set lives in `aso/promo.json` with its copy under `copy/promo/<locale>.js
   ],
   "locales": [{ "id": "en", "store": { "ios": "en-US", "play": "en-US" } }],
   "sources": "screenshots/{locale}/{screen}.png",
+  "artworkSources": "aso/artwork/{artwork}.png",
   "settings": { "background": { "kind": "solid", "color": "#111114" }, "layout": "hero" },
   "slots": [{ "id": "budget", "kind": "screen", "screen": "home", "overrides": {} }],
   "approval": null
 }
 ```
 
-`sources` and every target's `out` are relative to the **parent** of the project
-folder, so they read as normal repo paths. A **slot** is one output image: it
+`sources`, `artworkSources` and every target's `out` are relative to the
+**parent** of the project folder, so they read as normal repo paths. A **slot** is one output image: it
 names a source screen and carries its own overrides, and the text for it lives
 per language in `copy/<locale>.json` keyed by slot id.
 
 The locale id is also the renderer's language: it picks the script font and, for
 an RTL language, sets the canvas `direction` to `rtl` so a run is shaped and
 ordered right to left inside each word.
+
+### A slot's extra images
+
+Two optional keys on a slot feed the multi-device arrangements:
+
+```json
+{
+  "id": "pain",
+  "kind": "screen",
+  "screen": "budget_screen",
+  "pair": "account_screen",
+  "artwork": "pain-points",
+  "overrides": { "layout": "duo", "positionId": "duo-artwork" }
+}
+```
+
+- **`pair`** names the screen the arrangement draws in its `next` frame, instead
+  of the next slot's. A duo can then show any screen — including one that is in
+  no slot at all — without repeating it later in the strip. `prev` still follows
+  the neighbour. `pair` resolves through the same `sources` template as `screen`.
+- **`artwork`** names a frameless image: a file name with no directory and no
+  extension, resolved through **`artworkSources`**, a second path template that
+  defaults to `aso/artwork/{artwork}.png`. `{artwork}` is mandatory in it,
+  `{locale}` is optional and lets a language have its own file. The `duo-artwork`
+  and `duo-artwork-tilt` arrangements put the screen in its device frame on the
+  left and this image, bare and contain-fitted, on the right — no body, no
+  bezel, no notch, and an alpha channel comes through onto the background.
+
+A slot whose arrangement has an `artwork` placement but names no `artwork` is a
+validation error, and so is an artwork or a `pair` whose file is not there. Both
+files feed the approval hash exactly like a screenshot: change one and the stamp
+goes stale. Note that `kind: "artwork"` is something else entirely — that slot
+kind is still rejected.
 
 ### The four commands
 
@@ -199,7 +233,7 @@ forge render --project ./aso --target play --locale de --locale en --require-app
 ```
 
 **Approval** is a hash over the set file, all copy files and the bytes of every
-source screenshot. Change a headline, swap a screenshot or move a slot and the
+source screenshot, paired screen and artwork. Change a headline, swap a screenshot or move a slot and the
 stamp goes stale — `--require-approval` then refuses to render. That is the gate
 between "someone looked at this" and "this went to the store".
 
@@ -251,7 +285,8 @@ pnpm typecheck && pnpm lint && pnpm test
 - Pulling screenshots straight off a booted simulator or emulator
 - Exporting every required size in one pass from the browser version
 - `artwork` slots — the kind exists in the project type, but validation rejects
-  it; every slot is a framed screenshot for now
+  it. A slot's `artwork` key is a different thing and does work: a framed screen
+  with a frameless image beside it
 - A Firestore adapter. `ProjectStore` is the seam a remote backend would plug
   into; the file adapter behind `forge dev` is the only implementation
 - Two editors on one project. There is no locking, so the last write wins

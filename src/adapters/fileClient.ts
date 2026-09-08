@@ -4,6 +4,8 @@ import type { Project } from '../project/types'
 export function fileProjectStore(): ProjectStore {
   const sourceUrl = (localeId: string, screen: string) =>
     `/sources/${encodeURIComponent(localeId)}/${encodeURIComponent(screen)}.png`
+  const artworkUrl = (localeId: string, artwork: string) =>
+    `/artwork/${encodeURIComponent(localeId)}/${encodeURIComponent(artwork)}.png`
   return {
     async load() {
       const res = await fetch('/api/project')
@@ -22,6 +24,12 @@ export function fileProjectStore(): ProjectStore {
     async sourceBytes(localeId, screen) {
       const res = await fetch(sourceUrl(localeId, screen))
       if (!res.ok) throw new Error(`Source missing: ${localeId}/${screen}`)
+      return new Uint8Array(await res.arrayBuffer())
+    },
+    artworkUrl,
+    async artworkBytes(localeId, artwork) {
+      const res = await fetch(artworkUrl(localeId, artwork))
+      if (!res.ok) throw new Error(`Artwork missing: ${localeId}/${artwork}`)
       return new Uint8Array(await res.arrayBuffer())
     },
     subscribe(onChange) {

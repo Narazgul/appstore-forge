@@ -47,12 +47,16 @@ describe('projectRoute', () => {
   it('takes the url as it is when it already names a project route', () => {
     expect(projectRoute({ url: '/api/project' })).toBe('/api/project')
     expect(projectRoute({ url: '/sources/en/shot.png' })).toBe('/sources/en/shot.png')
+    expect(projectRoute({ url: '/artwork/en/pain-points.png' })).toBe('/artwork/en/pain-points.png')
   })
 
   it("recovers the request's own path after the SPA fallback rewrote it", () => {
     expect(projectRoute({ url: '/index.html', originalUrl: '/api/project' })).toBe('/api/project')
     expect(projectRoute({ url: '/index.html', originalUrl: '/sources/de/shot.png' })).toBe(
       '/sources/de/shot.png',
+    )
+    expect(projectRoute({ url: '/index.html', originalUrl: '/artwork/de/pain-points.png' })).toBe(
+      '/artwork/de/pain-points.png',
     )
   })
 
