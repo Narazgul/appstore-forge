@@ -670,16 +670,7 @@ input[type='color'] {
   color: var(--accent);
 }
 
-.copy-row {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  padding: 12px;
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-}
-.copy-row span[data-required='true']::after {
+span[data-required='true']::after {
   content: ' *';
   color: var(--accent);
 }

@@ -4,7 +4,7 @@ import { useStore } from '../../store'
 import { StorePreview } from '../StorePreview'
 import { StepFrame } from './StepFrame'
 
-type Check = { ok: boolean; text: string; fix?: { label: string; step: 'shots' | 'copy' | 'target' } }
+type Check = { ok: boolean; text: string; fix?: { label: string; step: 'shots' | 'target' } }
 
 /** In project mode the approval stamp over the target toggle, otherwise the readiness checklist
  *  against the store's rules; both end on the set as a mock product page. */
@@ -121,7 +121,7 @@ export function ReviewStep() {
       ? {
           ok: false,
           text: `${r.missingCopy} screen${r.missingCopy === 1 ? '' : 's'} without a headline`,
-          fix: { label: 'Write copy', step: 'copy' },
+          fix: { label: 'Write copy', step: 'shots' },
         }
       : { ok: true, text: 'Every screen that shows copy has a headline' },
     r.overLimit

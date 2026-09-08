@@ -3,10 +3,15 @@ import { getSize } from '../../presets/sizes'
 import { getTemplateSpec } from '../../presets/templates'
 import { slotCount, useStore } from '../../store'
 import { ScreenCard } from '../ScreenCard'
+import { TunePanel } from '../TunePanel'
 import { StepFrame, Tip } from './StepFrame'
 
-const PREVIEW_WIDTH = 230
+const PREVIEW_WIDTH = 210
 
+/**
+ * The workbench: the tiles of the set with their copy, order and sources, next to the full
+ * control set. The panel writes to every screen or, once a card is clicked, to that one alone.
+ */
 export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; dragging: boolean }) {
   const screens = useStore((s) => s.screens)
   const settings = useStore((s) => s.settings)
@@ -23,10 +28,10 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
   // In project mode the sources come from the repo, so there is nothing to drop — but every
   // capture the repo holds can be put into any frame of any slot.
   const lead = project
-    ? 'The screenshots come from the project sources. Pick which capture sits in which frame of a slot; rerun the capture to change the pictures themselves.'
+    ? 'The screenshots come from the project sources. Pick which capture sits in which frame, write the headline, order the tiles, and adjust anything the template decided — for all screens at once, or click one card to change only that one.'
     : slots > 0
-      ? `${template.label} is a ${slots}-screen template. Fill each slot in the order shoppers will see them; the first two do most of the selling.`
-      : 'Add as many screenshots as you like, in the order shoppers will see them. The first two do most of the selling.'
+      ? `${template.label} is a ${slots}-screen template. Fill each slot in the order shoppers will see them; the first two do most of the selling. Everything the template decided is adjustable in the panel.`
+      : 'Add as many screenshots as you like, in the order shoppers will see them. The first two do most of the selling, and everything the template decided is adjustable in the panel.'
 
   const dropLabel =
     r.total === 0
@@ -36,7 +41,7 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
         : 'Drop more screenshots to add screens'
 
   return (
-    <StepFrame title="Add screenshots" lead={lead}>
+    <StepFrame title="Screenshots" lead={lead} wide>
       {!project && (
         <button
           onClick={onBrowse}
@@ -53,19 +58,27 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
         </button>
       )}
 
-      {r.total > 0 && (
-        <div className="flex flex-wrap gap-5" onClick={() => selectScreen(null)}>
-          {screens.map((screen, i) => (
-            <ScreenCard
-              key={screen.id}
-              screen={screen}
-              index={i}
-              total={screens.length}
-              isSlot={i < slots}
-              width={PREVIEW_WIDTH}
-              height={previewHeight}
-            />
-          ))}
+      <div className="flex items-start gap-6">
+        <TunePanel />
+        <div className="flex min-w-0 flex-1 flex-wrap gap-5" onClick={() => selectScreen(null)}>
+          {r.total === 0 && !canAdd ? (
+            <p className="text-[13px]" style={{ color: 'var(--muted)' }}>
+              Add screenshots to see the controls take effect. Changes to all screens still apply to
+              screens you add later.
+            </p>
+          ) : (
+            screens.map((screen, i) => (
+              <ScreenCard
+                key={screen.id}
+                screen={screen}
+                index={i}
+                total={screens.length}
+                isSlot={i < slots}
+                width={PREVIEW_WIDTH}
+                height={previewHeight}
+              />
+            ))
+          )}
           {project && canAdd && (
             <button
               className="add-tile"
@@ -83,11 +96,11 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
             </button>
           )}
         </div>
-      )}
+      </div>
 
       <Tip>
-        Take captures at the device's native resolution with a clean status bar (9:41, full signal). They are
-        fitted top-anchored, so the status bar stays and the bottom crops.
+        Lead with what the user gets, not the feature name: "Hands full? *Just say it.*" beats "Voice
+        input". Captures are fitted top-anchored, so the status bar stays and the bottom crops.
       </Tip>
     </StepFrame>
   )

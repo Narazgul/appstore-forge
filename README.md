@@ -10,13 +10,13 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Walking through the six steps: choosing a store target, picking a look, dropping in screenshots, writing headlines, fine-tuning, and reviewing the finished set" width="820">
+  <img src="docs/demo.gif" alt="Walking through the four steps: choosing a store target, picking a look, filling and tuning the screenshots, and reviewing the finished set" width="820">
 </p>
 
 ---
 
 Drop your PNGs in, pick a background and a device frame, write a headline per
-screen, download the set. Six steps, and the app tells you at every point what is
+screen, download the set. Four steps, and the app tells you at every point what is
 still missing before the set can be uploaded.
 
 - **Frames without artwork.** Devices are drawn with canvas primitives from a

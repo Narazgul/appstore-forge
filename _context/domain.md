@@ -101,10 +101,10 @@ src/lib/settings.ts   override resolution + section grouping
 src/lib/export.ts     full-size render → zip download
 src/store.ts          zustand: screens, decoded images, settings, selection, step
 src/lib/progress.ts   readiness(): the one reading of "how far along is the set" — rail, footer and review all use it
-src/components/Rail.tsx          the guided flow: six steps with status; navigation, never a gate
+src/components/Rail.tsx          the guided flow: four steps with status; navigation, never a gate
 src/components/Footer.tsx        status line + the step's one primary action (Next / Export)
-src/components/steps/*           Target → Look → Screenshots → Copy → Fine-tune → Review & export
-src/components/TunePanel.tsx     the full control set, scoped to all screens or the selected one
+src/components/steps/*           Target → Look → Screenshots → Review & export
+src/components/TunePanel.tsx     the full control set, scoped to all screens or the selected one (lives in the Screenshots step)
 src/components/StorePreview.tsx  the set inside a mock App Store product page (Review step)
 ```
 
@@ -130,15 +130,17 @@ to scale or license, and adding a device is a one-line object in
 
 ### The flow is a checklist, not a wizard
 
-The six steps follow the order the decisions depend on (size shapes the canvas,
-the look shapes the slots, the slots take screenshots, copy sits on them). But
-nothing is locked: every step is clickable at any time, files can be dropped on
-any step (freeform mode only — a project takes its screenshots from the repo, so
-the drop zone and the replace/clear controls are hidden there), headlines are
-editable in both Screenshots and Copy, and Export is in the footer on every
-step — disabled only while a slot is empty, with the reason as its label. Colour
-is used for status only: green = done, amber = needs attention, the accent = the
-current step and the primary action.
+The four steps follow the order the decisions depend on (size shapes the canvas,
+the look shapes the slots, the slots take screenshots, copy and the controls sit
+on them). Screenshots is the workbench: pictures, copy, order and the full
+control set in one place, because every one of those is judged by looking at the
+same tile. But nothing is locked: every step is clickable at any time, files can
+be dropped on any step (freeform mode only — a project takes its screenshots
+from the repo, so the drop zone and the replace/clear controls are hidden
+there), and Export is in the footer on every step — disabled only while a slot
+is empty, with the reason as its label. Colour is used for status only:
+green = done, amber = needs attention, the accent = the current step and the
+primary action.
 
 ### Project mode is a second door, not a second app
 
@@ -162,7 +164,7 @@ that project mode exists. There is one renderer (rules.md, rule 1) and project
 mode did not get to add a second.
 
 The GUI reaches the files only through `ProjectStore`. Everything above it —
-locale switch, Copy step, Review grid, Approve — is written against that
+locale switch, copy fields, Review grid, Approve — is written against that
 interface, so a remote backend is a new adapter and no store change. There is no
 locking: two editors on one project overwrite each other, last write wins.
 

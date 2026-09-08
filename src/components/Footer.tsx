@@ -6,9 +6,7 @@ import { STEPS, useStore } from '../store'
 const NEXT_LABEL: Record<string, string> = {
   target: 'Look',
   look: 'Screenshots',
-  shots: 'Copy',
-  copy: 'Fine-tune',
-  tune: 'Review',
+  shots: 'Review',
 }
 
 /** Persistent status line plus the one primary action for the current step. */

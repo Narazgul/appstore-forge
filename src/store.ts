@@ -10,8 +10,8 @@ import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy } from '
 import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
 /** The guided flow. Steps are navigation and status, never a gate — any step is one click away. */
-export type StepId = 'target' | 'look' | 'shots' | 'copy' | 'tune' | 'review'
-export const STEPS: StepId[] = ['target', 'look', 'shots', 'copy', 'tune', 'review']
+export type StepId = 'target' | 'look' | 'shots' | 'review'
+export const STEPS: StepId[] = ['target', 'look', 'shots', 'review']
 
 /** Cosmetic store-page details for the preview; nothing here reaches the exported pixels. */
 export type Listing = { name: string; subtitle: string; developer: string; category: string }

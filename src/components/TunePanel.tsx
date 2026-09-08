@@ -43,7 +43,7 @@ export function TunePanel() {
 
   return (
     <aside
-      className="flex h-full w-[300px] shrink-0 flex-col overflow-y-auto rounded-2xl border"
+      className="sticky top-8 flex max-h-[calc(100vh-150px)] w-[300px] shrink-0 flex-col overflow-y-auto rounded-2xl border"
       style={{ background: 'var(--panel)', borderColor: 'var(--line)' }}
     >
       <div className="px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--line)' }}>

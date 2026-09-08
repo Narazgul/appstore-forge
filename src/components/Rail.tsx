@@ -11,8 +11,6 @@ const TITLES: Record<StepId, string> = {
   target: 'Target',
   look: 'Look',
   shots: 'Screenshots',
-  copy: 'Copy',
-  tune: 'Fine-tune',
   review: 'Review & export',
 }
 
@@ -45,20 +43,15 @@ export function Rail() {
         ? { status: 'todo', detail: 'None yet' }
         : r.missingShots > 0
           ? { status: 'attention', detail: `${r.filled} of ${r.total} added` }
-          : { status: 'done', detail: `${r.total} added · ${r.tiles} tile${r.tiles === 1 ? '' : 's'}` },
-    copy:
-      r.total === 0
-        ? { status: 'todo', detail: 'Headlines & subtitles' }
-        : r.missingCopy > 0
-          ? {
-              status: 'attention',
-              detail: `${r.missingCopy} headline${r.missingCopy === 1 ? '' : 's'} missing`,
-            }
-          : { status: 'done', detail: 'Every screen has a headline' },
-    tune: {
-      status: 'optional',
-      detail: customised ? `${customised} screen${customised === 1 ? '' : 's'} customised` : 'Optional',
-    },
+          : r.missingCopy > 0
+            ? {
+                status: 'attention',
+                detail: `${r.missingCopy} headline${r.missingCopy === 1 ? '' : 's'} missing`,
+              }
+            : {
+                status: 'done',
+                detail: `${r.tiles} tile${r.tiles === 1 ? '' : 's'}${customised ? ` · ${customised} customised` : ''}`,
+              },
     review:
       r.total === 0
         ? { status: 'todo', detail: 'Check & export' }

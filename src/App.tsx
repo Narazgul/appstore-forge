@@ -1,12 +1,10 @@
 import { useCallback, useRef, useState } from 'react'
 import { Footer } from './components/Footer'
 import { Rail } from './components/Rail'
-import { CopyStep } from './components/steps/CopyStep'
 import { LookStep } from './components/steps/LookStep'
 import { ReviewStep } from './components/steps/ReviewStep'
 import { ShotsStep } from './components/steps/ShotsStep'
 import { TargetStep } from './components/steps/TargetStep'
-import { TuneStep } from './components/steps/TuneStep'
 import { exportAll, type ExportResult } from './lib/export'
 import { useStore } from './store'
 
@@ -36,9 +34,9 @@ export function App() {
       const files = Array.from(e.dataTransfer.files)
       if (!files.length) return
       void addFiles(files)
-      if (step !== 'tune') setStep('shots')
+      setStep('shots')
     },
-    [addFiles, project, step, setStep],
+    [addFiles, project, setStep],
   )
 
   const onExport = useCallback(async () => {
@@ -86,8 +84,6 @@ export function App() {
           {step === 'target' && <TargetStep />}
           {step === 'look' && <LookStep />}
           {step === 'shots' && <ShotsStep onBrowse={browse} dragging={dragging} />}
-          {step === 'copy' && <CopyStep />}
-          {step === 'tune' && <TuneStep />}
           {step === 'review' && <ReviewStep />}
 
           {dragging && !project && step !== 'shots' && (
