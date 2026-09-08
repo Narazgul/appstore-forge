@@ -375,6 +375,24 @@ input[type='color'] {
   line-height: 1.35;
 }
 
+/* Leerkachel am Ende des Streifens: fuegt dem Satz eine Kachel hinzu. */
+.add-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  border-radius: 16px;
+  border: 2px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.add-tile:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Which capture sits in which frame of a slot: one row per frame, a thumbnail grid when open. */
 .pick-row {
   display: flex;

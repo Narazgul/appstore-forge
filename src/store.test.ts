@@ -4,6 +4,7 @@ import {
   projectAfterNote,
   projectAfterOverride,
   projectAfterScreenPatch,
+  projectAfterSlotAdd,
   projectAfterSlotRemoval,
   projectAfterSlotSource,
   projectAfterTargetPatch,
@@ -12,6 +13,8 @@ import {
   templateSettings,
   useStore,
   variantFor,
+  freeSlotId,
+  SAVE_FAILED,
 } from './store'
 import { screensFor, settingsFor } from './project/bridge'
 import { TEMPLATES, getTemplateSpec } from './presets/templates'
@@ -187,6 +190,47 @@ describe('projectAfterNote', () => {
     const next = projectAfterNote(p, 'b', 'Swap the shot')
     expect(next.set.slots[0]).not.toHaveProperty('note')
     expect(p.set.slots[1]).not.toHaveProperty('note')
+  })
+})
+
+describe('freeSlotId', () => {
+  it('takes the screen name when it is free', () => {
+    expect(freeSlotId(['a'], 'budget_screen')).toBe('budget_screen')
+  })
+
+  it('counts up instead of colliding', () => {
+    expect(freeSlotId(['budget_screen'], 'budget_screen')).toBe('budget_screen-2')
+    expect(freeSlotId(['budget_screen', 'budget_screen-2'], 'budget_screen')).toBe('budget_screen-3')
+  })
+
+  it('strips what a file name may not carry, and never returns nothing', () => {
+    expect(freeSlotId([], 'a b/c.png')).toBe('a-b-c-png')
+    expect(freeSlotId([], '///')).toBe('slot')
+  })
+})
+
+describe('projectAfterSlotAdd', () => {
+  it('appends the tile and drops the approval', () => {
+    const next = projectAfterSlotAdd(project(), 'league', 'league_screen')
+    expect(next.set.slots.map((s) => s.id)).toEqual(['a', 'league'])
+    expect(next.set.slots[1]).toEqual({
+      id: 'league',
+      kind: 'screen',
+      screen: 'league_screen',
+      overrides: {},
+    })
+    expect(next.set.approval).toBeNull()
+  })
+
+  it('leaves the copies alone — the new tile has none yet', () => {
+    const next = projectAfterSlotAdd(project(), 'league', 'league_screen')
+    expect(next.copies).toEqual(project().copies)
+  })
+
+  it('does not mutate the input', () => {
+    const p = project()
+    projectAfterSlotAdd(p, 'league', 'league_screen')
+    expect(p.set.slots).toHaveLength(1)
   })
 })
 
@@ -488,5 +532,79 @@ describe('staleApproval', () => {
     useStore.getState().setCopy('en', 'a', { headline: 'Neuer' })
     expect(useStore.getState().staleApproval).toEqual({ hash: 'h', by: 'x', at: 't' })
     expect(useStore.getState().approvalOk).toBe(false)
+  })
+})
+
+describe('the automatic save', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      screens: [],
+      approvalOk: null,
+      staleApproval: null,
+      lastError: null,
+    })
+  })
+
+  const open = (p: Project, store: ProjectStore) =>
+    useStore.setState({
+      project: p,
+      projectStore: store,
+      localeId: 'en',
+      targetId: 'appstore',
+      screens: screensFor(p, 'en'),
+      settings: settingsFor(p, 'appstore'),
+      approvalOk: true,
+      staleApproval: null,
+      lastError: null,
+    })
+
+  /** The debounce is a timer, the save a promise: both have to be flushed. */
+  const flush = async () => {
+    vi.runAllTimers()
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  it('reports a rejected save instead of swallowing it', async () => {
+    vi.useFakeTimers()
+    const p = project()
+    open(
+      p,
+      fakeProjectStore(p, () => Promise.reject(new Error('permission denied'))),
+    )
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    await flush()
+    expect(useStore.getState().lastError).toMatch(/permission denied/)
+    expect(useStore.getState().lastError).toContain(SAVE_FAILED)
+  })
+
+  it('clears its own message once a later save comes back', async () => {
+    vi.useFakeTimers()
+    const p = project()
+    let fail = true
+    open(
+      p,
+      fakeProjectStore(p, () => (fail ? Promise.reject(new Error('offline')) : Promise.resolve())),
+    )
+    useStore.getState().setCopy('en', 'a', { headline: 'Eins' })
+    await flush()
+    expect(useStore.getState().lastError).toMatch(/offline/)
+    fail = false
+    useStore.getState().setCopy('en', 'a', { headline: 'Zwei' })
+    await flush()
+    expect(useStore.getState().lastError).toBeNull()
+  })
+
+  it('leaves an unrelated message alone', async () => {
+    vi.useFakeTimers()
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.setState({ lastError: 'Approval not saved: something else' })
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    await flush()
+    expect(useStore.getState().lastError).toBe('Approval not saved: something else')
   })
 })

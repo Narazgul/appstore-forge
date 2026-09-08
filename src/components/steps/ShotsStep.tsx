@@ -13,6 +13,8 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
   const template = useStore((s) => getTemplateSpec(s.templateId))
   const selectScreen = useStore((s) => s.selectScreen)
   const project = useStore((s) => s.project)
+  const addSlot = useStore((s) => s.addSlot)
+  const canAdd = useStore((s) => (s.gallery[s.localeId]?.screens.length ?? 0) > 0)
   const r = readiness(screens, settings)
   const slots = slotCount(template)
   const size = getSize(settings.sizeId)
@@ -64,6 +66,22 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
               height={previewHeight}
             />
           ))}
+          {project && canAdd && (
+            <button
+              className="add-tile"
+              style={{ width: PREVIEW_WIDTH + 24, height: previewHeight }}
+              onClick={(e) => {
+                e.stopPropagation()
+                void addSlot()
+              }}
+            >
+              <span className="text-[22px] leading-none">+</span>
+              <span className="text-[12px] font-semibold">Add a tile</span>
+              <span className="text-[11px]" style={{ opacity: 0.75 }}>
+                Pick its pictures on the card
+              </span>
+            </button>
+          )}
         </div>
       )}
 

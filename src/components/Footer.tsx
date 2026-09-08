@@ -22,6 +22,8 @@ export function Footer({ onExport, exporting }: { onExport: () => void; exportin
   const r = readiness(screens, settings)
   const size = getSize(settings.sizeId)
   const index = STEPS.indexOf(step)
+  // Belongs in the footer and not in one step: a save can fail wherever the user is editing.
+  const lastError = useStore((s) => s.lastError)
 
   const summary =
     r.total === 0
@@ -38,8 +40,8 @@ export function Footer({ onExport, exporting }: { onExport: () => void; exportin
 
   return (
     <footer className="footer">
-      <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
-        {summary}
+      <span className="text-[12px]" style={{ color: lastError ? 'var(--warn)' : 'var(--muted)' }}>
+        {lastError ?? summary}
       </span>
       <span className="flex items-center gap-2">
         {index > 0 && (

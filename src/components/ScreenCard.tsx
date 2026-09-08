@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { sceneSpan } from '../render/scene'
 import { useStore } from '../store'
 import type { Screen } from '../types'
@@ -30,6 +30,8 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
   const note = useStore((s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.note ?? '')
   const setSlotNote = useStore((s) => s.setSlotNote)
   const fileRef = useRef<HTMLInputElement>(null)
+  // A tile takes the copy of every language with it, so the click asks once.
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const span = useStore((s) => sceneSpan(screen, s.settings))
 
   const selected = selectedId === screen.id
@@ -133,18 +135,36 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
                 Replace
               </button>
             )}
-            {!project &&
-              (isSlot ? (
-                !empty && (
-                  <button className="seg" onClick={() => clearImage(screen.id)}>
-                    Clear
+            {project ? (
+              confirmRemove ? (
+                <>
+                  <button
+                    className="seg"
+                    title="Removes the tile and its headline in every language"
+                    onClick={() => removeScreen(screen.id)}
+                  >
+                    Remove?
                   </button>
-                )
+                  <button className="seg" onClick={() => setConfirmRemove(false)}>
+                    Keep
+                  </button>
+                </>
               ) : (
-                <button className="seg" onClick={() => removeScreen(screen.id)}>
+                <button className="seg" onClick={() => setConfirmRemove(true)}>
                   Remove
                 </button>
-              ))}
+              )
+            ) : isSlot ? (
+              !empty && (
+                <button className="seg" onClick={() => clearImage(screen.id)}>
+                  Clear
+                </button>
+              )
+            ) : (
+              <button className="seg" onClick={() => removeScreen(screen.id)}>
+                Remove
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -164,6 +164,28 @@ export function projectAfterSlotSource(
   }
 }
 
+/**
+ * A slot id has to survive as a file-safe key and stay unique in the set; the screen name is
+ * the obvious starting point, and a number is appended when a slot already carries it.
+ */
+export function freeSlotId(taken: string[], base: string): string {
+  const clean = base.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'slot'
+  if (!taken.includes(clean)) return clean
+  for (let n = 2; ; n++) if (!taken.includes(`${clean}-${n}`)) return `${clean}-${n}`
+}
+
+/** Appends a tile. It starts without copy, which validation reports until someone writes one. */
+export function projectAfterSlotAdd(project: Project, id: string, screen: string): Project {
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      slots: [...project.set.slots, { id, kind: 'screen', screen, overrides: {} }],
+    },
+    copies: project.copies,
+  }
+}
+
 /** Removing a slot removes its copy too — an orphaned entry would still feed the approval hash. */
 export function projectAfterSlotRemoval(project: Project, slotId: string): Project {
   const copies: ProjectCopies = {}
@@ -238,6 +260,8 @@ type State = {
   setSlotNote: (slotId: string, note: string) => void
   /** put a gallery image into one frame of a slot; null clears an optional one */
   setSlotSource: (slotId: string, role: SlotRole, name: string | null) => Promise<void>
+  /** append a tile, filled with the first gallery image the active language has */
+  addSlot: () => Promise<void>
   updateTarget: (id: string, patch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>>) => void
   approve: (by: string) => Promise<void>
   refreshApproval: () => Promise<void>
@@ -286,6 +310,37 @@ async function loadProjectImages(
   return images
 }
 
+/**
+ * Loads images the set newly points at into the registry, for EVERY language: the set is shared,
+ * so a picture that only reached the active locale would leave a hole on the next switch.
+ */
+async function loadNewSources(
+  project: Project,
+  store: ProjectStore,
+  have: Record<string, HTMLImageElement>,
+  name: string,
+  role: SlotRole,
+): Promise<Record<string, HTMLImageElement>> {
+  const idFor = (localeId: string) =>
+    role === 'artwork' ? artworkIdFor(localeId, name) : imageIdFor(localeId, name)
+  const urlFor = (localeId: string) =>
+    role === 'artwork' ? store.artworkUrl?.(localeId, name) : store.sourceUrl(localeId, name)
+  const pending = project.set.locales.filter((l) => !have[idFor(l.id)])
+  if (!pending.length) return {}
+  const loaded = await Promise.allSettled(
+    pending.map((l) => {
+      const url = urlFor(l.id)
+      return url ? loadImageUrl(url) : Promise.reject(new Error(`No URL for ${l.id}/${name}`))
+    }),
+  )
+  const images: Record<string, HTMLImageElement> = {}
+  loaded.forEach((result, i) => {
+    if (result.status === 'fulfilled') images[idFor(pending[i].id)] = result.value
+    else console.warn(`source screenshot missing for ${idFor(pending[i].id)}`, result.reason)
+  })
+  return images
+}
+
 /** The picker's offer per locale; an adapter without a gallery leaves every list empty. */
 function readGalleries(project: Project, store: ProjectStore): Record<string, Gallery> {
   const galleries: Record<string, Gallery> = {}
@@ -308,13 +363,28 @@ export function mutated(state: State, project: Project, extra: Partial<State> = 
 
 let unsubscribe: (() => void) | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * Every edit lands here. A failed save used to be an unhandled rejection in the console: the
+ * editor looked exactly like a saved one, and the work was gone on the next reload.
+ */
 function scheduleSave(get: () => State) {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
-    const { project, projectStore } = get()
-    if (project && projectStore) void projectStore.save(project)
+    const { project, projectStore, setLastError } = get()
+    if (!project || !projectStore) return
+    projectStore.save(project).then(
+      () => {
+        if (get().lastError?.startsWith(SAVE_FAILED)) setLastError(null)
+      },
+      (error: unknown) => {
+        setLastError(`${SAVE_FAILED} ${error instanceof Error ? error.message : String(error)}`)
+      },
+    )
   }, 300)
 }
+
+/** Prefix, so a later success can clear exactly this message and not someone else's. */
+export const SAVE_FAILED = 'Not saved:'
 
 export const useStore = create<State>((set, get) => ({
   screens: [],
@@ -653,25 +723,32 @@ export const useStore = create<State>((set, get) => ({
     set(mutated(state, project, { screens: screensFor(project, state.localeId) }))
     scheduleSave(get)
     if (!name) return
-    // The set is shared by every language, so the new image has to reach every locale's registry;
-    // switching the language afterwards would otherwise show a gap where the picture now is.
-    const idFor = (localeId: string) =>
-      role === 'artwork' ? artworkIdFor(localeId, name) : imageIdFor(localeId, name)
-    const urlFor = (localeId: string) =>
-      role === 'artwork' ? store.artworkUrl?.(localeId, name) : store.sourceUrl(localeId, name)
-    const pending = project.set.locales.filter((l) => !get().images[idFor(l.id)])
-    const loaded = await Promise.allSettled(
-      pending.map((l) => {
-        const url = urlFor(l.id)
-        return url ? loadImageUrl(url) : Promise.reject(new Error(`No URL for ${l.id}/${name}`))
+    const fresh = await loadNewSources(project, store, get().images, name, role)
+    if (Object.keys(fresh).length) set({ images: { ...get().images, ...fresh } })
+  },
+
+  addSlot: async () => {
+    const state = get()
+    const store = state.projectStore
+    if (!state.project || !store) return
+    // A tile without a picture cannot be exported, so it starts on whatever the language has.
+    const screen = state.gallery[state.localeId]?.screens[0]
+    if (!screen) return set({ lastError: 'No source images to put in a new tile' })
+    const id = freeSlotId(
+      state.project.set.slots.map((slot) => slot.id),
+      screen,
+    )
+    const project = projectAfterSlotAdd(state.project, id, screen)
+    set(
+      mutated(state, project, {
+        screens: screensFor(project, state.localeId),
+        selectedId: id,
+        lastError: null,
       }),
     )
-    const images = { ...get().images }
-    loaded.forEach((result, i) => {
-      if (result.status === 'fulfilled') images[idFor(pending[i].id)] = result.value
-      else console.warn(`source screenshot missing for ${idFor(pending[i].id)}`, result.reason)
-    })
-    set({ images })
+    scheduleSave(get)
+    const fresh = await loadNewSources(project, store, get().images, screen, 'screen')
+    if (Object.keys(fresh).length) set({ images: { ...get().images, ...fresh } })
   },
 
   updateTarget: (id, patch) => {
