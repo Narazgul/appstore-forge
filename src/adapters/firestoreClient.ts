@@ -56,9 +56,18 @@ const isPermissionDenied = (error: unknown) =>
 export function firestoreProjectStore({
   setId,
   firebase,
+  hostJson = JSON,
 }: {
   setId: string
   firebase: CompatFirebase
+  /**
+   * The `JSON` of the window the SDK was created in. The editor runs in an iframe while the
+   * compat SDK belongs to the host page, so an object built here carries THIS frame's
+   * `Object.prototype`. The SDK's plain-object check compares against its own and rejects
+   * everything else as "a custom Object object" — every write failed on it. Re-parsing the
+   * payload with the host's JSON gives the SDK an object from its own realm.
+   */
+  hostJson?: JSON
 }): ProjectStore {
   const doc = () => firebase.firestore().collection(SETS_COLLECTION).doc(setId)
   const urls = new Map<string, string>()
@@ -110,15 +119,16 @@ export function firestoreProjectStore({
       // sync and not to the GUI. A full write would drop them until the next build:aso. And not
       // `set(…, {merge: true})` either — that merges deeply, so a removed slot would linger as a
       // ghost in copies.<locale> and keep counting towards the approval hash.
+      const data = hostJson.parse(JSON.stringify(payload)) as Record<string, unknown>
       try {
-        await doc().update(payload)
+        await doc().update(data)
       } catch (error) {
         if (!isPermissionDenied(error)) throw error
         // The rule wants request.auth.token.admin, and a custom claim lives in the ID token, not
         // in the account: a tab left open long enough still carries a token from before the claim.
         // Reading keeps working, only the write is refused — so refresh once and try again.
         await firebase.auth().currentUser?.getIdToken(true)
-        await doc().update(payload)
+        await doc().update(data)
       }
     },
     sourceUrl(localeId, screen) {

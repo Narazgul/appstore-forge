@@ -27,7 +27,9 @@ preloadFonts()
       const host = (window.parent as unknown as { forgeFirebase?: CompatFirebase }).forgeFirebase
       if (!host) throw new Error('Forge im Backoffice braucht window.parent.forgeFirebase')
       const setId = new URLSearchParams(location.search).get('set') ?? 'default'
-      await useStore.getState().openProject(firestoreProjectStore({ setId, firebase: host }))
+      // hostJson: the payload has to be built in the realm the SDK lives in — see firestoreClient.
+      const hostJson = (window.parent as unknown as { JSON: JSON }).JSON
+      await useStore.getState().openProject(firestoreProjectStore({ setId, firebase: host, hostJson }))
     } else if (__FORGE_PROJECT__) {
       await useStore.getState().openProject(fileProjectStore())
     }
