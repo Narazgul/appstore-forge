@@ -102,7 +102,9 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
         renderScene(ctx, size.w, size.h, screen, settings, {
           self: at(i) as unknown as CanvasImageSource,
           next: (screen.pairId ? (images[screen.pairId] ?? null) : at(i + 1)) as unknown as CanvasImageSource,
-          prev: (screen.pairPrevId ? (images[screen.pairPrevId] ?? null) : at(i - 1)) as unknown as CanvasImageSource,
+          prev: (screen.pairPrevId
+            ? (images[screen.pairPrevId] ?? null)
+            : at(i - 1)) as unknown as CanvasImageSource,
           artwork: (screen.artworkId ? (images[screen.artworkId] ?? null) : null) as CanvasImageSource | null,
         })
         for (let part = 0; part < span; part++) {

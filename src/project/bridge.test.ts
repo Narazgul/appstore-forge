@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { artworkIdFor, artworkPath, imageIdFor, outPath, screensFor, settingsFor, sourcePath } from './bridge'
+import {
+  artworkIdFor,
+  artworkPath,
+  imageIdFor,
+  outPath,
+  screensFor,
+  settingsFor,
+  sourceListing,
+  sourcePath,
+} from './bridge'
 import type { Project } from './types'
 
 const project: Project = {
@@ -135,5 +144,31 @@ describe('paths', () => {
   })
   it('keys images by locale and screen', () => {
     expect(imageIdFor('de', 'budget_screen')).toBe('de/budget_screen')
+  })
+})
+
+describe('sourceListing', () => {
+  it('names the locale directory and reads the screen out of a file name', () => {
+    const listing = sourceListing('outputs/screenshots/{locale}/{screen}.png', 'de')!
+    expect(listing.dir).toBe('outputs/screenshots/de')
+    expect(listing.match('budget_screen.png')).toBe('budget_screen')
+    expect(listing.match('notes.txt')).toBeNull()
+  })
+
+  it('handles a prefix and suffix around the token', () => {
+    const listing = sourceListing('shots/{locale}/shot_{screen}@2x.png', 'en')!
+    expect(listing.match('shot_budget@2x.png')).toBe('budget')
+    expect(listing.match('budget@2x.png')).toBeNull()
+  })
+
+  it('reads artwork templates without a locale', () => {
+    const listing = sourceListing('aso/artwork/{artwork}.png', 'de', '{artwork}')!
+    expect(listing.dir).toBe('aso/artwork')
+    expect(listing.match('pain-points.png')).toBe('pain-points')
+  })
+
+  it('is null when there is no single directory to list', () => {
+    expect(sourceListing('outputs/{screen}/shot.png', 'de')).toBeNull()
+    expect(sourceListing('outputs/{locale}/shot.png', 'de')).toBeNull()
   })
 })

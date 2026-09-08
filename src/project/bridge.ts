@@ -45,3 +45,25 @@ export const artworkPath = (set: ProjectSet, localeId: string, artwork: string) 
 
 export const outPath = (target: ProjectTarget, storeLocale: string, n: number) =>
   target.out.replaceAll('{storeLocale}', storeLocale).replace('{n}', String(n))
+
+/**
+ * The directory a source template points into for one locale, and the pattern its file names
+ * follow. Lets a backend list every image a locale holds instead of only the ones a slot names.
+ * Null when `{screen}` (or `{artwork}`) sits outside the last path segment — there is then no
+ * single directory to list.
+ */
+export function sourceListing(
+  template: string,
+  localeId: string,
+  token = '{screen}',
+): { dir: string; match: (file: string) => string | null } | null {
+  const path = template.replaceAll('{locale}', localeId)
+  const cut = path.lastIndexOf('/')
+  const dir = cut < 0 ? '.' : path.slice(0, cut)
+  const file = cut < 0 ? path : path.slice(cut + 1)
+  const at = file.indexOf(token)
+  if (at < 0 || dir.includes(token)) return null
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`^${escape(file.slice(0, at))}(.+)${escape(file.slice(at + token.length))}$`)
+  return { dir, match: (name: string) => re.exec(name)?.[1] ?? null }
+}

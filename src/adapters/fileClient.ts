@@ -1,4 +1,5 @@
-import type { ProjectStore } from '../project/store'
+import type { Gallery, ProjectStore } from '../project/store'
+import { EMPTY_GALLERY } from '../project/store'
 import type { Project } from '../project/types'
 
 export function fileProjectStore(): ProjectStore {
@@ -6,11 +7,17 @@ export function fileProjectStore(): ProjectStore {
     `/sources/${encodeURIComponent(localeId)}/${encodeURIComponent(screen)}.png`
   const artworkUrl = (localeId: string, artwork: string) =>
     `/artwork/${encodeURIComponent(localeId)}/${encodeURIComponent(artwork)}.png`
+  let galleries: Record<string, Gallery> = {}
   return {
     async load() {
       const res = await fetch('/api/project')
       if (!res.ok) throw new Error(`Project load failed: ${res.status}`)
-      return (await res.json()) as Project
+      const project = (await res.json()) as Project
+      // A dev server too old to serve the listing costs the picker, not the project.
+      galleries = await fetch('/api/gallery')
+        .then((r) => (r.ok ? (r.json() as Promise<Record<string, Gallery>>) : {}))
+        .catch(() => ({}))
+      return project
     },
     async save(project) {
       const res = await fetch('/api/project', {
@@ -31,6 +38,9 @@ export function fileProjectStore(): ProjectStore {
       const res = await fetch(artworkUrl(localeId, artwork))
       if (!res.ok) throw new Error(`Artwork missing: ${localeId}/${artwork}`)
       return new Uint8Array(await res.arrayBuffer())
+    },
+    gallery(localeId) {
+      return galleries[localeId] ?? EMPTY_GALLERY
     },
     subscribe(onChange) {
       if (!import.meta.hot) return () => undefined

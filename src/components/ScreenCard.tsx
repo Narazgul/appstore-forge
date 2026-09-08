@@ -3,6 +3,7 @@ import { sceneSpan } from '../render/scene'
 import { useStore } from '../store'
 import type { Screen } from '../types'
 import { ScreenPreview } from './ScreenPreview'
+import { SourcePicker } from './SourcePicker'
 
 type Props = {
   screen: Screen
@@ -91,6 +92,7 @@ export function ScreenCard({ screen, index, total, width, height, isSlot, compac
             placeholder="Subtitle (optional)"
             onChange={(e) => updateScreen(screen.id, { subhead: e.target.value })}
           />
+          {project && <SourcePicker screen={screen} />}
           {project && (
             <textarea
               className="field note"

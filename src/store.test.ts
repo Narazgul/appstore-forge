@@ -5,6 +5,7 @@ import {
   projectAfterOverride,
   projectAfterScreenPatch,
   projectAfterSlotRemoval,
+  projectAfterSlotSource,
   projectAfterTargetPatch,
   projectAfterTemplate,
   slotCount,
@@ -186,6 +187,38 @@ describe('projectAfterNote', () => {
     const next = projectAfterNote(p, 'b', 'Swap the shot')
     expect(next.set.slots[0]).not.toHaveProperty('note')
     expect(p.set.slots[1]).not.toHaveProperty('note')
+  })
+})
+
+describe('projectAfterSlotSource', () => {
+  it('puts a picked image into the slot`s own frame and drops the approval', () => {
+    const next = projectAfterSlotSource(project(), 'a', 'screen', 'budget_screen_dark')
+    expect(next.set.slots[0].screen).toBe('budget_screen_dark')
+    expect(next.set.approval).toBeNull()
+  })
+
+  it('names the partner frames', () => {
+    const p = projectAfterSlotSource(project(), 'a', 'pair', 'right')
+    const next = projectAfterSlotSource(p, 'a', 'pairPrev', 'left')
+    expect(next.set.slots[0].pair).toBe('right')
+    expect(next.set.slots[0].pairPrev).toBe('left')
+  })
+
+  it('removes an optional frame`s key, which hands it back to the neighbour', () => {
+    const p = projectAfterSlotSource(project(), 'a', 'pair', 'right')
+    expect(projectAfterSlotSource(p, 'a', 'pair', null).set.slots[0]).not.toHaveProperty('pair')
+  })
+
+  it('keeps the screen when clearing it, because every slot needs one', () => {
+    expect(projectAfterSlotSource(project(), 'a', 'screen', null).set.slots[0].screen).toBe('shot')
+  })
+
+  it('leaves other slots alone and does not mutate the input', () => {
+    const p = project()
+    p.set.slots.push({ id: 'b', kind: 'screen', screen: 'two', overrides: {} })
+    const next = projectAfterSlotSource(p, 'b', 'artwork', 'pain-points')
+    expect(next.set.slots[0]).not.toHaveProperty('artwork')
+    expect(p.set.slots[1]).not.toHaveProperty('artwork')
   })
 })
 

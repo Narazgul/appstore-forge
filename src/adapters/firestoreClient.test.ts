@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSetDoc, sourceObjectPath } from './firestoreClient'
+import { parseGalleryDoc, parseSetDoc, sourceObjectPath } from './firestoreClient'
 
 const set = {
   version: 1,
@@ -32,5 +32,24 @@ describe('sourceObjectPath', () => {
     expect(sourceObjectPath('default', 'de', 'budget_screen')).toBe(
       'backoffice/aso/sources/default/de/budget_screen.png',
     )
+  })
+})
+
+describe('parseGalleryDoc', () => {
+  it('reads the image lists build:aso wrote per locale', () => {
+    const g = parseGalleryDoc({ set, gallery: { de: { screens: ['a', 'b'], artwork: ['c'] } } })
+    expect(g.de).toEqual({ screens: ['a', 'b'], artwork: ['c'] })
+  })
+
+  it('fills in the halves a locale is missing', () => {
+    expect(parseGalleryDoc({ gallery: { de: { screens: ['a'] } } }).de).toEqual({
+      screens: ['a'],
+      artwork: [],
+    })
+  })
+
+  it('is empty for a set synced before the gallery existed', () => {
+    expect(parseGalleryDoc({ set })).toEqual({})
+    expect(parseGalleryDoc(undefined)).toEqual({})
   })
 })

@@ -4,7 +4,8 @@ import { getRhythm, rhythmStep } from './presets/rhythms'
 import { getTemplateSpec } from './presets/templates'
 import { artworkIdFor, imageIdFor, screensFor, settingsFor } from './project/bridge'
 import { approvalHash } from './project/hash'
-import type { ProjectStore } from './project/store'
+import { EMPTY_GALLERY } from './project/store'
+import type { Gallery, ProjectStore } from './project/store'
 import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy } from './project/types'
 import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
@@ -134,6 +135,35 @@ export function projectAfterNote(project: Project, slotId: string, note: string)
   }
 }
 
+/** Which frame of a slot an image goes into; `screen` is the slot's own, the rest are optional. */
+export type SlotRole = 'screen' | 'pair' | 'pairPrev' | 'artwork'
+
+/**
+ * Puts one image into one frame of a slot. Only `screen` is mandatory — clearing any other role
+ * drops the field, which hands that frame back to the neighbouring slot (or, for `artwork`,
+ * leaves the arrangement without one, which validation then reports).
+ */
+export function projectAfterSlotSource(
+  project: Project,
+  slotId: string,
+  role: SlotRole,
+  name: string | null,
+): Project {
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      slots: project.set.slots.map((slot) => {
+        if (slot.id !== slotId) return slot
+        if (role === 'screen') return name ? { ...slot, screen: name } : slot
+        const { [role]: _dropped, ...rest } = slot
+        return name ? { ...rest, [role]: name } : rest
+      }),
+    },
+    copies: project.copies,
+  }
+}
+
 /** Removing a slot removes its copy too — an orphaned entry would still feed the approval hash. */
 export function projectAfterSlotRemoval(project: Project, slotId: string): Project {
   const copies: ProjectCopies = {}
@@ -187,6 +217,8 @@ type State = {
   /** null in freeform mode: no project on disk, everything lives in this store */
   project: Project | null
   projectStore: ProjectStore | null
+  /** every image the backend holds, per locale — what the per-frame picker offers */
+  gallery: Record<string, Gallery>
   localeId: string
   targetId: string
   /** null = nothing to judge, false = edited since the last approval */
@@ -204,6 +236,8 @@ type State = {
   setCopy: (localeId: string, slotId: string, patch: Partial<SlotCopy>) => void
   /** feedback for the agent; it is not part of the set, so the approval survives it */
   setSlotNote: (slotId: string, note: string) => void
+  /** put a gallery image into one frame of a slot; null clears an optional one */
+  setSlotSource: (slotId: string, role: SlotRole, name: string | null) => Promise<void>
   updateTarget: (id: string, patch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>>) => void
   approve: (by: string) => Promise<void>
   refreshApproval: () => Promise<void>
@@ -250,6 +284,13 @@ async function loadProjectImages(
     else console.warn(`source screenshot missing for ${keys[i].id}`, result.reason)
   })
   return images
+}
+
+/** The picker's offer per locale; an adapter without a gallery leaves every list empty. */
+function readGalleries(project: Project, store: ProjectStore): Record<string, Gallery> {
+  const galleries: Record<string, Gallery> = {}
+  for (const locale of project.set.locales) galleries[locale.id] = store.gallery?.(locale.id) ?? EMPTY_GALLERY
+  return galleries
 }
 
 /**
@@ -517,6 +558,7 @@ export const useStore = create<State>((set, get) => ({
 
   project: null,
   projectStore: null,
+  gallery: {},
   localeId: 'en',
   targetId: '',
   approvalOk: null,
@@ -536,6 +578,7 @@ export const useStore = create<State>((set, get) => ({
     set({
       project,
       projectStore: store,
+      gallery: readGalleries(project, store),
       images,
       localeId,
       targetId,
@@ -570,6 +613,7 @@ export const useStore = create<State>((set, get) => ({
       : (project.set.targets[0]?.id ?? '')
     set({
       project,
+      gallery: readGalleries(project, store),
       images,
       localeId,
       targetId,
@@ -599,6 +643,35 @@ export const useStore = create<State>((set, get) => ({
     if (!state.project) return
     set({ project: projectAfterNote(state.project, slotId, note) })
     scheduleSave(get)
+  },
+
+  setSlotSource: async (slotId, role, name) => {
+    const state = get()
+    const store = state.projectStore
+    if (!state.project || !store) return
+    const project = projectAfterSlotSource(state.project, slotId, role, name)
+    set(mutated(state, project, { screens: screensFor(project, state.localeId) }))
+    scheduleSave(get)
+    if (!name) return
+    // The set is shared by every language, so the new image has to reach every locale's registry;
+    // switching the language afterwards would otherwise show a gap where the picture now is.
+    const idFor = (localeId: string) =>
+      role === 'artwork' ? artworkIdFor(localeId, name) : imageIdFor(localeId, name)
+    const urlFor = (localeId: string) =>
+      role === 'artwork' ? store.artworkUrl?.(localeId, name) : store.sourceUrl(localeId, name)
+    const pending = project.set.locales.filter((l) => !get().images[idFor(l.id)])
+    const loaded = await Promise.allSettled(
+      pending.map((l) => {
+        const url = urlFor(l.id)
+        return url ? loadImageUrl(url) : Promise.reject(new Error(`No URL for ${l.id}/${name}`))
+      }),
+    )
+    const images = { ...get().images }
+    loaded.forEach((result, i) => {
+      if (result.status === 'fulfilled') images[idFor(pending[i].id)] = result.value
+      else console.warn(`source screenshot missing for ${idFor(pending[i].id)}`, result.reason)
+    })
+    set({ images })
   },
 
   updateTarget: (id, patch) => {

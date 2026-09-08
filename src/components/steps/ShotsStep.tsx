@@ -18,9 +18,10 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
   const size = getSize(settings.sizeId)
   const previewHeight = Math.round((PREVIEW_WIDTH * size.h) / size.w)
 
-  // In project mode the sources come from the repo (Roborazzi), so there is nothing to drop.
+  // In project mode the sources come from the repo, so there is nothing to drop — but every
+  // capture the repo holds can be put into any frame of any slot.
   const lead = project
-    ? 'The screenshots come from the project sources. Rerun the capture to change them; here you check how they sit in the frame.'
+    ? 'The screenshots come from the project sources. Pick which capture sits in which frame of a slot; rerun the capture to change the pictures themselves.'
     : slots > 0
       ? `${template.label} is a ${slots}-screen template. Fill each slot in the order shoppers will see them; the first two do most of the selling.`
       : 'Add as many screenshots as you like, in the order shoppers will see them. The first two do most of the selling.'

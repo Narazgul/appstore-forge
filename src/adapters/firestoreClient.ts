@@ -1,4 +1,5 @@
-import type { ProjectStore } from '../project/store'
+import type { Gallery, ProjectStore } from '../project/store'
+import { EMPTY_GALLERY } from '../project/store'
 import { slotScreens } from '../project/types'
 import type { Project, ProjectCopies, ProjectSet } from '../project/types'
 
@@ -13,7 +14,7 @@ export type CompatFirebase = {
 }
 type CompatDoc = {
   get(): Promise<{ exists: boolean; data(): unknown }>
-  set(data: unknown): Promise<void>
+  update(data: unknown): Promise<void>
   onSnapshot(cb: (snap: { data(): unknown }) => void): () => void
 }
 
@@ -31,9 +32,21 @@ export function parseSetDoc(data: unknown): Project {
   return { set: d.set, copies: d.copies ?? {} }
 }
 
+/** The image lists `build:aso` writes alongside the set; absent on sets synced before it did. */
+export function parseGalleryDoc(data: unknown): Record<string, Gallery> {
+  const raw = (data as { gallery?: Record<string, Partial<Gallery>> } | undefined)?.gallery ?? {}
+  const galleries: Record<string, Gallery> = {}
+  for (const [localeId, entry] of Object.entries(raw)) {
+    galleries[localeId] = { screens: entry?.screens ?? [], artwork: entry?.artwork ?? [] }
+  }
+  return galleries
+}
+
 // An image URL that can never load: the store then logs "source screenshot missing" for the
 // slot instead of failing the whole project, exactly like a missing file under forge dev.
 const MISSING_SOURCE = 'data:image/png;base64,'
+
+const unique = (names: string[]) => [...new Set(names)]
 
 export function firestoreProjectStore({
   setId,
@@ -45,28 +58,31 @@ export function firestoreProjectStore({
   const doc = () => firebase.firestore().collection(SETS_COLLECTION).doc(setId)
   const urls = new Map<string, string>()
   const artworkUrls = new Map<string, string>()
+  let galleries: Record<string, Gallery> = {}
   let ownWrite = ''
 
   return {
     async load() {
       const snap = await doc().get()
       if (!snap.exists) throw new Error(`No set ${setId} in Firestore; run build:aso first`)
-      const project = parseSetDoc(snap.data())
+      const data = snap.data()
+      const project = parseSetDoc(data)
+      galleries = parseGalleryDoc(data)
+      // The picker offers every image the bucket holds, so their URLs have to be resolved too —
+      // a name the set does not reference yet has no entry in the map otherwise.
+      const referenced = project.set.slots.flatMap(slotScreens)
       const keys = project.set.locales.flatMap((l) =>
-        project.set.slots.flatMap((s) =>
-          slotScreens(s).map((screen) => ({
-            key: `${l.id}/${screen}`,
-            path: sourceObjectPath(setId, l.id, screen),
-          })),
-        ),
+        unique([...referenced, ...(galleries[l.id]?.screens ?? [])]).map((screen) => ({
+          key: `${l.id}/${screen}`,
+          path: sourceObjectPath(setId, l.id, screen),
+        })),
       )
+      const referencedArtwork = project.set.slots.map((s) => s.artwork).filter((a): a is string => !!a)
       const artworkKeys = project.set.locales.flatMap((l) =>
-        project.set.slots
-          .filter((s) => s.artwork)
-          .map((s) => ({
-            key: `${l.id}/${s.artwork}`,
-            path: artworkObjectPath(setId, l.id, s.artwork!),
-          })),
+        unique([...referencedArtwork, ...(galleries[l.id]?.artwork ?? [])]).map((artwork) => ({
+          key: `${l.id}/${artwork}`,
+          path: artworkObjectPath(setId, l.id, artwork),
+        })),
       )
       const resolved = await Promise.allSettled(
         [...keys, ...artworkKeys].map(({ path }) => firebase.storage().ref(path).getDownloadURL()),
@@ -85,7 +101,9 @@ export function firestoreProjectStore({
         updatedBy: firebase.auth().currentUser?.email ?? 'unknown',
       }
       ownWrite = payload.updatedAt
-      await doc().set(payload)
+      // `update` and not `set`: the document also carries the gallery lists, which belong to the
+      // sync and not to the GUI. A full write would drop them until the next build:aso.
+      await doc().update(payload)
     },
     sourceUrl(localeId, screen) {
       return urls.get(`${localeId}/${screen}`) ?? MISSING_SOURCE
@@ -106,6 +124,9 @@ export function firestoreProjectStore({
       const res = await fetch(url)
       if (!res.ok) throw new Error(`Artwork fetch failed: ${localeId}/${artwork}`)
       return new Uint8Array(await res.arrayBuffer())
+    },
+    gallery(localeId) {
+      return galleries[localeId] ?? EMPTY_GALLERY
     },
     subscribe(onChange) {
       return doc().onSnapshot((snap) => {
