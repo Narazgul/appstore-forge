@@ -14,6 +14,8 @@ import {
   useStore,
   variantFor,
   freeSlotId,
+  hasUnsavedWork,
+  OUTSIDE_CHANGE,
   SAVE_FAILED,
 } from './store'
 import { screensFor, settingsFor } from './project/bridge'
@@ -606,5 +608,82 @@ describe('the automatic save', () => {
     useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
     await flush()
     expect(useStore.getState().lastError).toBe('Approval not saved: something else')
+  })
+})
+
+describe('an outside change while this editor holds unsaved work', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    missingSources.clear()
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      screens: [],
+      images: {},
+      approvalOk: null,
+      staleApproval: null,
+      lastError: null,
+    })
+  })
+
+  /** A store whose subscribe handle the test can fire, standing in for another writer. */
+  const watchable = (p: Project, save?: () => Promise<void>) => {
+    let fire: (() => void) | null = null
+    return {
+      store: {
+        ...fakeProjectStore(p, save),
+        subscribe: (onChange: () => void) => {
+          fire = onChange
+          return () => (fire = null)
+        },
+      } as ProjectStore,
+      outsideWrite: () => fire?.(),
+    }
+  }
+
+  const openIt = async (store: ProjectStore) => {
+    vi.stubGlobal('Image', FakeImage)
+    vi.stubGlobal('document', {
+      fonts: { load: () => Promise.resolve([]), ready: Promise.resolve(), check: () => true },
+    })
+    await useStore.getState().openProject(store)
+  }
+
+  it('reloads when everything is saved', async () => {
+    const p = project()
+    const { store, outsideWrite } = watchable(p)
+    await openIt(store)
+    expect(hasUnsavedWork()).toBe(false)
+    outsideWrite()
+    await Promise.resolve()
+    expect(useStore.getState().lastError).toBeNull()
+  })
+
+  it('refuses to reload over a save that has not come back, and says so', async () => {
+    vi.useFakeTimers()
+    const p = project()
+    const { store, outsideWrite } = watchable(p, () => new Promise(() => undefined))
+    await openIt(store)
+    useStore.getState().setCopy('en', 'a', { headline: 'Meine Arbeit' })
+    expect(hasUnsavedWork()).toBe(true)
+    outsideWrite()
+    expect(useStore.getState().lastError).toBe(OUTSIDE_CHANGE)
+    // The point of the guard: the edit is still there.
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Meine Arbeit')
+  })
+
+  it('still holds the work after a save failed', async () => {
+    vi.useFakeTimers()
+    const p = project()
+    const { store, outsideWrite } = watchable(p, () => Promise.reject(new Error('permission denied')))
+    await openIt(store)
+    useStore.getState().setCopy('en', 'a', { headline: 'Meine Arbeit' })
+    vi.runAllTimers()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(useStore.getState().lastError).toMatch(SAVE_FAILED)
+    outsideWrite()
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Meine Arbeit')
   })
 })

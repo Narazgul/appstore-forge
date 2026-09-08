@@ -363,17 +363,24 @@ export function mutated(state: State, project: Project, extra: Partial<State> = 
 
 let unsubscribe: (() => void) | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+/** True from the first edit until a save came back. Guards the reload and the tab close. */
+let unsaved = false
+
+export const hasUnsavedWork = () => unsaved
+
 /**
  * Every edit lands here. A failed save used to be an unhandled rejection in the console: the
  * editor looked exactly like a saved one, and the work was gone on the next reload.
  */
 function scheduleSave(get: () => State) {
+  unsaved = true
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     const { project, projectStore, setLastError } = get()
     if (!project || !projectStore) return
     projectStore.save(project).then(
       () => {
+        unsaved = false
         if (get().lastError?.startsWith(SAVE_FAILED)) setLastError(null)
       },
       (error: unknown) => {
@@ -385,6 +392,10 @@ function scheduleSave(get: () => State) {
 
 /** Prefix, so a later success can clear exactly this message and not someone else's. */
 export const SAVE_FAILED = 'Not saved:'
+
+/** Shown when someone else wrote the set while this editor still holds unsaved work. */
+export const OUTSIDE_CHANGE =
+  'The set was changed elsewhere, but your edits are not saved yet. Do not reload — copy your work out first.'
 
 export const useStore = create<State>((set, get) => ({
   screens: [],
@@ -660,8 +671,12 @@ export const useStore = create<State>((set, get) => ({
       lastError: null,
     })
     await get().refreshApproval()
+    unsaved = false
     unsubscribe =
       store.subscribe?.(() => {
+        // Reloading throws away everything this editor holds. That is fine for a saved project
+        // and destroys the work when a save is still pending or has failed.
+        if (unsaved) return set({ lastError: OUTSIDE_CHANGE })
         get()
           .reloadProject()
           .catch((error) => console.error('reloading the project failed', error))
@@ -691,6 +706,7 @@ export const useStore = create<State>((set, get) => ({
       settings: settingsFor(project, targetId),
       selectedId: project.set.slots.some((s) => s.id === state.selectedId) ? state.selectedId : null,
     })
+    unsaved = false
     await get().refreshApproval()
   },
 
@@ -800,6 +816,14 @@ export const useStore = create<State>((set, get) => ({
     set({ approvalOk: ok, staleApproval: ok ? null : project.set.approval })
   },
 }))
+
+// The last net: a reload or a closed tab drops everything the editor holds, and a failed save
+// makes that likely rather than rare.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', (event) => {
+    if (unsaved) event.preventDefault()
+  })
+}
 
 // Automation handle: lets an agent (Argent/CDP) or the devtools console drive the editor
 // without synthesising drag-and-drop. Kept in packaged builds too — this is a local tool
