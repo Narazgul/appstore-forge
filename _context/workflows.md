@@ -110,6 +110,13 @@ To a project (`aso/<setId>.json`), not to a preset file.
    a silent fallback would be a wrong export (rules.md, rule 3). Hebrew is
    detected as RTL but has no bundled face.
 
+   The other selectable fonts do not all share Inter's reach — Baloo 2, for
+   instance, has no Cyrillic. Each `FontOption` in `src/presets/fonts.ts` lists
+   the `coverage` groups its face actually carries (checked against the TTF's
+   cmap, not assumed); `resolveFontId` in `src/presets/scripts.ts` redraws an
+   uncovered language in Inter instead, identically in the GUI and the CLI, and
+   `validateProject` warns about it per locale without blocking the render.
+
 5. `forge check --project ./aso`. Exit 2 lists what is missing, per slot and
    locale.
 

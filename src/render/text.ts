@@ -13,21 +13,33 @@ export type TextMeasurer = {
   measureText: (text: string) => { width: number }
   font: string
   letterSpacing: string
+  fontVariationSettings?: string
 }
 
 /** A headline word with the index of the `*span*` it belongs to (-1 = plain). `glue` marks a
- *  piece that a segmenter split off its neighbour, so no space belongs in front of it. */
-export type Word = { text: string; span: number; glue?: boolean }
+ *  piece that a segmenter split off its neighbour, so no space belongs in front of it. `break`
+ *  marks a word that starts a forced line, from a `\n` in the copy. */
+export type Word = { text: string; span: number; glue?: boolean; break?: boolean }
 
-/** `The list that *feels* like a *notebook.*` → words tagged with their highlight span. */
+/** `The list that *feels* like a *notebook.*` → words tagged with their highlight span. A `\n`
+ *  forces a line break at that point; markup spans still count across it (`pieces` and `wrap`
+ *  carry the flag through). */
 export function parseMarkup(text: string): Word[] {
   const words: Word[] = []
-  const parts = text.split('*')
+  const parts = text.replace(/\r\n?/g, '\n').split('*')
+  let pendingBreak = false
   parts.forEach((part, i) => {
     // An unmatched trailing star is just dropped rather than highlighting the tail.
     const inSpan = i % 2 === 1 && i < parts.length - 1
     const span = inSpan ? (i - 1) / 2 : -1
-    for (const t of part.split(/\s+/)) if (t) words.push({ text: t, span })
+    part.split(/\n+/).forEach((segment, si) => {
+      if (si > 0) pendingBreak = true
+      for (const t of segment.split(/\s+/)) {
+        if (!t) continue
+        words.push(pendingBreak && words.length > 0 ? { text: t, span, break: true } : { text: t, span })
+        pendingBreak = false
+      }
+    })
   })
   return words
 }
@@ -53,7 +65,12 @@ function pieces(word: Word, lang: string | undefined): Word[] {
   )) {
     if (!segment.trim()) continue
     if (isWordLike) {
-      out.push({ text: lead + segment, span: word.span, glue: out.length > 0 })
+      out.push({
+        text: lead + segment,
+        span: word.span,
+        glue: out.length > 0,
+        break: out.length === 0 && !!word.break,
+      })
       lead = ''
     } else if (out.length) {
       out[out.length - 1].text += segment
@@ -88,6 +105,12 @@ export function wrap(ctx: TextMeasurer, words: Word[], maxWidth: number, lang?: 
   let line: Line = { words: [], widths: [], width: 0 }
   for (const [i, word] of all.entries()) {
     const ww = widths[i]
+    // A hard `\n` in the copy always starts a new line, regardless of width.
+    if (word.break && line.words.length) {
+      lines.push(line)
+      line = { words: [{ ...word, glue: false }], widths: [ww], width: ww }
+      continue
+    }
     const gap = line.words.length && !word.glue ? space : 0
     const next = line.width + gap + ww
     if (line.words.length && next > maxWidth) {
@@ -130,29 +153,62 @@ export function availableTextHeight(layout: Layout, h: number): number {
 export type TextLayout = {
   headSize: number
   subSize: number
+  eyebrowSize: number
   headLines: Line[]
   subLines: Line[]
+  /** never wraps — a single `Line` holding the whole (uppercased) eyebrow, or null when there is none */
+  eyebrowLine: Line | null
   gap: number
   /** false when the block only "fits" because the shrink hit its floor — the copy is too long */
   fits: boolean
+  /** false when the eyebrow, at the size the block settled on, is wider than the box */
+  eyebrowFits: boolean
 }
 
 export const HEAD_LH = 1.14
 export const SUB_LH = 1.4
+export const EYEBROW_LH = 1.2
+/** Gap above the headline, as a multiple of the eyebrow's own size. */
+export const EYEBROW_GAP = 0.6
+/** Eyebrow size as a fraction of the headline size it sits above. */
+export const EYEBROW_SCALE = 0.34
+
+function setFont(ctx: TextMeasurer, weight: 400 | 700, size: number, settings: Settings, lang?: string) {
+  ctx.font = `${weight} ${size}px ${fontStackFor(settings.fontId, lang)}`
+  // Skia (the CLI canvas) ignores the weight in `font` for a variable face and draws its default
+  // instance; only the axis picks the weight. Browsers have no such property and need none.
+  if ('fontVariationSettings' in ctx) ctx.fontVariationSettings = `"wght" ${weight}`
+}
 
 export function setHeadFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
-  ctx.font = `700 ${size}px ${fontStackFor(settings.fontId, lang)}`
+  setFont(ctx, 700, size, settings, lang)
   ctx.letterSpacing = `${size * settings.headlineTracking}px`
 }
 
 export function setSubFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
-  ctx.font = `400 ${size}px ${fontStackFor(settings.fontId, lang)}`
+  setFont(ctx, 400, size, settings, lang)
   ctx.letterSpacing = '0px'
 }
 
-/** Total height of a laid-out block, headline + gap + subhead. */
-export const blockHeight = ({ headLines, headSize, subLines, subSize, gap }: TextLayout) =>
-  headLines.length * headSize * HEAD_LH + (subLines.length ? gap + subLines.length * subSize * SUB_LH : 0)
+/** Same face as the headline/subhead — an eyebrow gets its own weight and tracking, not a second font. */
+export function setEyebrowFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
+  setFont(ctx, 700, size, settings, lang)
+  ctx.letterSpacing = `${size * 0.08}px`
+}
+
+/** Total height of a laid-out block: eyebrow (if any) + headline + gap + subhead. */
+export const blockHeight = ({
+  headLines,
+  headSize,
+  subLines,
+  subSize,
+  gap,
+  eyebrowLine,
+  eyebrowSize,
+}: TextLayout) =>
+  (eyebrowLine ? eyebrowSize * EYEBROW_LH + eyebrowSize * EYEBROW_GAP : 0) +
+  headLines.length * headSize * HEAD_LH +
+  (subLines.length ? gap + subLines.length * subSize * SUB_LH : 0)
 
 export function layoutText(
   ctx: TextMeasurer,
@@ -167,6 +223,8 @@ export function layoutText(
   const gap = h * 0.018
   const headWords = parseMarkup(screen.headline)
   const subWords = parseMarkup(screen.subhead)
+  // No markup in the eyebrow: a literal `*` is not a highlight delimiter here.
+  const eyebrowText = screen.eyebrow ? screen.eyebrow.toLocaleUpperCase(screen.lang) : ''
 
   // Shrink until it fits: overflowing into the device is worse than smaller type.
   for (let i = 0; i < 30; i++) {
@@ -174,13 +232,40 @@ export function layoutText(
     const headLines = wrap(ctx, headWords, maxWidth, screen.lang)
     setSubFont(ctx, subSize, settings, screen.lang)
     const subLines = wrap(ctx, subWords, maxWidth, screen.lang)
-    const candidate = { headSize, subSize, headLines, subLines, gap, fits: true }
+    const eyebrowSize = headSize * EYEBROW_SCALE
+    let eyebrowLine: Line | null = null
+    if (eyebrowText) {
+      setEyebrowFont(ctx, eyebrowSize, settings, screen.lang)
+      const width = ctx.measureText(eyebrowText).width
+      eyebrowLine = { words: [{ text: eyebrowText, span: -1 }], widths: [width], width }
+    }
+    const candidate: TextLayout = {
+      headSize,
+      subSize,
+      eyebrowSize,
+      headLines,
+      subLines,
+      eyebrowLine,
+      gap,
+      fits: true,
+      eyebrowFits: !eyebrowLine || eyebrowLine.width <= maxWidth,
+    }
     if (blockHeight(candidate) <= maxHeight) return candidate
     if (headSize < h * 0.014) return { ...candidate, fits: false }
     headSize *= 0.94
     subSize *= 0.94
   }
-  return { headSize, subSize, headLines: [], subLines: [], gap, fits: false }
+  return {
+    headSize,
+    subSize,
+    eyebrowSize: headSize * EYEBROW_SCALE,
+    headLines: [],
+    subLines: [],
+    eyebrowLine: null,
+    gap,
+    fits: false,
+    eyebrowFits: true,
+  }
 }
 
 /** Draw one line of words at `y` (top of the em box), with marker bands under starred spans. */
@@ -254,7 +339,7 @@ export function measureTextBlock(
   screen: Screen,
   settings: Settings,
 ): TextLayout | null {
-  if (!layout.text || (!screen.headline && !screen.subhead)) return null
+  if (!layout.text || (!screen.headline && !screen.subhead && !screen.eyebrow)) return null
   const { maxWidth } = textBox(layout, W, tileW)
   return layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h)
 }
@@ -268,13 +353,13 @@ export function drawTextBlock(
   screen: Screen,
   settings: Settings,
 ) {
-  if (!layout.text || (!screen.headline && !screen.subhead)) return
+  if (!layout.text || (!screen.headline && !screen.subhead && !screen.eyebrow)) return
 
   const { left: boxLeft, maxWidth } = textBox(layout, W, tileW)
   const bandTop = layout.text.top * h
   const bandHeight = layout.text.height * h
   const block = layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h)
-  const { headSize, subSize, headLines, subLines, gap } = block
+  const { headSize, subSize, headLines, subLines, gap, eyebrowLine, eyebrowSize } = block
 
   let y = bandTop + (bandHeight - blockHeight(block)) / 2
   // In an RTL script the "left" alignment is the right edge of the box.
@@ -292,8 +377,15 @@ export function drawTextBlock(
   // The words are placed by hand; `direction` is what makes the engine shape and order the
   // glyphs inside one word right to left.
   ctx.direction = rtl ? 'rtl' : 'ltr'
-  ctx.fillStyle = settings.textColor
 
+  if (eyebrowLine) {
+    ctx.fillStyle = settings.eyebrowColor ?? settings.textColor
+    setEyebrowFont(ctx, eyebrowSize, settings, screen.lang)
+    drawLine(ctx, eyebrowLine, startX(eyebrowLine.width), y, eyebrowSize, [], rtl)
+    y += eyebrowSize * EYEBROW_LH + eyebrowSize * EYEBROW_GAP
+  }
+
+  ctx.fillStyle = settings.textColor
   setHeadFont(ctx, headSize, settings, screen.lang)
   for (const line of headLines) {
     drawLine(ctx, line, startX(line.width), y, headSize, settings.highlights, rtl)

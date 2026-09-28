@@ -77,6 +77,18 @@ describe('approvalHash', () => {
     )
   })
 
+  it('is unchanged for a copy entry that has no eyebrow key, whether or not one is passed explicitly', async () => {
+    const withUndefined = project()
+    withUndefined.copies.en.a.eyebrow = undefined
+    expect(await approvalHash(withUndefined, bytes('img'))).toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('changes when a slot gains an eyebrow', async () => {
+    const p = project()
+    p.copies.en.a.eyebrow = 'New'
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(project(), bytes('img')))
+  })
+
   it('changes when the paired screen changes', async () => {
     const p = project()
     p.set.slots[0].pair = 'other'

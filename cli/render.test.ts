@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PNG } from 'pngjs'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { registerFonts } from './fonts'
 import { renderProject } from './render'
 import type { Project } from '../src/project/types'
 
@@ -89,7 +90,11 @@ const hasGreen = (buf: Buffer) => {
   return false
 }
 
-describe('renderProject', () => {
+// Full-size renders take seconds each; under a parallel full run the 5 s default is too tight.
+describe('renderProject', { timeout: 30_000 }, () => {
+  // Registering every face reads ~60 MB; on a cold cache that alone outlasts the first test's timeout.
+  beforeAll(() => registerFonts(), 60_000)
+
   it('writes RGB PNGs at the target size for every locale, slicing panoramas into tiles', async () => {
     const { repo, project } = await fixture()
     const files = await renderProject({ project, repoRoot: repo })

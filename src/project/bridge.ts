@@ -21,6 +21,7 @@ export function screensFor(project: Project, localeId: string): Screen[] {
     pairPrevId: slot.pairPrev ? imageIdFor(localeId, slot.pairPrev) : null,
     overrides: { ...slot.overrides },
     lang: localeId,
+    eyebrow: copy[slot.id]?.eyebrow || undefined,
   }))
 }
 

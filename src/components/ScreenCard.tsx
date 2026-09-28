@@ -11,6 +11,11 @@ import { SourcePicker } from './SourcePicker'
 const HEADLINE_SOFT = 38
 const SUBHEAD_SOFT = 90
 
+/** Windows clipboard content carries \r\n; the renderer only ever looks for \n. */
+const normalizeNewlines = (value: string) => value.replace(/\r\n?/g, '\n')
+/** Only an explicit line break adds a row; soft wrapping would hide the rest of a one-line headline. */
+const rowsFor = (value: string) => Math.min(4, (value.match(/\n/g)?.length ?? 0) + 1)
+
 type Props = {
   screen: Screen
   index: number
@@ -101,20 +106,36 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
             <div className="flex items-center gap-1.5">
               <input
                 className="field"
+                value={screen.eyebrow ?? ''}
+                placeholder="Eyebrow (optional, one line)"
+                onChange={(e) =>
+                  updateScreen(screen.id, { eyebrow: e.target.value.replace(/[\r\n]+/g, ' ') })
+                }
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <textarea
+                className="field"
+                wrap="off"
+                style={{ resize: 'none', overflow: 'hidden' }}
+                rows={rowsFor(screen.headline)}
                 value={screen.headline}
-                placeholder="Headline — *stars* highlight a word"
-                onChange={(e) => updateScreen(screen.id, { headline: e.target.value })}
+                placeholder="Headline — *stars* highlight a word, Enter for a line break"
+                onChange={(e) => updateScreen(screen.id, { headline: normalizeNewlines(e.target.value) })}
               />
               <span className="count" data-over={headLen > HEADLINE_SOFT}>
                 {headLen}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
-              <input
+              <textarea
                 className="field"
+                wrap="off"
+                style={{ resize: 'none', overflow: 'hidden' }}
+                rows={rowsFor(screen.subhead)}
                 value={screen.subhead}
                 placeholder="Subtitle (optional)"
-                onChange={(e) => updateScreen(screen.id, { subhead: e.target.value })}
+                onChange={(e) => updateScreen(screen.id, { subhead: normalizeNewlines(e.target.value) })}
               />
               <span className="count" data-over={screen.subhead.length > SUBHEAD_SOFT}>
                 {screen.subhead.length}
@@ -146,9 +167,26 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
                           </span>
                           <input
                             className="field"
+                            value={copy?.eyebrow ?? ''}
+                            placeholder="Eyebrow"
+                            onChange={(e) =>
+                              setCopy(l.id, screen.id, { eyebrow: e.target.value.replace(/[\r\n]+/g, ' ') })
+                            }
+                          />
+                          <span className="count" aria-hidden />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-9 shrink-0" aria-hidden />
+                          <textarea
+                            className="field"
+                            wrap="off"
+                            style={{ resize: 'none', overflow: 'hidden' }}
+                            rows={rowsFor(headline)}
                             value={headline}
                             placeholder="Headline"
-                            onChange={(e) => setCopy(l.id, screen.id, { headline: e.target.value })}
+                            onChange={(e) =>
+                              setCopy(l.id, screen.id, { headline: normalizeNewlines(e.target.value) })
+                            }
                           />
                           <span className="count" data-over={len > HEADLINE_SOFT}>
                             {len}
@@ -156,11 +194,16 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="w-9 shrink-0" aria-hidden />
-                          <input
+                          <textarea
                             className="field"
+                            wrap="off"
+                            style={{ resize: 'none', overflow: 'hidden' }}
+                            rows={rowsFor(copy?.subhead ?? '')}
                             value={copy?.subhead ?? ''}
                             placeholder="Subtitle (optional)"
-                            onChange={(e) => setCopy(l.id, screen.id, { subhead: e.target.value })}
+                            onChange={(e) =>
+                              setCopy(l.id, screen.id, { subhead: normalizeNewlines(e.target.value) })
+                            }
                           />
                           <span className="count" aria-hidden />
                         </div>

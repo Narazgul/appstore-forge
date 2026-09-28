@@ -1,32 +1,78 @@
 import { scriptFontFor } from './scripts'
 
+/**
+ * The renderer's four base-Latin glyph groups, checked against each face's actual cmap (see
+ * `resolveFontId` in `scripts.ts`). CJK, Thai and Arabic never consult this — they get a Noto
+ * face from `scriptFontFor` regardless of which group their language would otherwise fall in.
+ */
+export type LangGroup = 'latin' | 'latin-ext' | 'cyrillic' | 'vietnamese'
+
 export type FontOption = {
   id: string
   label: string
   /** Family name as the browser knows it; '' means fall back to the system stack. */
   family: string
   stack: string
+  /** Groups the face can draw. A language outside this list is redrawn in Inter instead. */
+  coverage: LangGroup[]
 }
 
 const SYSTEM = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+const ALL_GROUPS: LangGroup[] = ['latin', 'latin-ext', 'cyrillic', 'vietnamese']
 
 export const FONTS: FontOption[] = [
-  { id: 'inter', label: 'Inter', family: 'Inter Variable', stack: `"Inter Variable", "Inter", ${SYSTEM}` },
-  { id: 'dm-sans', label: 'DM Sans', family: 'DM Sans Variable', stack: `"DM Sans Variable", ${SYSTEM}` },
-  { id: 'poppins', label: 'Poppins', family: 'Poppins', stack: `"Poppins", ${SYSTEM}` },
+  {
+    id: 'inter',
+    label: 'Inter',
+    family: 'Inter Variable',
+    stack: `"Inter Variable", "Inter", ${SYSTEM}`,
+    coverage: ALL_GROUPS,
+  },
+  {
+    id: 'dm-sans',
+    label: 'DM Sans',
+    family: 'DM Sans Variable',
+    stack: `"DM Sans Variable", ${SYSTEM}`,
+    coverage: ['latin', 'latin-ext'],
+  },
+  {
+    id: 'poppins',
+    label: 'Poppins',
+    family: 'Poppins',
+    stack: `"Poppins", ${SYSTEM}`,
+    coverage: ['latin', 'latin-ext'],
+  },
   {
     id: 'space-grotesk',
     label: 'Space Grotesk',
     family: 'Space Grotesk Variable',
     stack: `"Space Grotesk Variable", ${SYSTEM}`,
+    coverage: ['latin', 'latin-ext', 'vietnamese'],
   },
   {
     id: 'playfair',
     label: 'Playfair Display',
     family: 'Playfair Display Variable',
     stack: `"Playfair Display Variable", Georgia, serif`,
+    coverage: ALL_GROUPS,
   },
-  { id: 'system', label: 'System', family: '', stack: SYSTEM },
+  {
+    id: 'baloo-2',
+    label: 'Baloo 2',
+    family: 'Baloo 2',
+    stack: `"Baloo 2", ${SYSTEM}`,
+    // No Cyrillic in the upstream face (verified against the TTF's cmap, not the family's reputation).
+    coverage: ['latin', 'latin-ext', 'vietnamese'],
+  },
+  {
+    id: 'nunito',
+    label: 'Nunito',
+    family: 'Nunito',
+    stack: `"Nunito", ${SYSTEM}`,
+    coverage: ALL_GROUPS,
+  },
+  // The OS picks the face itself, so there is no bundled cmap to fall short — never redirected.
+  { id: 'system', label: 'System', family: '', stack: SYSTEM, coverage: ALL_GROUPS },
 ]
 
 export const getFont = (id: string): FontOption => FONTS.find((f) => f.id === id) ?? FONTS[0]

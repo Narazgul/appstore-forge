@@ -85,6 +85,24 @@ export function TypeSection({ settings, put }: SectionProps) {
           onChange={(e) => put({ textColor: e.target.value })}
         />
       </Row>
+      <Row label="Eyebrow color">
+        <input
+          type="color"
+          value={settings.eyebrowColor ?? settings.textColor}
+          onChange={(e) => put({ eyebrowColor: e.target.value })}
+        />
+        <input
+          className="field"
+          value={settings.eyebrowColor ?? ''}
+          placeholder="Same as text"
+          onChange={(e) => put({ eyebrowColor: e.target.value || null })}
+        />
+        {settings.eyebrowColor && (
+          <button className="seg shrink-0" onClick={() => put({ eyebrowColor: null })}>
+            Same as text
+          </button>
+        )}
+      </Row>
       <Row label="Highlight">
         {[0, 1].map((i) => (
           <input

@@ -43,7 +43,8 @@ export type ProjectSet = {
   approval: Approval | null
 }
 
-export type SlotCopy = { headline: string; subhead: string }
+/** `eyebrow` absent (not empty string) means the slot names none for that locale. */
+export type SlotCopy = { headline: string; subhead: string; eyebrow?: string }
 export type LocaleCopy = Record<string, SlotCopy>
 export type ProjectCopies = Record<string, LocaleCopy>
 export type Project = { set: ProjectSet; copies: ProjectCopies }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fontStackFor, isRtl, scriptFontFor } from './scripts'
+import { fontStackFor, isRtl, languageGroupFor, resolveFontId, scriptFontFor } from './scripts'
 
 describe('scriptFontFor', () => {
   it('returns null for Latin, Cyrillic and Vietnamese, which Inter covers', () => {
@@ -31,5 +31,34 @@ describe('fontStackFor', () => {
   })
   it('is the plain stack for Latin', () => {
     expect(fontStackFor('inter', 'de')).toMatch(/^"Inter Variable"/)
+  })
+})
+
+describe('languageGroupFor', () => {
+  it('groups Polish and Turkish as latin-ext, Russian as cyrillic, Vietnamese on its own', () => {
+    expect(['pl', 'tr'].map(languageGroupFor)).toEqual(['latin-ext', 'latin-ext'])
+    expect(languageGroupFor('ru')).toBe('cyrillic')
+    expect(languageGroupFor('vi')).toBe('vietnamese')
+  })
+  it('defaults everything else, including no language at all, to latin', () => {
+    expect(['en', 'de', 'es-MX', 'id', undefined].map(languageGroupFor)).toEqual(Array(5).fill('latin'))
+  })
+})
+
+describe('resolveFontId', () => {
+  it('keeps a font that covers the language', () => {
+    expect(resolveFontId('nunito', 'ru')).toBe('nunito')
+    expect(resolveFontId('baloo-2', 'vi')).toBe('baloo-2')
+  })
+  it('falls back to Inter when the font does not cover the language', () => {
+    expect(resolveFontId('baloo-2', 'ru')).toBe('inter')
+    expect(resolveFontId('dm-sans', 'vi')).toBe('inter')
+  })
+  it('never redirects Inter itself, which covers every group', () => {
+    for (const lang of ['ru', 'vi', 'pl', 'tr', 'en']) expect(resolveFontId('inter', lang)).toBe('inter')
+  })
+  it('ignores coverage for a scripted language — the base family never draws its glyphs', () => {
+    expect(resolveFontId('baloo-2', 'ja')).toBe('baloo-2')
+    expect(resolveFontId('dm-sans', 'ar')).toBe('dm-sans')
   })
 })

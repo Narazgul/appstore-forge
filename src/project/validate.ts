@@ -1,12 +1,36 @@
+import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastAgainstBackground, contrastRatio } from '../lib/contrast'
+import { effectiveSettings } from '../lib/settings'
 import { DEVICES } from '../presets/devices'
+import { getFont } from '../presets/fonts'
 import { getPosition } from '../presets/positions'
+import { resolveFontId } from '../presets/scripts'
 import { EXPORT_SIZES } from '../presets/sizes'
+import { parseMarkup } from '../render/text'
 import { DEFAULT_SETTINGS } from '../store'
+import type { Screen, Settings } from '../types'
 import { DEFAULT_ARTWORK_SOURCES, artworkPath, sourcePath } from './bridge'
 import { slotScreens } from './types'
 import type { Project, ProjectSet, ProjectSlot } from './types'
 
 export type Issue = { level: 'error' | 'warn'; message: string; slot?: string; locale?: string }
+
+/** `drawTextBlock` in `render/text.ts` never paints the subhead fully opaque. */
+const SUBHEAD_ALPHA = 0.72
+
+/** `ratio < AA_LARGE_TEXT` blocks, `AA_LARGE_TEXT <= ratio < AA_NORMAL_TEXT` only warns. */
+function contrastIssue(label: string, ratio: number, surface: string): Omit<Issue, 'slot' | 'locale'> | null {
+  if (ratio < AA_LARGE_TEXT)
+    return {
+      level: 'error',
+      message: `${label} contrast ${ratio.toFixed(1)}:1 on ${surface} (needs ${AA_LARGE_TEXT}:1)`,
+    }
+  if (ratio < AA_NORMAL_TEXT)
+    return {
+      level: 'warn',
+      message: `${label} contrast ${ratio.toFixed(1)}:1 on ${surface} (needs ${AA_NORMAL_TEXT}:1)`,
+    }
+  return null
+}
 
 /** The arrangement a slot really renders in: the set's look, then the slot's own overrides. */
 const positionOf = (set: ProjectSet, slot: ProjectSlot) =>
@@ -16,6 +40,8 @@ export function validateProject(
   project: Project,
   sourceExists: (localeId: string, screen: string) => boolean,
   artworkExists: (localeId: string, artwork: string) => boolean = () => true,
+  /** Whether a slot's eyebrow fits its box on one line at the final render size, per locale. */
+  eyebrowFits: (localeId: string, slotId: string) => boolean = () => true,
 ): Issue[] {
   const { set, copies } = project
   const issues: Issue[] = []
@@ -70,11 +96,89 @@ export function validateProject(
         }
       }
       if (!copy[slot.id]?.headline?.trim()) error('Headline missing', { slot: slot.id, locale: locale.id })
+      if (copy[slot.id]?.eyebrow && !eyebrowFits(locale.id, slot.id))
+        error('Eyebrow does not fit on one line', { slot: slot.id, locale: locale.id })
     }
     for (const slotId of Object.keys(copy)) {
       if (!seen.has(slotId))
         issues.push({ level: 'warn', message: 'Copy for unknown slot', slot: slotId, locale: locale.id })
     }
   }
+
+  // The global font plus every slot override that names one — each is a face that might not
+  // cover a given locale's script and silently redraw in Inter (see `resolveFontId`).
+  const fontIds = new Set<string>([set.settings.fontId ?? DEFAULT_SETTINGS.fontId])
+  for (const slot of set.slots)
+    fontIds.add(slot.overrides.fontId ?? set.settings.fontId ?? DEFAULT_SETTINGS.fontId)
+  for (const locale of set.locales) {
+    for (const fontId of fontIds) {
+      if (resolveFontId(fontId, locale.id) !== fontId)
+        issues.push({
+          level: 'warn',
+          message: `Font "${getFont(fontId).label}" does not cover locale "${locale.id}"; falls back to Inter`,
+          locale: locale.id,
+        })
+    }
+  }
+  // A slot's eyebrow is a deliberate choice, not a default — one locale carrying it while
+  // another does not is worth a look before shipping, but not an error.
+  for (const slot of set.slots) {
+    const presence = set.locales.map((l) => !!copies[l.id]?.[slot.id]?.eyebrow?.trim())
+    if (presence.some(Boolean) && presence.some((has) => !has))
+      issues.push({ level: 'warn', message: 'Eyebrow set for some locales but not others', slot: slot.id })
+  }
+
+  // Contrast. Colours are locale-independent (overrides never vary by locale), so each slot is
+  // resolved once — exactly as the renderer resolves it, including an active "contrast tile" —
+  // but subhead/eyebrow/highlight checks only fire when some locale actually carries that text.
+  const globalSettings: Settings = { ...DEFAULT_SETTINGS, ...set.settings }
+  for (const slot of set.slots) {
+    const screen: Screen = {
+      id: slot.id,
+      headline: '',
+      subhead: '',
+      imageId: null,
+      overrides: slot.overrides,
+    }
+    const effective = effectiveSettings(screen, globalSettings)
+    const push = (issue: Omit<Issue, 'slot' | 'locale'> | null) => {
+      if (issue) issues.push({ ...issue, slot: slot.id })
+    }
+
+    push(
+      contrastIssue(
+        'Headline',
+        contrastAgainstBackground(effective.textColor, effective.background),
+        'background',
+      ),
+    )
+
+    const hasSubhead = set.locales.some((l) => copies[l.id]?.[slot.id]?.subhead?.trim())
+    if (hasSubhead) {
+      const ratio = contrastAgainstBackground(effective.textColor, effective.background, SUBHEAD_ALPHA)
+      push(contrastIssue('Subhead', ratio, 'background'))
+    }
+
+    const hasEyebrow = set.locales.some((l) => copies[l.id]?.[slot.id]?.eyebrow?.trim())
+    if (hasEyebrow) {
+      const eyebrowColor = effective.eyebrowColor ?? effective.textColor
+      push(
+        contrastIssue('Eyebrow', contrastAgainstBackground(eyebrowColor, effective.background), 'background'),
+      )
+    }
+
+    // Every span a `*starred*` headline actually uses, in any locale — mirrors how drawLine in
+    // render/text.ts picks `highlights[span % highlights.length]`.
+    const spans = new Set<number>()
+    for (const locale of set.locales) {
+      for (const word of parseMarkup(copies[locale.id]?.[slot.id]?.headline ?? ''))
+        if (word.span >= 0) spans.add(word.span)
+    }
+    const highlightColors = new Set<string>()
+    for (const span of spans) highlightColors.add(effective.highlights[span % effective.highlights.length])
+    for (const color of highlightColors)
+      push(contrastIssue('Headline', contrastRatio(effective.textColor, color), 'highlight'))
+  }
+
   return issues
 }

@@ -1,0 +1,23 @@
+This project bundles third-party material under its own MIT license.
+
+## Colour palettes (src/presets/palettes.ts)
+
+The background/text/accent colour values of the 23 built-in palettes are ported
+from:
+
+  ParthJadhav/app-store-screenshots
+  https://github.com/ParthJadhav/app-store-screenshots
+  MIT License, Copyright (c) Parth Jadhav
+
+The marker-band ("highlight") colours are not from that project — they are
+computed here from the ported accent and background colours, tinted until the
+palette's own text colour reaches WCAG 2 AA contrast against the band (see
+below).
+
+## Contrast formula (src/lib/contrast.ts)
+
+`relativeLuminance` and `contrastRatio` implement the public WCAG 2.1 relative
+luminance and contrast ratio formulas (W3C, https://www.w3.org/TR/WCAG21/,
+sections 1.4.3 and Appendix A). These are open specification formulas, not
+third-party code, and are included here for completeness alongside the
+palette attribution above.

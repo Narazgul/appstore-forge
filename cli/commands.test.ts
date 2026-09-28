@@ -88,3 +88,41 @@ describe('approve then render', () => {
     await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
   })
 })
+
+describe('eyebrow overflow', () => {
+  it('flags an eyebrow that does not fit on one line, and refuses to render it', async () => {
+    const { dir } = await scaffold()
+    await writeFile(
+      join(dir, 'copy', 'en.json'),
+      JSON.stringify({
+        a: {
+          headline: 'Hi',
+          subhead: '',
+          eyebrow: Array.from({ length: 40 }, () => 'unverhaeltnismaessig').join(' '),
+        },
+      }),
+    )
+    const { issues } = await checkCommand({ projectDir: dir, setId: 'default', requireApproval: false })
+    expect(issues).toContainEqual({
+      level: 'error',
+      message: 'Eyebrow does not fit on one line',
+      slot: 'a',
+      locale: 'en',
+    })
+    const failing = renderCommand({ projectDir: dir, setId: 'default', requireApproval: false })
+    await expect(failing).rejects.toThrow(/Eyebrow does not fit on one line/)
+    await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
+  })
+
+  it('accepts a short eyebrow', async () => {
+    const { dir } = await scaffold()
+    await writeFile(
+      join(dir, 'copy', 'en.json'),
+      JSON.stringify({ a: { headline: 'Hi', subhead: '', eyebrow: 'New' } }),
+    )
+    expect(await checkCommand({ projectDir: dir, setId: 'default', requireApproval: false })).toEqual({
+      issues: [],
+      approvalOk: null,
+    })
+  })
+})

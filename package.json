@@ -1,7 +1,7 @@
 {
   "name": "@narazgul/appstore-forge",
   "private": false,
-  "version": "2.5.2",
+  "version": "2.6.0",
   "packageManager": "pnpm@11.21.0",
   "type": "module",
   "bin": {
@@ -15,7 +15,8 @@
     "index.html",
     "vite.config.ts",
     "vite-plugin-project.ts",
-    "tsconfig.json"
+    "tsconfig.json",
+    "NOTICE"
   ],
   "scripts": {
     "dev": "vite --port 4324",

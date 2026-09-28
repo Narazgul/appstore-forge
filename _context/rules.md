@@ -20,6 +20,12 @@ a real bug.
    don't know the typeface — verify by measuring text width against a monospace
    baseline, not by eye.
 
+   The CLI has the opposite trap: Skia ignores the weight in `ctx.font` for a
+   variable face and draws its default instance (Inter at 400, the Noto CJK
+   fonts at 100). Set text fonts only through `setFont` in `render/text.ts`,
+   which also sets the `wght` axis. `cli/fonts.test.ts` guards it: width for
+   Latin (Skia's fake bold keeps advance widths), ink for CJK.
+
 4. **Text must never overlap the device.** The text block auto-shrinks to fit the
    gap down to the device band. When adding a size control, measure against that
    real gap, not the nominal band, or the control will fight the shrink and feel

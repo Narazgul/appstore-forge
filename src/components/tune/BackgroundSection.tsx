@@ -1,12 +1,33 @@
 import { useState } from 'react'
 import { GRADIENT_PRESETS, SOLID_PRESETS } from '../../presets/backgrounds'
-import type { Background } from '../../types'
+import { PALETTES } from '../../presets/palettes'
+import type { Background, PaletteColors } from '../../types'
 import { Row } from './Controls'
 import { gradientCss, type SectionProps } from './shared'
 
+/** A palette pair as a small swatch: its background, with a textColor dot and an accent dot. */
+function PaletteSwatch({ colors }: { colors: PaletteColors }) {
+  const bg = colors.background.kind === 'solid' ? colors.background.color : gradientCss(colors.background)
+  return (
+    <span
+      className="relative inline-block h-8 w-8 shrink-0 rounded-md border"
+      style={{ background: bg, borderColor: 'rgba(0,0,0,0.1)' }}
+    >
+      <span
+        className="absolute bottom-1 left-1 h-2 w-2 rounded-full border"
+        style={{ background: colors.textColor, borderColor: 'rgba(0,0,0,0.15)' }}
+      />
+      <span
+        className="absolute bottom-1 right-1 h-2 w-2 rounded-full border"
+        style={{ background: colors.eyebrowColor ?? colors.textColor, borderColor: 'rgba(0,0,0,0.15)' }}
+      />
+    </span>
+  )
+}
+
 /** Background and the optional rounded backdrop card behind the device band. */
 export function BackgroundSection({ settings, put }: SectionProps) {
-  const [tab, setTab] = useState<'presets' | 'custom'>('presets')
+  const [tab, setTab] = useState<'presets' | 'palettes' | 'custom'>('presets')
   const bg = settings.background
   // Switching to Custom on a solid background needs a gradient to start from.
   const custom: Extract<Background, { kind: 'gradient' }> =
@@ -18,12 +39,44 @@ export function BackgroundSection({ settings, put }: SectionProps) {
         <button className="seg" data-active={tab === 'presets'} onClick={() => setTab('presets')}>
           Presets
         </button>
+        <button className="seg" data-active={tab === 'palettes'} onClick={() => setTab('palettes')}>
+          Palettes
+        </button>
         <button className="seg" data-active={tab === 'custom'} onClick={() => setTab('custom')}>
           Custom
         </button>
       </div>
 
-      {tab === 'presets' ? (
+      {tab === 'palettes' && (
+        <div className="flex flex-col gap-1.5">
+          {PALETTES.map((p) => (
+            <button
+              key={p.id}
+              className="option-card"
+              style={{ padding: '8px 10px' }}
+              onClick={() =>
+                put({
+                  background: p.colors.background,
+                  textColor: p.colors.textColor,
+                  eyebrowColor: p.colors.eyebrowColor,
+                  highlights: p.colors.highlights,
+                  altColors: p.alt,
+                })
+              }
+            >
+              <div className="flex items-center gap-2">
+                <PaletteSwatch colors={p.colors} />
+                <PaletteSwatch colors={p.alt} />
+                <span className="text-[12px]" style={{ color: 'var(--ink)' }}>
+                  {p.label}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'presets' && (
         <>
           <div className="grid grid-cols-8 gap-1.5">
             {SOLID_PRESETS.map((color) => (
@@ -48,7 +101,9 @@ export function BackgroundSection({ settings, put }: SectionProps) {
             ))}
           </div>
         </>
-      ) : (
+      )}
+
+      {tab === 'custom' && (
         <div className="flex flex-col gap-2.5">
           <div className="flex gap-1 rounded-lg p-1" style={{ background: 'var(--shell)' }}>
             <button
@@ -120,6 +175,19 @@ export function BackgroundSection({ settings, put }: SectionProps) {
             </>
           )}
         </div>
+      )}
+
+      {settings.altColors && (
+        <Row label="Contrast">
+          <div className="flex flex-1 gap-1 rounded-lg p-1" style={{ background: 'var(--shell)' }}>
+            <button className="seg" data-active={!settings.inverted} onClick={() => put({ inverted: false })}>
+              Off
+            </button>
+            <button className="seg" data-active={settings.inverted} onClick={() => put({ inverted: true })}>
+              Contrast tile
+            </button>
+          </div>
+        </Row>
       )}
 
       <Row label="Backdrop">

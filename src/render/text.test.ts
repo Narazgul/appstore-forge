@@ -61,11 +61,37 @@ describe('parseMarkup', () => {
   it('returns nothing for empty input', () => {
     expect(parseMarkup('')).toEqual([])
   })
+
+  it('marks the word after a `\\n` as a forced break', () => {
+    expect(parseMarkup('Save time\nevery day')).toEqual([
+      { text: 'Save', span: -1 },
+      { text: 'time', span: -1 },
+      { text: 'every', span: -1, break: true },
+      { text: 'day', span: -1 },
+    ])
+  })
+
+  it('keeps a span across a forced break, still counting as one span', () => {
+    expect(parseMarkup('*Save\ntime*').map((w) => w.span)).toEqual([0, 0])
+    expect(parseMarkup('*Save\ntime*').map((w) => !!w.break)).toEqual([false, true])
+  })
+
+  it('does not mark a leading break when the copy starts with a newline', () => {
+    expect(parseMarkup('\nHello')).toEqual([{ text: 'Hello', span: -1 }])
+  })
+
+  it('normalises a Windows line ending to a forced break', () => {
+    expect(parseMarkup('one\r\ntwo').map((w) => !!w.break)).toEqual([false, true])
+  })
 })
 
 describe('stripMarkup', () => {
   it('gives back the sentence without stars, for export filenames', () => {
     expect(stripMarkup('Track *every* habit')).toBe('Track every habit')
+  })
+
+  it('joins a forced break with a single space', () => {
+    expect(stripMarkup('Track *every*\nhabit')).toBe('Track every habit')
   })
 })
 
@@ -114,6 +140,17 @@ describe('wrap', () => {
   it('records a per-word width for every word, which drawing relies on', () => {
     const [line] = wrap(ctx, parseMarkup('a bb ccc'), 1000)
     expect(line.widths).toEqual([10, 20, 30])
+  })
+
+  it('breaks at a `\\n` even though both words would fit on one line', () => {
+    const lines = wrap(ctx, parseMarkup('aa\nbb'), 1000)
+    expect(lines.map((l) => l.words.map((w) => w.text))).toEqual([['aa'], ['bb']])
+  })
+
+  it('keeps a span across the forced break it was given', () => {
+    const lines = wrap(ctx, parseMarkup('*aa\nbb*'), 1000)
+    expect(lines).toHaveLength(2)
+    expect(lines.flatMap((l) => l.words).every((w) => w.span === 0)).toBe(true)
   })
 })
 
@@ -168,6 +205,50 @@ describe('layoutText', () => {
     const without = layoutText(measurer(), screen('Head'), DEFAULT_SETTINGS, 10_000, H, H)
     expect(blockHeight(without)).toBeCloseTo(without.headLines.length * without.headSize * HEAD_LH, 5)
     expect(blockHeight(withSub)).toBeGreaterThan(blockHeight(without))
+  })
+
+  it('a forced break can make the copy too long on its own, not just wrapping', () => {
+    // A wide box, so nothing here would wrap on width — only the 8 forced breaks add lines.
+    const block = layoutText(measurer(), screen('a\nb\nc\nd\ne\nf\ng\nh'), DEFAULT_SETTINGS, 10_000, 1, H)
+    expect(block.headLines).toHaveLength(8)
+    expect(block.fits).toBe(false)
+  })
+})
+
+describe('eyebrow', () => {
+  const H = 2868
+
+  it('adds nothing to the measurement when there is none — identical to before the feature', () => {
+    const block = layoutText(measurer(), screen('Short'), DEFAULT_SETTINGS, 10_000, H, H)
+    expect(block.eyebrowLine).toBeNull()
+    expect(block.eyebrowFits).toBe(true)
+    expect(blockHeight(block)).toBeCloseTo(block.headLines.length * block.headSize * HEAD_LH, 5)
+  })
+
+  it('adds its height above the headline when present', () => {
+    const s = { ...screen('Short'), eyebrow: 'New' }
+    const withEyebrow = layoutText(measurer(), s, DEFAULT_SETTINGS, 10_000, H, H)
+    const without = layoutText(measurer(), screen('Short'), DEFAULT_SETTINGS, 10_000, H, H)
+    expect(withEyebrow.eyebrowLine).not.toBeNull()
+    expect(blockHeight(withEyebrow)).toBeGreaterThan(blockHeight(without))
+  })
+
+  it('uppercases the eyebrow and treats stars literally, not as markup', () => {
+    const s = { ...screen('Head'), eyebrow: 'a *b*' }
+    const block = layoutText(measurer(), s, DEFAULT_SETTINGS, 10_000, H, H)
+    expect(block.eyebrowLine!.words).toEqual([{ text: 'A *B*', span: -1 }])
+  })
+
+  it('reports eyebrowFits false when the (unwrapped) eyebrow is wider than the box', () => {
+    const s = { ...screen('Hi'), eyebrow: 'a rather long eyebrow line indeed' }
+    const block = layoutText(measurer(), s, DEFAULT_SETTINGS, 50, H, H)
+    expect(block.eyebrowFits).toBe(false)
+  })
+
+  it('reports eyebrowFits true when it fits on one line', () => {
+    const s = { ...screen('Hi'), eyebrow: 'ok' }
+    const block = layoutText(measurer(), s, DEFAULT_SETTINGS, 10_000, H, H)
+    expect(block.eyebrowFits).toBe(true)
   })
 })
 
@@ -235,7 +316,7 @@ describe('wrap with a language', () => {
 describe('drawTextBlock geometry', () => {
   /** A canvas stand-in: 10 units per character, and it writes down where things landed. */
   const recorder = () => {
-    const texts: { text: string; x: number }[] = []
+    const texts: { text: string; x: number; color: string }[] = []
     const bands: { left: number; right: number }[] = []
     const ctx = {
       font: '',
@@ -251,7 +332,7 @@ describe('drawTextBlock geometry', () => {
       beginPath: () => {},
       fill: () => {},
       roundRect: (x: number, _y: number, w: number) => bands.push({ left: x, right: x + w }),
-      fillText: (text: string, x: number) => texts.push({ text, x }),
+      fillText: (text: string, x: number) => texts.push({ text, x, color: ctx.fillStyle }),
     }
     return { ctx: ctx as unknown as CanvasRenderingContext2D, texts, bands, state: ctx }
   }
@@ -295,5 +376,31 @@ describe('drawTextBlock geometry', () => {
     const widths = [110, 60]
     expect(bands[0].left).toBeLessThanOrEqual(Math.min(...texts.map((t) => t.x)))
     expect(bands[0].right).toBeGreaterThanOrEqual(Math.max(...texts.map((t, i) => t.x + widths[i])))
+  })
+
+  it('draws the eyebrow uppercase, above the headline, with no highlight band of its own', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, { ...screen(HEAD), eyebrow: 'new here' }, left)
+    expect(rec.texts[0].text).toBe('NEW HERE')
+    expect(rec.texts.slice(1).map((t) => t.text)).toEqual(['ministerium', 'sicher'])
+    expect(rec.bands).toHaveLength(1)
+  })
+
+  it('treats a star in the eyebrow literally, not as a highlight marker', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, { ...screen('Head'), eyebrow: 'a *b*' }, left)
+    expect(rec.texts[0].text).toBe('A *B*')
+  })
+
+  it('colors the eyebrow with eyebrowColor when set, else falls back to textColor', () => {
+    const s = { ...screen('Head'), eyebrow: 'new' }
+    const withColor = recorder()
+    drawTextBlock(withColor.ctx, W, 250, 1000, layout, s, { ...left, eyebrowColor: '#ff0000' })
+    expect(withColor.texts[0].color).toBe('#ff0000')
+    expect(withColor.texts[1].color).toBe(left.textColor)
+
+    const fallback = recorder()
+    drawTextBlock(fallback.ctx, W, 250, 1000, layout, s, left)
+    expect(fallback.texts[0].color).toBe(left.textColor)
   })
 })

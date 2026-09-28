@@ -107,6 +107,8 @@ export type Screen = {
   overrides: ScreenOverrides
   /** BCP-47 language of the copy; picks the script font and text direction. Absent = Latin, LTR. */
   lang?: string
+  /** one line drawn above the headline, uppercase; absent = none. No markup — stars are literal. */
+  eyebrow?: string
 }
 
 /** Export size is deliberately global — every shot in a set must share one canvas size. */
@@ -121,6 +123,23 @@ export type RhythmStep = { layout: LayoutId; positionId: string; textAlign?: Tex
 /** The strip's rhythm, independent of the look: Goldie's template idea. Empty steps = uniform. */
 export type Rhythm = { id: string; label: string; description: string; steps: RhythmStep[] }
 
+/** The four colour keys a palette pair carries. Same shapes as their `Settings` counterparts,
+ *  so `effectiveSettings` can swap them in wholesale for a "contrast tile". */
+export type PaletteColors = {
+  background: Background
+  textColor: string
+  eyebrowColor: string | null
+  highlights: string[]
+}
+
+/** A named colour scheme with a second, contrasting pair for the "contrast tile" toggle. */
+export type Palette = {
+  id: string
+  label: string
+  colors: PaletteColors
+  alt: PaletteColors
+}
+
 export type Settings = {
   background: Background
   /** rounded card drawn behind the device band; null = none */
@@ -132,6 +151,8 @@ export type Settings = {
   tilt: number
   deviceScale: number
   textColor: string
+  /** eyebrow's own color; null = same as textColor */
+  eyebrowColor: string | null
   textAlign: TextAlign
   /** marker bands behind `*starred*` headline words; spans cycle through the list */
   highlights: string[]
@@ -142,6 +163,10 @@ export type Settings = {
   /** headline letter-spacing as a fraction of the font size (em) */
   headlineTracking: number
   sizeId: string
+  /** the picked palette's second pair, for the "contrast tile" toggle; null = none picked */
+  altColors: PaletteColors | null
+  /** when true and `altColors` is set, `effectiveSettings` swaps the four colour keys for it */
+  inverted: boolean
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SECTION_KEYS, effectiveSettings, isOverridden } from './settings'
 import { DEFAULT_SETTINGS } from '../store'
-import type { OverridableKey, Screen } from '../types'
+import type { OverridableKey, PaletteColors, Screen } from '../types'
 
 const screen = (overrides: Screen['overrides'] = {}): Screen => ({
   id: 'test',
@@ -10,6 +10,13 @@ const screen = (overrides: Screen['overrides'] = {}): Screen => ({
   imageId: null,
   overrides,
 })
+
+const altColors: PaletteColors = {
+  background: { kind: 'solid', color: '#0b1020' },
+  textColor: '#f8fafc',
+  eyebrowColor: '#8b5cf6',
+  highlights: ['#8b5cf6'],
+}
 
 describe('effectiveSettings', () => {
   it('falls through to the global settings when nothing is overridden', () => {
@@ -28,6 +35,60 @@ describe('effectiveSettings', () => {
     effectiveSettings(s, global)
     expect(global).toEqual(DEFAULT_SETTINGS)
     expect(s.overrides).toEqual({ tilt: 8 })
+  })
+
+  describe('a "contrast tile" (inverted + altColors)', () => {
+    const global = { ...DEFAULT_SETTINGS, altColors, inverted: true }
+
+    it('leaves colours alone when altColors is null even if inverted is true', () => {
+      const resolved = effectiveSettings(screen(), { ...DEFAULT_SETTINGS, inverted: true, altColors: null })
+      expect(resolved.background).toEqual(DEFAULT_SETTINGS.background)
+      expect(resolved.textColor).toBe(DEFAULT_SETTINGS.textColor)
+    })
+
+    it('leaves colours alone when altColors is set but inverted is false', () => {
+      const resolved = effectiveSettings(screen(), { ...DEFAULT_SETTINGS, inverted: false, altColors })
+      expect(resolved.background).toEqual(DEFAULT_SETTINGS.background)
+      expect(resolved.textColor).toBe(DEFAULT_SETTINGS.textColor)
+    })
+
+    it('swaps background, textColor, eyebrowColor and highlights for the alt pair', () => {
+      const resolved = effectiveSettings(screen(), global)
+      expect(resolved.background).toEqual(altColors.background)
+      expect(resolved.textColor).toBe(altColors.textColor)
+      expect(resolved.eyebrowColor).toBe(altColors.eyebrowColor)
+      expect(resolved.highlights).toEqual(altColors.highlights)
+    })
+
+    it('leaves every other key at the global value', () => {
+      const resolved = effectiveSettings(screen(), global)
+      expect(resolved.layout).toBe(global.layout)
+      expect(resolved.deviceId).toBe(global.deviceId)
+      expect(resolved.backdropColor).toBe(global.backdropColor)
+    })
+
+    it('lets an explicit screen override win over the alt pair (global → alt → override)', () => {
+      const resolved = effectiveSettings(screen({ textColor: '#ff0000' }), global)
+      expect(resolved.textColor).toBe('#ff0000')
+      // The keys the screen did not touch still come from the alt pair, not the global settings.
+      expect(resolved.background).toEqual(altColors.background)
+    })
+
+    it('honours an explicit null eyebrowColor override over the alt pair', () => {
+      const resolved = effectiveSettings(screen({ eyebrowColor: null }), global)
+      expect(resolved.eyebrowColor).toBeNull()
+    })
+
+    it('a screen can invert on its own while the global stays uninverted', () => {
+      const base = { ...DEFAULT_SETTINGS, altColors }
+      const resolved = effectiveSettings(screen({ inverted: true }), base)
+      expect(resolved.background).toEqual(altColors.background)
+    })
+
+    it('a screen can opt out of a global inversion', () => {
+      const resolved = effectiveSettings(screen({ inverted: false }), global)
+      expect(resolved.background).toEqual(DEFAULT_SETTINGS.background)
+    })
   })
 })
 

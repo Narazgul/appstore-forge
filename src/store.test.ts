@@ -108,6 +108,18 @@ describe('projectAfterScreenPatch', () => {
     projectAfterScreenPatch(p, 'en', 'a', { headline: 'New' })
     expect(p.copies.en.a.headline).toBe('Hi')
   })
+
+  it('writes a non-empty eyebrow', () => {
+    const next = projectAfterScreenPatch(project(), 'en', 'a', { eyebrow: 'New' })
+    expect(next.copies.en.a).toEqual({ headline: 'Hi', subhead: '', eyebrow: 'New' })
+  })
+
+  it('drops the eyebrow key instead of persisting an empty string', () => {
+    const withEyebrow = projectAfterScreenPatch(project(), 'en', 'a', { eyebrow: 'New' })
+    const cleared = projectAfterScreenPatch(withEyebrow, 'en', 'a', { eyebrow: '' })
+    expect(cleared.copies.en.a).toEqual({ headline: 'Hi', subhead: '' })
+    expect('eyebrow' in cleared.copies.en.a).toBe(false)
+  })
 })
 
 describe('projectAfterOverride', () => {

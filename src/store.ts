@@ -29,6 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tilt: 0,
   deviceScale: 1,
   textColor: '#111114',
+  eyebrowColor: null,
   textAlign: 'center',
   highlights: ['#ffe27a'],
   fontId: 'inter',
@@ -36,6 +37,8 @@ export const DEFAULT_SETTINGS: Settings = {
   subheadScale: 1,
   headlineTracking: -0.01,
   sizeId: 'iphone-6-9',
+  altColors: null,
+  inverted: false,
 }
 
 /** The overrides a template pins on the screen at `index`; empty for templates without variants. */
@@ -71,9 +74,13 @@ export function projectAfterScreenPatch(
 ): Project {
   const locale = project.copies[localeId] ?? {}
   const current = locale[screenId] ?? { headline: '', subhead: '' }
+  const merged: SlotCopy = { ...current, ...patch }
+  // An empty eyebrow is the same as none; keeping the key would persist a no-op edit and
+  // change the approval hash for a project that never had the field.
+  if (!merged.eyebrow) delete merged.eyebrow
   return {
     set: { ...project.set, approval: null },
-    copies: { ...project.copies, [localeId]: { ...locale, [screenId]: { ...current, ...patch } } },
+    copies: { ...project.copies, [localeId]: { ...locale, [screenId]: merged } },
   }
 }
 
@@ -539,7 +546,11 @@ export const useStore = create<State>((set, get) => ({
     const copy: Partial<SlotCopy> = {}
     if (patch.headline !== undefined) copy.headline = patch.headline
     if (patch.subhead !== undefined) copy.subhead = patch.subhead
-    if (!state.project || (copy.headline === undefined && copy.subhead === undefined)) {
+    if (patch.eyebrow !== undefined) copy.eyebrow = patch.eyebrow
+    if (
+      !state.project ||
+      (copy.headline === undefined && copy.subhead === undefined && copy.eyebrow === undefined)
+    ) {
       return set({ screens })
     }
     const project = projectAfterScreenPatch(state.project, state.localeId, id, copy)

@@ -83,7 +83,7 @@ src/
   components/tune/     one file per section of the fine-tune panel
   lib/export.ts        renders every screen full-size, then zips the set
   store.ts             zustand: screens, decoded images, settings
-fonts/                 the bundled faces, one per writing system
+fonts/                 the bundled faces — one per selectable Latin font, plus one per script
 samples/               four fake app screenshots for trying it out
 _context/              domain model, invariants, and workflows — read before changing code
 ```
@@ -169,7 +169,10 @@ per language in `copy/<locale>.json` keyed by slot id.
 
 The locale id is also the renderer's language: it picks the script font and, for
 an RTL language, sets the canvas `direction` to `rtl` so a run is shaped and
-ordered right to left inside each word.
+ordered right to left inside each word. If the set's chosen font does not cover
+that language's glyphs (Baloo 2 has no Cyrillic, for instance), the renderer
+draws it in Inter instead — deterministically, the same way in the GUI and the
+CLI — and `forge check` warns about it per locale.
 
 ### A slot's extra images
 

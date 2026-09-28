@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastAgainstBackground, contrastRatio } from '../lib/contrast'
 import { validateProject } from './validate'
 import type { Project, ProjectLocale, SlotCopy } from './types'
+
+/** Mirrors the message/level branching in validate.ts, for fixtures built to land in one branch. */
+const expectedContrastMessage = (label: string, ratio: number, surface: string) =>
+  `${label} contrast ${ratio.toFixed(1)}:1 on ${surface} (needs ${ratio < AA_LARGE_TEXT ? AA_LARGE_TEXT : AA_NORMAL_TEXT}:1)`
+const expectedContrastLevel = (ratio: number): 'error' | 'warn' => (ratio < AA_LARGE_TEXT ? 'error' : 'warn')
 
 const base = (): Project => ({
   set: {
@@ -187,6 +193,279 @@ describe('validateProject', () => {
     expect(validateProject(p, always)).toContainEqual({
       level: 'error',
       message: 'Slot kind artwork is not supported yet',
+      slot: 'a',
+    })
+  })
+
+  it('warns, without erroring, when the set font does not cover a locale', () => {
+    const p = base()
+    p.set.settings = { fontId: 'baloo-2' }
+    p.set.locales = [{ id: 'ru', store: { appstore: 'ru-RU' } }]
+    p.copies = { ru: { a: { headline: 'Привет', subhead: '' } } }
+    const issues = validateProject(p, always)
+    expect(issues).toEqual([
+      {
+        level: 'warn',
+        message: 'Font "Baloo 2" does not cover locale "ru"; falls back to Inter',
+        locale: 'ru',
+      },
+    ])
+  })
+
+  it('warns for a slot override font that does not cover the locale, not just the global one', () => {
+    const p = base()
+    p.set.slots[0].overrides = { fontId: 'dm-sans' }
+    p.set.locales = [{ id: 'vi', store: { appstore: 'vi-VN' } }]
+    p.copies = { vi: { a: { headline: 'Xin chào', subhead: '' } } }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'warn',
+      message: 'Font "DM Sans" does not cover locale "vi"; falls back to Inter',
+      locale: 'vi',
+    })
+  })
+
+  it('stays quiet when the font covers every locale', () => {
+    const p = base()
+    p.set.settings = { fontId: 'nunito' }
+    p.set.locales = [{ id: 'ru', store: { appstore: 'ru-RU' } }]
+    p.copies = { ru: { a: { headline: 'Привет', subhead: '' } } }
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('is silent about the eyebrow when the check is not wired up', () => {
+    const p = base()
+    p.copies.en.a.eyebrow = 'New'
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('flags an eyebrow the injected check reports as not fitting', () => {
+    const p = base()
+    p.copies.en.a.eyebrow = 'New'
+    expect(validateProject(p, always, always, () => false)).toContainEqual({
+      level: 'error',
+      message: 'Eyebrow does not fit on one line',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('never asks the eyebrow check about a slot with no eyebrow', () => {
+    const p = base()
+    let asked = false
+    validateProject(p, always, always, () => {
+      asked = true
+      return true
+    })
+    expect(asked).toBe(false)
+  })
+
+  it('warns when only some locales of a slot carry an eyebrow', () => {
+    const p = base()
+    p.set.locales.push({ id: 'de', store: { appstore: 'de-DE' } })
+    p.copies.en.a.eyebrow = 'New'
+    p.copies.de = { a: { headline: 'Hallo', subhead: '' } }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'warn',
+      message: 'Eyebrow set for some locales but not others',
+      slot: 'a',
+    })
+  })
+
+  it('stays silent when every locale has the eyebrow, or none does', () => {
+    const p = base()
+    p.set.locales.push({ id: 'de', store: { appstore: 'de-DE' } })
+    p.copies.de = { a: { headline: 'Hallo', subhead: '' } }
+    expect(validateProject(p, always).some((i) => i.message.includes('Eyebrow set for some'))).toBe(false)
+
+    p.copies.en.a.eyebrow = 'New'
+    p.copies.de.a.eyebrow = 'Neu'
+    expect(validateProject(p, always).some((i) => i.message.includes('Eyebrow set for some'))).toBe(false)
+  })
+})
+
+describe('contrast', () => {
+  it('is silent for the real production colours (background #eaf2ff, textColor #111114, highlights [#ffe27a])', () => {
+    const p = base()
+    p.set.settings = {
+      background: { kind: 'solid', color: '#eaf2ff' },
+      textColor: '#111114',
+      highlights: ['#ffe27a'],
+    }
+    p.copies.en.a = { headline: 'Master *your budget*', subhead: 'Every euro gets a job.', eyebrow: 'New' }
+    expect(validateProject(p, always).filter((i) => i.message.includes('contrast'))).toEqual([])
+  })
+
+  it('a) errors when the headline fails the minimum ratio against a solid background', () => {
+    const p = base()
+    const background = { kind: 'solid' as const, color: '#222222' }
+    const textColor = '#000000'
+    p.set.settings = { background, textColor }
+    const ratio = contrastAgainstBackground(textColor, background)
+    expect(ratio).toBeLessThan(AA_LARGE_TEXT)
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: expectedContrastMessage('Headline', ratio, 'background'),
+      slot: 'a',
+    })
+  })
+
+  it('a) warns, not errors, between the two thresholds — and does not flag a passing headline', () => {
+    const p = base()
+    const background = { kind: 'solid' as const, color: '#ffffff' }
+    const textColor = '#949494'
+    p.set.settings = { background, textColor }
+    const ratio = contrastAgainstBackground(textColor, background)
+    expect(ratio).toBeGreaterThanOrEqual(AA_LARGE_TEXT)
+    expect(ratio).toBeLessThan(AA_NORMAL_TEXT)
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'warn',
+      message: expectedContrastMessage('Headline', ratio, 'background'),
+      slot: 'a',
+    })
+
+    // #767676 on white clears AA_NORMAL_TEXT — no issue at all.
+    p.set.settings = { background, textColor: '#767676' }
+    expect(validateProject(p, always).some((i) => i.message.startsWith('Headline contrast'))).toBe(false)
+  })
+
+  it('checks a gradient background against the worse of its two stops', () => {
+    const p = base()
+    const background = { kind: 'gradient' as const, from: '#ffffff', to: '#eaeaea', angle: 135 }
+    const textColor = '#949494'
+    p.set.settings = { background, textColor }
+    const worse = Math.min(contrastRatio(textColor, background.from), contrastRatio(textColor, background.to))
+    // The darker stop is the worse one here — proves the check reads both, not just the first.
+    expect(worse).toBe(contrastRatio(textColor, background.to))
+    expect(worse).toBeLessThan(contrastRatio(textColor, background.from))
+    expect(validateProject(p, always)).toContainEqual({
+      level: expectedContrastLevel(worse),
+      message: expectedContrastMessage('Headline', worse, 'background'),
+      slot: 'a',
+    })
+  })
+
+  it('b) checks the subhead at its real 0.72 alpha, only when some locale has one', () => {
+    const p = base()
+    const background = { kind: 'solid' as const, color: '#ffffff' }
+    const textColor = '#767676' // opaque ratio ~4.54 passes the headline outright
+    p.set.settings = { background, textColor }
+    expect(validateProject(p, always).some((i) => i.message.includes('Subhead'))).toBe(false)
+
+    p.copies.en.a.subhead = 'Every euro gets a job.'
+    const opaque = contrastAgainstBackground(textColor, background)
+    const blended = contrastAgainstBackground(textColor, background, 0.72)
+    expect(opaque).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    expect(blended).toBeLessThan(opaque)
+    expect(validateProject(p, always)).toContainEqual({
+      level: expectedContrastLevel(blended),
+      message: expectedContrastMessage('Subhead', blended, 'background'),
+      slot: 'a',
+    })
+  })
+
+  it('c) checks eyebrowColor ?? textColor against the background, only when some locale has one', () => {
+    const p = base()
+    p.set.settings = {
+      background: { kind: 'solid', color: '#ffffff' },
+      textColor: '#000000',
+      eyebrowColor: '#eeeeee',
+    }
+    expect(validateProject(p, always).some((i) => i.message.includes('Eyebrow contrast'))).toBe(false)
+
+    p.copies.en.a.eyebrow = 'New'
+    const ratio = contrastAgainstBackground('#eeeeee', { kind: 'solid', color: '#ffffff' })
+    const issues = validateProject(p, always).filter((i) => i.message.includes('contrast'))
+    expect(issues).toEqual([
+      {
+        level: expectedContrastLevel(ratio),
+        message: expectedContrastMessage('Eyebrow', ratio, 'background'),
+        slot: 'a',
+      },
+    ])
+  })
+
+  it('d) checks textColor against a highlight only when a starred span actually uses it', () => {
+    const p = base()
+    p.set.settings = {
+      background: { kind: 'solid', color: '#ffffff' },
+      textColor: '#000000',
+      highlights: ['#000000', '#f2f2f2'], // span 0 (used) fails; span 1 (unused) would pass anyway
+    }
+    p.copies.en.a.headline = 'Master *your* budget'
+    const ratio = contrastRatio('#000000', '#000000')
+    expect(validateProject(p, always)).toContainEqual({
+      level: expectedContrastLevel(ratio),
+      message: expectedContrastMessage('Headline', ratio, 'highlight'),
+      slot: 'a',
+    })
+  })
+
+  it('d) never flags a highlight colour no locale’s headline puts a starred span on', () => {
+    const p = base()
+    p.set.settings = {
+      background: { kind: 'solid', color: '#ffffff' },
+      textColor: '#000000',
+      highlights: ['#f2f2f2', '#0d0d0d'], // span 1 would fail, but nothing uses it
+    }
+    p.copies.en.a.headline = 'Plain headline, no stars'
+    expect(validateProject(p, always).some((i) => i.message.includes('highlight'))).toBe(false)
+  })
+
+  it('d) cycles highlights by span index like the renderer, and looks at every locale', () => {
+    const p = base()
+    p.set.locales.push({ id: 'de', store: { appstore: 'de-DE' } })
+    p.set.settings = {
+      background: { kind: 'solid', color: '#ffffff' },
+      textColor: '#000000',
+      highlights: ['#f2f2f2', '#0d0d0d'],
+    }
+    // en only reaches span 0 (fine); de's second star reaches span 1 (fails) — only visible by
+    // looking at every locale's headline, not just the active one.
+    p.copies.en.a.headline = 'Master *your* budget'
+    p.copies.de = { a: { headline: 'Meistere *dein* *Budget*', subhead: '' } }
+    const bad = contrastRatio('#000000', '#0d0d0d')
+    const issues = validateProject(p, always).filter((i) => i.message.includes('highlight'))
+    expect(issues).toEqual([
+      {
+        level: expectedContrastLevel(bad),
+        message: expectedContrastMessage('Headline', bad, 'highlight'),
+        slot: 'a',
+      },
+    ])
+  })
+
+  it('lets an explicit slot override change which colours its own contrast check uses', () => {
+    const p = base()
+    p.set.settings = { background: { kind: 'solid', color: '#ffffff' }, textColor: '#000000' }
+    p.set.slots[0].overrides = { textColor: '#eeeeee' }
+    const ratio = contrastAgainstBackground('#eeeeee', { kind: 'solid', color: '#ffffff' })
+    expect(validateProject(p, always)).toContainEqual({
+      level: expectedContrastLevel(ratio),
+      message: expectedContrastMessage('Headline', ratio, 'background'),
+      slot: 'a',
+    })
+  })
+
+  it('checks an inverted slot against its alt colours, not the global ones', () => {
+    const p = base()
+    p.set.settings = {
+      background: { kind: 'solid', color: '#ffffff' },
+      textColor: '#000000',
+      altColors: {
+        background: { kind: 'solid', color: '#000000' },
+        textColor: '#000000',
+        eyebrowColor: null,
+        highlights: ['#000000'],
+      },
+    }
+    // Uninverted, black on white is fine.
+    expect(validateProject(p, always).some((i) => i.message.startsWith('Headline contrast'))).toBe(false)
+
+    p.set.slots[0].overrides = { inverted: true }
+    const ratio = contrastRatio('#000000', '#000000')
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: expectedContrastMessage('Headline', ratio, 'background'),
       slot: 'a',
     })
   })

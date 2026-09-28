@@ -67,6 +67,33 @@ describe('screensFor', () => {
     expect(accounts.subhead).toBe('')
   })
 
+  it('maps the eyebrow when the copy has one', () => {
+    const withEyebrow: Project = {
+      ...project,
+      copies: {
+        ...project.copies,
+        en: { ...project.copies.en, 'budget-light': { headline: 'Hi', subhead: '', eyebrow: 'New' } },
+      },
+    }
+    expect(screensFor(withEyebrow, 'en')[0].eyebrow).toBe('New')
+  })
+
+  it('leaves the eyebrow absent, not empty, when the copy has none', () => {
+    const [budget] = screensFor(project, 'en')
+    expect(budget.eyebrow).toBeUndefined()
+  })
+
+  it('treats an empty eyebrow in the copy file the same as absent', () => {
+    const withBlank: Project = {
+      ...project,
+      copies: {
+        ...project.copies,
+        en: { ...project.copies.en, 'budget-light': { headline: 'Hi', subhead: '', eyebrow: '' } },
+      },
+    }
+    expect(screensFor(withBlank, 'en')[0].eyebrow).toBeUndefined()
+  })
+
   it('never shares the overrides object with the project', () => {
     const [budget] = screensFor(project, 'de')
     expect(budget.overrides).not.toBe(project.set.slots[0].overrides)
