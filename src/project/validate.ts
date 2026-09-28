@@ -87,9 +87,24 @@ export function validateProject(
   if (!artworkTemplate.includes('{artwork}')) error('artworkSources must contain {artwork}')
   const artworkPerLocale = artworkTemplate.includes('{locale}')
 
+  // A target's `out` needs `{n}` to keep two tiles from overwriting each other — unless the set
+  // can only ever produce one tile per target and locale in the first place. Span depends only on
+  // the layout, which does not vary by target or locale, so this is safe to compute once.
+  const globalSettingsForSpan: Settings = { ...DEFAULT_SETTINGS, ...set.settings }
+  const oneTileOnly =
+    set.slots.length === 1 &&
+    getLayout(
+      effectiveSettings(
+        { id: set.slots[0].id, headline: '', subhead: '', imageId: null, overrides: set.slots[0].overrides },
+        globalSettingsForSpan,
+      ).layout,
+    ).span === 1
+
   for (const target of set.targets) {
     if (!EXPORT_SIZES.some((s) => s.id === target.sizeId)) error(`Unknown size ${target.sizeId}`)
     if (!DEVICES.some((d) => d.id === target.deviceId)) error(`Unknown device ${target.deviceId}`)
+    if (!target.out.includes('{n}') && !oneTileOnly)
+      error(`Target ${target.id}: out must contain {n} unless the set renders exactly one tile per locale`)
     for (const locale of set.locales) {
       if (!locale.store?.[target.id]) error(`No store locale for target ${target.id}`, { locale: locale.id })
     }
@@ -99,7 +114,11 @@ export function validateProject(
   for (const slot of set.slots) {
     if (seen.has(slot.id)) error(`Duplicate slot id ${slot.id}`, { slot: slot.id })
     seen.add(slot.id)
-    if (slot.kind === 'artwork') error('Slot kind artwork is not supported yet', { slot: slot.id })
+    if (slot.kind === 'artwork') {
+      if (slot.screen) error('Artwork slot must not name a screen', { slot: slot.id })
+      if (slot.pair) error('Artwork slot must not name a pair', { slot: slot.id })
+      if (slot.pairPrev) error('Artwork slot must not name a pairPrev', { slot: slot.id })
+    } else if (!slot.screen) error('Slot needs a screen', { slot: slot.id })
     const position = positionOf(set, slot)
     if (!slot.artwork && position.placements.some((p) => p.source === 'artwork'))
       error(`Arrangement ${position.id} needs an artwork, but the slot names none`, { slot: slot.id })
@@ -152,7 +171,9 @@ export function validateProject(
             )
         }
       }
-      if (!copy[slot.id]?.headline?.trim()) error('Headline missing', { slot: slot.id, locale: locale.id })
+      // An artwork slot may be a pure visual with no copy at all; a 'screen' slot always needs one.
+      if (slot.kind !== 'artwork' && !copy[slot.id]?.headline?.trim())
+        error('Headline missing', { slot: slot.id, locale: locale.id })
       if (copy[slot.id]?.eyebrow && !eyebrowFits(locale.id, slot.id))
         error('Eyebrow does not fit on one line', { slot: slot.id, locale: locale.id })
     }
@@ -160,6 +181,16 @@ export function validateProject(
       if (!seen.has(slotId))
         issues.push({ level: 'warn', message: 'Copy for unknown slot', slot: slotId, locale: locale.id })
     }
+  }
+
+  for (const slot of set.slots) {
+    if (slot.kind !== 'artwork' || slot.elements?.length) continue
+    const hasCopy = set.locales.some((l) => {
+      const c = copies[l.id]?.[slot.id]
+      return !!(c?.headline?.trim() || c?.subhead?.trim() || c?.eyebrow?.trim())
+    })
+    if (!hasCopy)
+      issues.push({ level: 'warn', message: 'Artwork slot has neither stickers nor any copy', slot: slot.id })
   }
 
   // The global font plus every slot override that names one — each is a face that might not

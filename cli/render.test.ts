@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { PNG } from 'pngjs'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { registerFonts } from './fonts'
-import { renderProject } from './render'
+import { outFilePattern, renderProject } from './render'
 import type { Project } from '../src/project/types'
 
 async function fixture() {
@@ -113,6 +113,54 @@ async function stickerFixture(layer: 'behind' | 'front') {
   ]
   return { repo, project }
 }
+
+/** A single artwork slot (no screen, no device) carrying one sticker, sized as a Play feature graphic. */
+async function artworkSlotFixture() {
+  const { repo, project } = await fixture()
+  await mkdir(join(repo, 'aso', 'artwork'), { recursive: true })
+  const c = createCanvas(200, 200)
+  const ctx = c.getContext('2d')
+  ctx.fillStyle = 'rgb(0, 255, 0)'
+  ctx.fillRect(0, 0, 200, 200)
+  await writeFile(join(repo, 'aso', 'artwork', 'mascot.png'), c.toBuffer('image/png'))
+  project.set.targets = [
+    {
+      id: 'feature',
+      sizeId: 'play-feature-graphic',
+      deviceId: 'pixel-9-pro',
+      out: 'feature/{storeLocale}/featureGraphic.png',
+    },
+  ]
+  project.set.locales = [{ id: 'en', store: { feature: 'en-US' } }]
+  project.set.settings = { layout: 'banner-right', background: { kind: 'solid', color: '#eaf2ff' } }
+  project.set.slots = [
+    {
+      id: 'a',
+      kind: 'artwork',
+      overrides: {},
+      elements: [{ id: 'mascot', artwork: 'mascot', x: 0.2, y: 0.6, width: 0.3, layer: 'front' }],
+    },
+  ]
+  project.copies = { en: { a: { headline: 'GetALife', subhead: 'Digital cash stuffing' } } }
+  return { repo, project }
+}
+
+describe('outFilePattern', () => {
+  it('matches {n} against any digits and {storeLocale} against the literal value', () => {
+    const p = outFilePattern('ios/{storeLocale}/{n}_{storeLocale}.png', 'de-DE')
+    expect(p.test('3_de-DE.png')).toBe(true)
+    expect(p.test('3_en-US.png')).toBe(false)
+    expect(p.test('icon.png')).toBe(false)
+    expect(p.test('3_de-DE.jpeg')).toBe(false)
+  })
+
+  it('matches a fixed file name literally, for a target with no {n}', () => {
+    const p = outFilePattern('feature/{storeLocale}/featureGraphic.png', 'de-DE')
+    expect(p.test('featureGraphic.png')).toBe(true)
+    expect(p.test('featureGraphic.jpeg')).toBe(false)
+    expect(p.test('icon.png')).toBe(false)
+  })
+})
 
 // Full-size renders take seconds each; under a parallel full run the 5 s default is too tight.
 describe('renderProject', { timeout: 30_000 }, () => {
@@ -246,6 +294,30 @@ describe('renderProject', { timeout: 30_000 }, () => {
     await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
       /Artwork image missing for slot a, locale en.*nope\.png/s,
     )
+  })
+
+  it('leaves an unrelated file in the output folder alone', async () => {
+    const { repo, project } = await fixture()
+    await mkdir(join(repo, 'android/de-DE'), { recursive: true })
+    await writeFile(join(repo, 'android/de-DE/icon.png'), 'not ours')
+    await renderProject({ project, repoRoot: repo, targetIds: ['play'], localeIds: ['de'] })
+    expect(await readFile(join(repo, 'android/de-DE/icon.png'), 'utf8')).toBe('not ours')
+  })
+
+  it('renders an artwork slot with no screen and no device, at the feature graphic size', async () => {
+    const { repo, project } = await artworkSlotFixture()
+    const [file] = await renderProject({ project, repoRoot: repo })
+    const header = ihdr(await readFile(file))
+    expect(header).toEqual({ w: 1024, h: 500, colorType: 2 })
+    expect(hasGreen(await readFile(file))).toBe(true)
+  })
+
+  it('keeps a fixed-name target output stable across renders instead of stacking {n} files', async () => {
+    const { repo, project } = await artworkSlotFixture()
+    await renderProject({ project, repoRoot: repo })
+    await renderProject({ project, repoRoot: repo })
+    const { readdir } = await import('node:fs/promises')
+    expect(await readdir(join(repo, 'feature/en-US'))).toEqual(['featureGraphic.png'])
   })
 
   it('slices a sticker across a panorama seam onto the tile it actually falls on', async () => {

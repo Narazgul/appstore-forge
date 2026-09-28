@@ -1019,6 +1019,24 @@ describe('undo / redo', () => {
     expect(useStore.getState().canUndo).toBe(false)
   })
 
+  it('switching to a different set is not an undoable edit', async () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    expect(useStore.getState().canUndo).toBe(true)
+
+    // `openSet` in an adapter navigates away; in the GUI that means a fresh `openProject` call
+    // against the new set, exactly like opening any other project — nothing about the target
+    // being a *different* set id needs its own history handling.
+    const otherSet = { ...project(), set: { ...project().set, id: 'promo' } }
+    await useStore.getState().openProject(fakeProjectStore(otherSet))
+    expect(useStore.getState().project?.set.id).toBe('promo')
+    expect(useStore.getState().undoStack).toHaveLength(0)
+    expect(useStore.getState().redoStack).toHaveLength(0)
+    expect(useStore.getState().canUndo).toBe(false)
+    expect(useStore.getState().canRedo).toBe(false)
+  })
+
   it('sticker edits (setSlotElements) are undoable', async () => {
     const p = project()
     open(p, fakeProjectStore(p))

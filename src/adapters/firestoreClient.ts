@@ -8,7 +8,12 @@ import type { Project, ProjectCopies, ProjectSet } from '../project/types'
  * `window.parent.forgeFirebase`; the host owns initialisation, login and the storage bucket.
  */
 export type CompatFirebase = {
-  firestore(): { collection(path: string): { doc(id: string): CompatDoc } }
+  firestore(): {
+    collection(path: string): {
+      doc(id: string): CompatDoc
+      get(): Promise<{ docs: { id: string }[] }>
+    }
+  }
   storage(): { ref(path: string): { getDownloadURL(): Promise<string> } }
   auth(): {
     currentUser: { email: string | null; getIdToken(forceRefresh?: boolean): Promise<string> } | null
@@ -16,6 +21,8 @@ export type CompatFirebase = {
 }
 type CompatDoc = {
   get(): Promise<{ exists: boolean; data(): unknown }>
+  /** Only `createSet` may call this — every other write goes through `update`, see `save`. */
+  set(data: unknown): Promise<void>
   update(data: unknown): Promise<void>
   onSnapshot(cb: (snap: { data(): unknown }) => void): () => void
 }
@@ -69,26 +76,35 @@ export function firestoreProjectStore({
    */
   hostJson?: JSON
 }): ProjectStore {
-  const doc = () => firebase.firestore().collection(SETS_COLLECTION).doc(setId)
+  const collection = () => firebase.firestore().collection(SETS_COLLECTION)
+  const doc = (id: string = setId) => collection().doc(id)
   const urls = new Map<string, string>()
   const artworkUrls = new Map<string, string>()
   let galleries: Record<string, Gallery> = {}
   let ownWrite = ''
+  // The set THIS set's images actually live under: itself, unless it is a duplicate that has
+  // never had its own screenshots synced — set by `load`, read by `createSet`.
+  let imagesFrom = setId
 
   return {
+    currentSetId: setId,
     async load() {
       const snap = await doc().get()
       if (!snap.exists) throw new Error(`No set ${setId} in Firestore; run build:aso first`)
       const data = snap.data()
       const project = parseSetDoc(data)
       galleries = parseGalleryDoc(data)
+      // A set duplicated in the GUI has no images of its own in Storage yet — it draws its
+      // predecessor's, named on the doc as `sourcesFrom`, never chained further than one hop
+      // (see `createSet`).
+      imagesFrom = (data as { sourcesFrom?: string } | undefined)?.sourcesFrom ?? setId
       // The picker offers every image the bucket holds, so their URLs have to be resolved too —
       // a name the set does not reference yet has no entry in the map otherwise.
       const referenced = project.set.slots.flatMap(slotScreens)
       const keys = project.set.locales.flatMap((l) =>
         unique([...referenced, ...(galleries[l.id]?.screens ?? [])]).map((screen) => ({
           key: `${l.id}/${screen}`,
-          path: sourceObjectPath(setId, l.id, screen),
+          path: sourceObjectPath(imagesFrom, l.id, screen),
         })),
       )
       // A sticker names its image the same way a slot's own artwork does, so it needs the same
@@ -99,7 +115,7 @@ export function firestoreProjectStore({
       const artworkKeys = project.set.locales.flatMap((l) =>
         unique([...referencedArtwork, ...(galleries[l.id]?.artwork ?? [])]).map((artwork) => ({
           key: `${l.id}/${artwork}`,
-          path: artworkObjectPath(setId, l.id, artwork),
+          path: artworkObjectPath(imagesFrom, l.id, artwork),
         })),
       )
       const resolved = await Promise.allSettled(
@@ -163,6 +179,37 @@ export function firestoreProjectStore({
         const data = snap.data() as { updatedAt?: string } | undefined
         if (data?.updatedAt && data.updatedAt !== ownWrite) onChange()
       })
+    },
+    async listSets() {
+      const snap = await collection().get()
+      return snap.docs.map((d) => d.id).sort()
+    },
+    async createSet(project) {
+      const id = project.set.id
+      const target = doc(id)
+      const existing = await target.get()
+      if (existing.exists) throw new Error(`Set "${id}" already exists`)
+      const payload = {
+        set: project.set,
+        copies: project.copies,
+        // A copy of the set it was duplicated from, not a live reference — the new doc starts
+        // with whatever that set's images looked like the moment it was duplicated.
+        gallery: galleries,
+        // Never chained: a duplicate of a duplicate still points at the original that actually
+        // has images in Storage.
+        sourcesFrom: imagesFrom,
+        updatedAt: new Date().toISOString(),
+        updatedBy: firebase.auth().currentUser?.email ?? 'unknown',
+      }
+      // Building the payload in the SDK's own realm and using a full `set()` are both only safe
+      // here because the document is brand new — see the comment on `save` for why every other
+      // write uses `update`.
+      const data = hostJson.parse(JSON.stringify(payload)) as Record<string, unknown>
+      await target.set(data)
+    },
+    openSet(id) {
+      if (window.parent === window) return
+      window.parent.location.search = `?set=${encodeURIComponent(id)}`
     },
   }
 }

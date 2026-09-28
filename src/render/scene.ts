@@ -194,7 +194,11 @@ export function renderScene(
     textFloor(layout, h),
   )
 
+  // An artwork screen has no source screenshot at all — self/next/prev would draw an empty
+  // device body. Only a placement that draws the slot's own frameless artwork applies to it.
+  const isArtworkScreen = screen.kind === 'artwork'
   for (const { box, source, angle, frameless } of boxes) {
+    if (isArtworkScreen && source !== 'artwork') continue
     // A multi-device arrangement falls back to the current screenshot when there is no
     // neighbour, so a single-screen project still renders every frame. Artwork gets no such
     // fallback: an unframed screenshot in that slot would be wrong, not merely a stand-in.

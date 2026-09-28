@@ -187,13 +187,90 @@ describe('validateProject', () => {
     expect(validateProject(p, always)).toEqual([])
   })
 
-  it('rejects artwork slots until they are implemented', () => {
+  it('rejects an artwork slot that still names a screen', () => {
     const p = base()
     p.set.slots[0].kind = 'artwork'
     expect(validateProject(p, always)).toContainEqual({
       level: 'error',
-      message: 'Slot kind artwork is not supported yet',
+      message: 'Artwork slot must not name a screen',
       slot: 'a',
+    })
+  })
+
+  it('rejects an artwork slot that names a pair or pairPrev', () => {
+    const p = base()
+    p.set.slots[0] = { id: 'a', kind: 'artwork', pair: 'x', pairPrev: 'y', overrides: {} }
+    const issues = validateProject(p, always)
+    expect(issues).toContainEqual({ level: 'error', message: 'Artwork slot must not name a pair', slot: 'a' })
+    expect(issues).toContainEqual({
+      level: 'error',
+      message: 'Artwork slot must not name a pairPrev',
+      slot: 'a',
+    })
+  })
+
+  it('accepts a bare artwork slot with copy and warns without one', () => {
+    const p = base()
+    p.set.slots[0] = { id: 'a', kind: 'artwork', overrides: {} }
+    expect(validateProject(p, always)).toEqual([])
+
+    p.copies.en.a = { headline: '', subhead: '' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'warn',
+      message: 'Artwork slot has neither stickers nor any copy',
+      slot: 'a',
+    })
+  })
+
+  it('does not warn about a bare artwork slot that carries stickers', () => {
+    const p = base()
+    p.set.slots[0] = {
+      id: 'a',
+      kind: 'artwork',
+      overrides: {},
+      elements: [{ id: 'e', artwork: 'mascot', x: 0.5, y: 0.5, width: 0.3 }],
+    }
+    p.copies.en.a = { headline: '', subhead: '' }
+    expect(validateProject(p, always)).not.toContainEqual(
+      expect.objectContaining({ message: 'Artwork slot has neither stickers nor any copy' }),
+    )
+  })
+
+  it('requires a screen on an ordinary slot', () => {
+    const p = base()
+    delete (p.set.slots[0] as { screen?: string }).screen
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Slot needs a screen',
+      slot: 'a',
+    })
+  })
+
+  it('allows a missing {n} when the set has exactly one slot at span 1', () => {
+    const p = base()
+    p.set.targets[0].out = 'out/{storeLocale}/featureGraphic.png'
+    p.set.settings = { layout: 'text-top' }
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('still requires {n} when the one slot is a span-2 layout', () => {
+    const p = base()
+    p.set.targets[0].out = 'out/{storeLocale}/featureGraphic.png'
+    p.set.settings = { layout: 'panorama' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Target appstore: out must contain {n} unless the set renders exactly one tile per locale',
+    })
+  })
+
+  it('requires {n} when the set has more than one slot', () => {
+    const p = base()
+    p.set.targets[0].out = 'out/{storeLocale}/featureGraphic.png'
+    p.set.slots.push({ id: 'b', kind: 'screen', screen: 'shot2', overrides: {} })
+    p.copies.en.b = { headline: 'Second', subhead: '' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Target appstore: out must contain {n} unless the set renders exactly one tile per locale',
     })
   })
 

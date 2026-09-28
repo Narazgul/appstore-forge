@@ -200,6 +200,40 @@ describe('elements', () => {
   })
 })
 
+describe('an artwork-kind slot', () => {
+  const withArtworkSlot = (): Project => ({
+    ...project,
+    set: {
+      ...project.set,
+      slots: [
+        {
+          id: 'feature',
+          kind: 'artwork',
+          overrides: {},
+          elements: [{ id: 'mascot', artwork: 'mascot', x: 0.2, y: 0.5, width: 0.3 }],
+        },
+      ],
+    },
+    copies: { en: { feature: { headline: 'GetALife', subhead: '' } } },
+  })
+
+  it('has no imageId, and carries kind so the renderer skips its devices', () => {
+    const [screen] = screensFor(withArtworkSlot(), 'en')
+    expect(screen.imageId).toBeNull()
+    expect(screen.kind).toBe('artwork')
+  })
+
+  it('leaves kind undefined for an ordinary screen slot', () => {
+    const [budget] = screensFor(project, 'de')
+    expect(budget.kind).toBeUndefined()
+  })
+
+  it('still resolves its stickers like any other slot', () => {
+    const [screen] = screensFor(withArtworkSlot(), 'en')
+    expect(screen.elements?.[0].imageId).toBe('artwork/en/mascot')
+  })
+})
+
 describe('settingsFor', () => {
   it('lays the set settings over the defaults and takes size and device from the target', () => {
     const s = settingsFor(project, 'play')

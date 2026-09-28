@@ -1,13 +1,14 @@
 import { watch } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join, normalize, sep } from 'node:path'
 import type { Plugin } from 'vite'
 import { copyDir, readProject, repoRootOf, writeProject } from './cli/project-io'
+import { SET_ID_RE } from './src/project/duplicate'
 import { DEFAULT_ARTWORK_SOURCES, artworkPath, sourceListing, sourcePath } from './src/project/bridge'
 import type { Gallery } from './src/project/store'
-import type { Project } from './src/project/types'
+import type { Project, ProjectSet } from './src/project/types'
 
 /** One PUT rewrites the set file and every copy file; the window covers the copies too. */
 const OWN_WRITE_QUIET_MS = 500
@@ -19,11 +20,44 @@ const MAX_BODY_BYTES = 5 * 1024 * 1024
  *  page decides where the server writes. Only names that stay inside the project pass. */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/
 
-const isProjectRoute = (url: string) =>
-  url === '/api/project' ||
-  url === '/api/gallery' ||
-  url.startsWith('/sources/') ||
-  url.startsWith('/artwork/')
+/** The path a URL addresses, ignoring its query string. */
+const pathnameOf = (url: string) => url.split('?')[0]
+
+const isProjectRoute = (url: string) => {
+  const path = pathnameOf(url)
+  return (
+    path === '/api/project' ||
+    path === '/api/gallery' ||
+    path === '/api/sets' ||
+    path.startsWith('/sources/') ||
+    path.startsWith('/artwork/')
+  )
+}
+
+/** The `?set=` value of a URL, or null when absent. */
+export function parseSetParam(url: string): string | null {
+  const query = url.split('?')[1]
+  if (!query) return null
+  return new URLSearchParams(query).get('set')
+}
+
+/** `?set=` addresses a specific set; without it, the set `forge dev --set` was started with.
+ *  A value that could escape the project directory falls back to that default instead of erroring —
+ *  the request then simply finds no such set, exactly like an unknown id would. */
+export function resolveSetId(url: string, fallback: string): string {
+  const requested = parseSetParam(url)
+  return requested && SAFE_ID.test(requested) ? requested : fallback
+}
+
+export function validateNewProjectBody(body: unknown): string | null {
+  const project = body as Project | null
+  if (!project || typeof project !== 'object') return 'Body must be a project object'
+  const id = project.set?.id
+  if (typeof id !== 'string' || !SET_ID_RE.test(id)) return `Invalid set id "${String(id)}"`
+  if (!project.copies || typeof project.copies !== 'object') return 'Project copies must be an object'
+  const bad = Object.keys(project.copies).find((localeId) => !SAFE_ID.test(localeId))
+  return bad === undefined ? null : `Invalid locale id "${bad}"`
+}
 
 /**
  * The path the browser asked for. Registered after Vite's own middlewares, this handler sees
@@ -46,23 +80,48 @@ export function validatePutBody(body: unknown, setId: string): string | null {
   return bad === undefined ? null : `Invalid locale id "${bad}"`
 }
 
-export function projectPlugin({ projectDir, setId }: { projectDir: string; setId: string }): Plugin {
+/**
+ * The request handling, split out from `projectPlugin` so it can be driven with plain fake
+ * `req`/`res` objects in a test — no real HTTP server or Vite dev server required.
+ */
+export function createProjectHandlers({ projectDir, setId }: { projectDir: string; setId: string }) {
   const repoRoot = repoRootOf(projectDir)
   let lastWritten = ''
   let lastWriteAt = 0
   let writing = 0
+  // The set a client last opened or saved, via `?set=`; the watcher and the image routes follow
+  // it instead of only ever the id `forge dev --set` was started with.
+  let currentSetId = setId
 
   /** The copy files count too: an agent editing only `copy/de.json` must reach the GUI. */
-  async function projectDigest(): Promise<string> {
-    const dir = copyDir(projectDir, setId)
+  async function projectDigest(id: string): Promise<string> {
+    const dir = copyDir(projectDir, id)
     const names = await readdir(dir).catch(() => [] as string[])
-    const files = [join(projectDir, `${setId}.json`), ...names.sort().map((name) => join(dir, name))]
+    const files = [join(projectDir, `${id}.json`), ...names.sort().map((name) => join(dir, name))]
     const hash = createHash('sha256')
     for (const file of files) {
       const text = await readFile(file, 'utf8').catch(() => '')
       hash.update(`${file}\n${text}\n`)
     }
     return hash.digest('hex')
+  }
+
+  /** The ids of every valid set file directly under the project dir: `version: 1` and an `id`
+   *  matching the file name — anything else (a stray JSON file, a half-written set) is skipped. */
+  async function listSetIds(): Promise<string[]> {
+    const files = await readdir(projectDir).catch(() => [] as string[])
+    const ids: string[] = []
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue
+      const id = file.slice(0, -'.json'.length)
+      try {
+        const data = JSON.parse(await readFile(join(projectDir, file), 'utf8')) as Partial<ProjectSet>
+        if (data.version === 1 && data.id === id) ids.push(id)
+      } catch {
+        // Not a set file (or not valid JSON) — not this endpoint's business.
+      }
+    }
+    return ids.sort()
   }
 
   async function readBody(req: IncomingMessage, res: ServerResponse): Promise<Buffer | null> {
@@ -81,7 +140,7 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
     return Buffer.concat(chunks)
   }
 
-  async function putProject(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function putProject(req: IncomingMessage, res: ServerResponse, targetSetId: string): Promise<void> {
     const body = await readBody(req, res)
     if (!body) return
     let parsed: unknown
@@ -92,7 +151,7 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
       res.end('Body is not valid JSON')
       return
     }
-    const problem = validatePutBody(parsed, setId)
+    const problem = validatePutBody(parsed, targetSetId)
     if (problem) {
       res.statusCode = 400
       res.end(problem)
@@ -103,13 +162,56 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
     lastWriteAt = Date.now()
     try {
       await writeProject(projectDir, parsed as Project)
-      lastWritten = await projectDigest()
+      currentSetId = targetSetId
+      lastWritten = await projectDigest(targetSetId)
       lastWriteAt = Date.now()
     } finally {
       writing--
     }
     res.statusCode = 204
     res.end()
+  }
+
+  async function postSet(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req, res)
+    if (!body) return
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(body.toString('utf8'))
+    } catch {
+      res.statusCode = 400
+      res.end('Body is not valid JSON')
+      return
+    }
+    const problem = validateNewProjectBody(parsed)
+    if (problem) {
+      res.statusCode = 400
+      res.end(problem)
+      return
+    }
+    const project = parsed as Project
+    const id = project.set.id
+    const exists = await stat(join(projectDir, `${id}.json`)).then(
+      () => true,
+      () => false,
+    )
+    if (exists) {
+      res.statusCode = 409
+      res.end(`Set "${id}" already exists`)
+      return
+    }
+    writing++
+    try {
+      await writeProject(projectDir, project)
+      currentSetId = id
+      lastWriteAt = Date.now()
+      lastWritten = await projectDigest(id)
+    } finally {
+      writing--
+    }
+    res.statusCode = 201
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ id }))
   }
 
   async function sendImage(
@@ -121,7 +223,7 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
     let path: string
     try {
       const name = decodeURIComponent(file ?? '').replace(/\.png$/, '')
-      const project = await readProject(projectDir, setId)
+      const project = await readProject(projectDir, currentSetId)
       path = normalize(join(repoRoot, resolve(project.set, decodeURIComponent(locale ?? ''), name)))
     } catch (err) {
       if (!(err instanceof URIError)) throw err
@@ -169,32 +271,69 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
 
   async function serve(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = projectRoute(req)
-    if (url === '/api/project' && req.method === 'GET') {
-      const project = await readProject(projectDir, setId)
+    const path = pathnameOf(url)
+    if (path === '/api/project' && req.method === 'GET') {
+      const requested = resolveSetId(url, setId)
+      currentSetId = requested
+      const project = await readProject(projectDir, requested)
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify(project))
       return true
     }
-    if (url === '/api/gallery' && req.method === 'GET') {
-      const project = await readProject(projectDir, setId)
+    if (path === '/api/gallery' && req.method === 'GET') {
+      const project = await readProject(projectDir, resolveSetId(url, currentSetId))
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify(await readGallery(project.set)))
       return true
     }
-    if (url === '/api/project' && req.method === 'PUT') {
-      await putProject(req, res)
+    if (path === '/api/project' && req.method === 'PUT') {
+      await putProject(req, res, resolveSetId(url, setId))
       return true
     }
-    if (url.startsWith('/sources/')) {
-      await sendImage(url, res, sourcePath)
+    if (path === '/api/sets' && req.method === 'GET') {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify(await listSetIds()))
       return true
     }
-    if (url.startsWith('/artwork/')) {
-      await sendImage(url, res, artworkPath)
+    if (path === '/api/sets' && req.method === 'POST') {
+      await postSet(req, res)
+      return true
+    }
+    if (path.startsWith('/sources/')) {
+      await sendImage(path, res, sourcePath)
+      return true
+    }
+    if (path.startsWith('/artwork/')) {
+      await sendImage(path, res, artworkPath)
       return true
     }
     return false
   }
+
+  /**
+   * True when the watcher's own recent write (PUT or POST) could still explain the file system
+   * event it is reacting to — comparing a digest during that window would read a half-written
+   * project against the previous one and announce a change the GUI already holds.
+   */
+  const inOwnWriteWindow = () => writing > 0 || Date.now() - lastWriteAt < OWN_WRITE_QUIET_MS
+
+  /**
+   * The watcher's one call: digests whichever set is currently open and reports whether it moved
+   * since the last time anyone asked (a write through this handler, or a previous outside change),
+   * updating the baseline either way.
+   */
+  async function checkForOutsideChange(): Promise<boolean> {
+    const digest = await projectDigest(currentSetId)
+    const changed = digest !== lastWritten
+    lastWritten = digest
+    return changed
+  }
+
+  return { serve, getCurrentSetId: () => currentSetId, inOwnWriteWindow, checkForOutsideChange }
+}
+
+export function projectPlugin({ projectDir, setId }: { projectDir: string; setId: string }): Plugin {
+  const handlers = createProjectHandlers({ projectDir, setId })
 
   return {
     name: 'forge-project',
@@ -205,13 +344,11 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
         if (settle) clearTimeout(settle)
         settle = setTimeout(() => {
           settle = null
-          // Comparing while our own write is still running would read a half-written project
-          // against the previous digest and announce a change the GUI already holds.
-          if (writing > 0) return onFileEvent()
-          if (Date.now() - lastWriteAt < OWN_WRITE_QUIET_MS) return
-          projectDigest()
-            .then((digest) => {
-              if (digest !== lastWritten) server.ws.send({ type: 'custom', event: 'project:changed' })
+          if (handlers.inOwnWriteWindow()) return onFileEvent()
+          handlers
+            .checkForOutsideChange()
+            .then((changed) => {
+              if (changed) server.ws.send({ type: 'custom', event: 'project:changed' })
             })
             .catch(() => undefined)
         }, WATCH_DEBOUNCE_MS)
@@ -227,7 +364,7 @@ export function projectPlugin({ projectDir, setId }: { projectDir: string; setId
       // server down with it; a broken project file must stay a 500.
       return () => {
         server.middlewares.use((req, res, next) => {
-          serve(req, res).then((handled) => (handled ? undefined : next()), next)
+          handlers.serve(req, res).then((handled) => (handled ? undefined : next()), next)
         })
       }
     },

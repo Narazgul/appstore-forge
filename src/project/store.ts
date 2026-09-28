@@ -20,4 +20,12 @@ export interface ProjectStore {
   gallery?(localeId: string): Gallery
   /** fires when the project changed outside this GUI, e.g. an agent edited the files */
   subscribe?(onChange: () => void): () => void
+  /** the set this store instance was opened with; absent means the backend has only ever one set */
+  currentSetId?: string
+  /** every set id the backend holds; absent means the GUI hides the switcher */
+  listSets?(): Promise<string[]>
+  /** writes a brand new set; rejects when `project.set.id` already exists — never overwrites */
+  createSet?(project: Project): Promise<void>
+  /** switches the whole GUI to another set, e.g. by navigating there */
+  openSet?(id: string): void
 }

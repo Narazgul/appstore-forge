@@ -330,7 +330,7 @@ async function loadProjectImages(
   const artworkUrl = store.artworkUrl?.bind(store)
   const keys = project.set.locales.flatMap((l) =>
     project.set.slots.flatMap((s) => {
-      const rows = [{ id: imageIdFor(l.id, s.screen), url: store.sourceUrl(l.id, s.screen) }]
+      const rows = s.screen ? [{ id: imageIdFor(l.id, s.screen), url: store.sourceUrl(l.id, s.screen) }] : []
       for (const screen of [s.pair, s.pairPrev]) {
         if (screen) rows.push({ id: imageIdFor(l.id, screen), url: store.sourceUrl(l.id, screen) })
       }

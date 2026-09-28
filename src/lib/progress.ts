@@ -31,7 +31,8 @@ export type Readiness = {
 /** One reading of "how far along is this set", shared by the rail, the footer and the review. */
 export function readiness(screens: Screen[], settings: Settings): Readiness {
   const total = screens.length
-  const filled = screens.filter((s) => s.imageId !== null).length
+  // An artwork-kind screen has no source screenshot to fill — it is never "missing" one.
+  const filled = screens.filter((s) => s.imageId !== null || s.kind === 'artwork').length
   const missingCopy = screens.filter((s) => {
     const layout = getLayout(effectiveSettings(s, settings).layout)
     return layout.text !== null && !s.headline.trim()

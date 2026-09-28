@@ -34,6 +34,32 @@ async function scaffold() {
   return { repo, dir }
 }
 
+/** A second, non-default set alongside `default.json` — its copy lives under `copy/promo/`,
+ *  not `copy/`, per `_context/workflows.md` "Adding a target" / `cli/project-io.ts` `copyDir`. */
+async function scaffoldSet(repo: string, dir: string, id: string) {
+  await mkdir(join(dir, 'copy', id), { recursive: true })
+  await writeFile(
+    join(dir, `${id}.json`),
+    JSON.stringify({
+      version: 1,
+      id,
+      targets: [
+        { id: 'play', sizeId: 'android-phone', deviceId: 'pixel-9-pro', out: 'out2/{storeLocale}/{n}.png' },
+      ],
+      locales: [{ id: 'en', store: { play: 'en-US' } }],
+      sources: 'outputs/{locale}/{screen}.png',
+      settings: {},
+      slots: [{ id: 'a', kind: 'screen', screen: 'shot', overrides: {} }],
+      approval: null,
+    }),
+  )
+  await writeFile(
+    join(dir, 'copy', id, 'en.json'),
+    JSON.stringify({ a: { headline: 'Promo headline', subhead: '' } }),
+  )
+  return { repo, dir }
+}
+
 describe('check', () => {
   it('reports no issues and approvalOk null when approval is not required', async () => {
     const { dir } = await scaffold()
@@ -86,6 +112,42 @@ describe('approve then render', () => {
     })
     await expect(failing).rejects.toThrow(/Unknown target appstore/)
     await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
+  })
+})
+
+describe('a non-default set', () => {
+  it('check finds the copy files under copy/<setId>/, not the default set’s copy/', async () => {
+    const { dir, repo } = await scaffold()
+    await scaffoldSet(repo, dir, 'promo')
+    expect(await checkCommand({ projectDir: dir, setId: 'promo', requireApproval: false })).toEqual({
+      issues: [],
+      approvalOk: null,
+    })
+    // The default set is unaffected and still finds its own copy file.
+    expect(await checkCommand({ projectDir: dir, setId: 'default', requireApproval: false })).toEqual({
+      issues: [],
+      approvalOk: null,
+    })
+  })
+
+  it('render writes the non-default set’s own out path using its own copy', async () => {
+    const { dir, repo } = await scaffold()
+    await scaffoldSet(repo, dir, 'promo')
+    const files = await renderCommand({ projectDir: dir, setId: 'promo', requireApproval: false })
+    expect(files).toEqual([join(repo, 'out2/en-US/1.png')])
+  })
+
+  it('a missing headline in the non-default set’s own copy file is reported, not the default’s', async () => {
+    const { dir, repo } = await scaffold()
+    await scaffoldSet(repo, dir, 'promo')
+    await writeFile(join(dir, 'copy', 'promo', 'en.json'), '{}')
+    const { issues } = await checkCommand({ projectDir: dir, setId: 'promo', requireApproval: false })
+    expect(issues).toContainEqual({ level: 'error', message: 'Headline missing', slot: 'a', locale: 'en' })
+    // The default set's own copy file was never touched.
+    expect(await checkCommand({ projectDir: dir, setId: 'default', requireApproval: false })).toEqual({
+      issues: [],
+      approvalOk: null,
+    })
   })
 })
 

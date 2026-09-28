@@ -75,9 +75,11 @@ export function TunePanel() {
         <BackgroundSection settings={settings} put={put} />
       </Section>
 
-      <Section id="device" title="Device frame" {...scope('device')}>
-        <DeviceSection settings={settings} put={put} />
-      </Section>
+      {selected?.kind !== 'artwork' && (
+        <Section id="device" title="Device frame" {...scope('device')}>
+          <DeviceSection settings={settings} put={put} />
+        </Section>
+      )}
 
       <Section id="layout" title="Layout" {...scope('layout')}>
         <LayoutSection settings={settings} put={put} />

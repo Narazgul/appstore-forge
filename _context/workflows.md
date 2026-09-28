@@ -39,8 +39,14 @@ horizontal ones of the _composition_ width (`tile × span`). Leave `device.width
 out to fit the band (the classic behaviour); set it, plus `cx`/`cy`, for a
 Goldie-style absolute placement (`hero`, `panorama`). `text.left`/`text.width`
 put the copy somewhere other than the padded tile — a panorama keeps it on the
-left tile. Nothing else needs touching: preview, gallery strips, the store page
-and export all read `span` from the layout.
+left tile. The text block is centred in its band, so a banner gets a tall band.
+`textScale` (default `1`) multiplies the base type sizes; a short, wide tile
+(a landscape banner) needs it well above `1` for the headline to read as one.
+A `device` band is still required by the type even for a layout meant for an
+artwork slot (no device is ever drawn there) — give it a plausible-looking one
+anyway, since `availableTextHeight`'s shrink gate still reads `device.top`.
+Nothing else needs touching: preview, gallery strips, the store page and
+export all read `span` from the layout.
 
 ## Adding a rhythm
 
@@ -141,11 +147,17 @@ at the new language yet.
 
 2. Add the new target id to the `store` map of every locale.
 
-3. Watch the `out` template. A render pass clears the PNGs in each folder it
-   writes to (once per folder, so locales sharing one survive each other), and
-   `{n}` restarts at 1 per target and locale — two targets may share a folder
+3. Watch the `out` template. A render pass clears stale files in each folder it
+   writes to (once per folder, so locales sharing one survive each other) — but
+   only files whose name matches this target's own shape (`{n}` as digits,
+   `{storeLocale}` as the literal value); a different target's files, or
+   anything not forge's (`icon.png`), survive in a shared folder. `{n}`
+   restarts at 1 per target and locale — two targets may share a folder
    only if the file name keeps them apart. A span-2 layout produces two files and
-   advances `{n}` twice, so `{n}` is a file counter, not a slot index.
+   advances `{n}` twice, so `{n}` is a file counter, not a slot index. `out` may
+   drop `{n}` entirely only when the set has exactly one slot at span 1 (a
+   feature graphic); `forge check` errors otherwise, since a second tile would
+   silently overwrite the first.
 
 4. Nothing else. A target only carries size and device; the look lives in the
    set's `settings` and the slots' overrides, so all targets stay in step. In the

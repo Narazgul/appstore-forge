@@ -4,6 +4,7 @@ import { getSize } from '../presets/sizes'
 import { getTemplateSpec } from '../presets/templates'
 import { STEPS, useStore, type StepId } from '../store'
 import { LocaleSwitch } from './LocaleSwitch'
+import { SetSwitcher } from './SetSwitcher'
 
 type Status = 'done' | 'attention' | 'todo' | 'optional'
 
@@ -71,6 +72,7 @@ export function Rail() {
           v{__APP_VERSION__}
         </div>
         <LocaleSwitch />
+        <SetSwitcher />
       </div>
       <ol className="flex flex-col gap-0.5 px-2">
         {STEPS.map((id, i) => {

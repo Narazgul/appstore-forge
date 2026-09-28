@@ -38,9 +38,25 @@ function pick<T extends { id: string }>(all: T[], wanted: string[] | undefined, 
   return all.filter((item) => wanted.includes(item.id))
 }
 
-async function clearPngs(dir: string) {
+/**
+ * The file name this target actually writes for one locale, turned into a regex: `{n}` matches
+ * any run of digits, `{storeLocale}`/`{locale}` match this locale's own value, everything else is
+ * literal. A previous run's file that does not match — a different target sharing the folder, or
+ * something that was never forge's, like `icon.png` — is left alone instead of deleted on sight.
+ */
+export function outFilePattern(outTemplate: string, storeLocale: string): RegExp {
+  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const file = outTemplate.split('/').pop() ?? outTemplate
+  const pattern = escapeRe(file)
+    .replace(/\\\{n\\\}/g, '\\d+')
+    .replace(/\\\{storeLocale\\\}/g, escapeRe(storeLocale))
+    .replace(/\\\{locale\\\}/g, escapeRe(storeLocale))
+  return new RegExp(`^${pattern}$`)
+}
+
+async function clearMatching(dir: string, pattern: RegExp) {
   await mkdir(dir, { recursive: true })
-  for (const name of await readdir(dir)) if (name.endsWith('.png')) await unlink(join(dir, name))
+  for (const name of await readdir(dir)) if (pattern.test(name)) await unlink(join(dir, name))
 }
 
 export async function renderProject({ project, repoRoot, targetIds, localeIds }: Options): Promise<string[]> {
@@ -129,7 +145,7 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
           const file = join(repoRoot, outPath(target, storeLocale, ++n))
           const dir = dirname(file)
           if (!cleared.has(dir)) {
-            await clearPngs(dir)
+            await clearMatching(dir, outFilePattern(target.out, storeLocale))
             cleared.add(dir)
           }
           await writeFile(file, rgbPng(size.w, size.h, rgba))

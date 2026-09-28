@@ -119,6 +119,23 @@ describe('approvalHash', () => {
     )
   })
 
+  it('never asks for source bytes of an artwork-kind slot, which has no screen to hash', async () => {
+    const p = project()
+    p.set.slots = [{ id: 'a', kind: 'artwork', overrides: {} }]
+    const throwing = async () => {
+      throw new Error('should not be called for an artwork-kind slot')
+    }
+    await expect(approvalHash(p, throwing)).resolves.toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('still hashes the set JSON change when an artwork slot is added, even with nothing to read', async () => {
+    const p = project()
+    p.set.slots = [{ id: 'a', kind: 'artwork', overrides: {} }]
+    const q = project()
+    q.set.slots = [{ id: 'a', kind: 'artwork', overrides: { tilt: 5 } }]
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(q, bytes('img')))
+  })
+
   it('changes when the paired screen changes', async () => {
     const p = project()
     p.set.slots[0].pair = 'other'

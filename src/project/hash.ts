@@ -31,7 +31,9 @@ export async function approvalHash(
     new TextEncoder().encode(canonicalJson({ set: hashable, copies: project.copies })),
   ]
   for (const locale of set.locales) {
-    for (const slot of set.slots) parts.push(await sourceBytes(locale.id, slot.screen))
+    for (const slot of set.slots) {
+      if (slot.kind !== 'artwork' && slot.screen) parts.push(await sourceBytes(locale.id, slot.screen))
+    }
   }
   for (const locale of set.locales) {
     for (const slot of set.slots) {

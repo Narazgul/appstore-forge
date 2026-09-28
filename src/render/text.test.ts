@@ -213,6 +213,19 @@ describe('layoutText', () => {
     expect(block.headLines).toHaveLength(8)
     expect(block.fits).toBe(false)
   })
+
+  it('defaults textScale to 1, unchanged from before the parameter existed', () => {
+    const withDefault = layoutText(measurer(), screen('Hi'), DEFAULT_SETTINGS, 10_000, H, H)
+    const explicit = layoutText(measurer(), screen('Hi'), DEFAULT_SETTINGS, 10_000, H, H, 1)
+    expect(explicit).toEqual(withDefault)
+  })
+
+  it('multiplies both the headline and subhead size by textScale', () => {
+    const base = layoutText(measurer(), screen('Hi', 'Sub'), DEFAULT_SETTINGS, 10_000, H, H)
+    const scaled = layoutText(measurer(), screen('Hi', 'Sub'), DEFAULT_SETTINGS, 10_000, H, H, 5)
+    expect(scaled.headSize).toBeCloseTo(base.headSize * 5, 5)
+    expect(scaled.subSize).toBeCloseTo(base.subSize * 5, 5)
+  })
 })
 
 describe('eyebrow', () => {

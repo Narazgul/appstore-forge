@@ -217,9 +217,11 @@ export function layoutText(
   maxWidth: number,
   maxHeight: number,
   h: number,
+  /** layout-level multiplier on the base type sizes; default 1 */
+  textScale = 1,
 ): TextLayout {
-  let headSize = h * 0.04 * settings.headlineScale
-  let subSize = h * 0.0205 * settings.subheadScale
+  let headSize = h * 0.04 * settings.headlineScale * textScale
+  let subSize = h * 0.0205 * settings.subheadScale * textScale
   const gap = h * 0.018
   const headWords = parseMarkup(screen.headline)
   const subWords = parseMarkup(screen.subhead)
@@ -341,7 +343,7 @@ export function measureTextBlock(
 ): TextLayout | null {
   if (!layout.text || (!screen.headline && !screen.subhead && !screen.eyebrow)) return null
   const { maxWidth } = textBox(layout, W, tileW)
-  return layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h)
+  return layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h, layout.textScale)
 }
 
 export function drawTextBlock(
@@ -358,7 +360,15 @@ export function drawTextBlock(
   const { left: boxLeft, maxWidth } = textBox(layout, W, tileW)
   const bandTop = layout.text.top * h
   const bandHeight = layout.text.height * h
-  const block = layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h)
+  const block = layoutText(
+    ctx,
+    screen,
+    settings,
+    maxWidth,
+    availableTextHeight(layout, h),
+    h,
+    layout.textScale,
+  )
   const { headSize, subSize, headLines, subLines, gap, eyebrowLine, eyebrowSize } = block
 
   let y = bandTop + (bandHeight - blockHeight(block)) / 2

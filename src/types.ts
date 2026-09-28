@@ -81,6 +81,8 @@ export type LayoutId =
   | 'panorama'
   | 'panorama-duo'
   | 'centered'
+  | 'banner-left'
+  | 'banner-right'
 
 /**
  * A layout is one composition. Fractions are of the *tile* height for vertical values and of
@@ -94,7 +96,7 @@ export type Layout = {
   span: 1 | 2
   /**
    * Band for the text block. `left`/`width` position the box across the composition; absent,
-   * the box is the tile minus `padX` on both sides.
+   * the box is the tile minus `padX` on both sides. The block is centred in the band.
    */
   text: { top: number; height: number; left?: number; width?: number } | null
   /**
@@ -104,6 +106,9 @@ export type Layout = {
    */
   device: { top: number; bottom: number; width?: number; cx?: number; cy?: number }
   padX: number
+  /** Multiplies the base type sizes (fractions of *tile height*); default 1. A short tile — a
+   *  landscape banner — needs this well above 1 to read as a headline rather than a caption. */
+  textScale?: number
 }
 
 export type ExportSize = {
@@ -120,6 +125,9 @@ export type Screen = {
   subhead: string
   /** key into the image registry; null while the slot is empty */
   imageId: string | null
+  /** 'artwork' = no source screenshot and no device frame is ever drawn for this screen, however
+   *  its arrangement is set; absent means the ordinary framed screen. Set by the project bridge. */
+  kind?: 'artwork'
   /** key into the image registry for the slot's frameless artwork; absent = the slot names none */
   artworkId?: string | null
   /** key into the image registry for the screen this one pairs with; absent = use the neighbour */

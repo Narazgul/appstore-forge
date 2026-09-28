@@ -30,7 +30,12 @@ export type SlotElement = {
 export type ProjectSlot = {
   id: string
   kind: SlotKind
-  screen: string
+  /**
+   * The source screenshot this slot draws. Required for `kind: 'screen'`; a `kind: 'artwork'`
+   * slot has no source screenshot at all and must leave this, `pair` and `pairPrev` absent —
+   * validation rejects any of the three on an artwork slot.
+   */
+  screen?: string
   overrides: ScreenOverrides
   /**
    * The screen a multi-device arrangement draws as its `next` frame, instead of the next slot's.

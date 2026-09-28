@@ -8,6 +8,7 @@ export const EXPORT_SIZES: ExportSize[] = [
   { id: 'android-phone', label: 'Android phone', store: 'Google Play', w: 1080, h: 1920 },
   { id: 'android-phone-tall', label: 'Android phone (tall)', store: 'Google Play', w: 1080, h: 2400 },
   { id: 'android-tablet', label: 'Android tablet', store: 'Google Play', w: 1600, h: 2560 },
+  { id: 'play-feature-graphic', label: 'Play feature graphic', store: 'Google Play', w: 1024, h: 500 },
 ]
 
 export const getSize = (id: string): ExportSize => EXPORT_SIZES.find((s) => s.id === id) ?? EXPORT_SIZES[0]

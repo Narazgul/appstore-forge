@@ -109,6 +109,10 @@ Only the largest device per family is required — both stores downscale for the
 | Google Play | Phone       | 1080 × 1920 |
 | Google Play | Tablet      | 1600 × 2560 |
 
+Google Play's **feature graphic** (1024 × 500) is a different shape entirely — landscape, one
+image, no device frame — and is a project-mode target, not a browser export; see
+[Feature graphic](#feature-graphic) under Project mode.
+
 > **Alpha channel.** App Store Connect rejects images carrying an alpha channel,
 > and canvas always writes RGBA for PNG even when every pixel is opaque. If an
 > upload is refused, flip the format toggle to JPEG and re-export.
@@ -268,6 +272,97 @@ In the GUI, stickers live in the tune panel's "Stickers" section, shown only
 when exactly one screen is selected (a sticker belongs to a slot, not to the
 shared settings).
 
+### Feature graphic
+
+Google Play's feature graphic (1024 × 500, one image per locale, no device frame) is a second
+**project set**, built from an `artwork`-kind slot instead of a `screen`-kind one. An artwork slot
+has no source screenshot at all — it draws background → backdrop → stickers → text, with the
+mascots as `elements` (stickers), exactly like any other slot. Recipe: `aso/feature.json` next to
+your usual `aso/default.json`, its own copy folder, one slot, one target.
+
+```json
+{
+  "version": 1,
+  "id": "feature",
+  "targets": [
+    {
+      "id": "play-feature",
+      "sizeId": "play-feature-graphic",
+      "deviceId": "pixel-9-pro",
+      "out": "fastlane/metadata/android/{storeLocale}/images/featureGraphic.png"
+    }
+  ],
+  "locales": [{ "id": "en", "store": { "play-feature": "en-US" } }],
+  "sources": "screenshots/{locale}/{screen}.png",
+  "settings": {
+    "layout": "banner-right",
+    "background": { "kind": "solid", "color": "#eaf2ff" },
+    "highlights": ["#ffe27a"]
+  },
+  "slots": [
+    {
+      "id": "feature",
+      "kind": "artwork",
+      "overrides": {},
+      "elements": [{ "id": "mascot", "artwork": "mascot", "x": 0.26, "y": 0.55, "width": 0.42 }]
+    }
+  ],
+  "approval": null
+}
+```
+
+`aso/copy/feature/en.json`:
+
+```json
+{ "feature": { "headline": "GetALife", "subhead": "Digital cash stuffing" } }
+```
+
+`deviceId` on the target is required by the type but never drawn — an artwork slot has no
+`screen`, no `pair`, no `pairPrev` (validation rejects any of the three on one), and its
+`elements` resolve through the same `artworkSources` template as any other slot's stickers.
+`play-feature-graphic` is the size preset (`presets/sizes.ts`); `banner-left`/`banner-right`
+(`presets/layouts.ts`) put the copy in one half of the tile, vertically centred, at a
+`textScale` bold enough to read as a headline on a short, wide tile — both are ordinary layouts,
+usable by a regular `screen` slot too. `forge check` and `forge render` work exactly as for a
+screenshot set; `--set feature` selects this one.
+
+### Custom product pages: more sets
+
+App Store Custom Product Pages and Google Play's custom store listings both need extra sets of the
+same screenshots — a different headline angle per campaign, rendered from the same slots and
+copy structure as the default set. Project mode already keyed everything by set id
+(`aso/<setId>.json` + `aso/copy/<setId>/<locale>.json`); the GUI adds a switcher and a duplicate
+action on top of that file layout, so building a second set is a few clicks instead of hand-copying
+JSON.
+
+**In the GUI**, the Rail header shows the open set next to the locale switch (`Set: default ▾`).
+Opening it lists every set the project holds and offers **Duplicate set…**: name a new id (lowercase
+letters, digits and hyphens, `^[a-z0-9][a-z0-9-]{0,39}$`) and the whole current set — slots,
+overrides, stickers, copy for every locale — is deep-copied under that id. The dialog refuses an id
+that already exists; duplicating never overwrites a set. Switching sets navigates the whole editor
+away (a full reload), so it warns first if the current tab has unsaved edits.
+
+A duplicate's targets are rewritten so it can never render into the folders the store upload tools
+read: `out` becomes `outputs/cpp/<newId>/<targetId>/{storeLocale}/{n}.png` (or, for a single-tile
+target like a feature graphic, the same folder plus the original file name, still without `{n}`).
+The duplicated set's own `approval` is cleared — nobody has reviewed the new copy yet.
+
+**On disk (file mode)**, this is just more files: `aso/promo.json` next to `aso/default.json`, its
+copy under `aso/copy/promo/<locale>.json`, same as adding a set by hand (see above). `forge dev`,
+`forge check` and `forge render` all take `--set promo` exactly as they do for `default`; the dev
+server also understands `?set=promo` on `/api/project`, so a GUI tab can switch sets without a
+restart, and its file watcher follows whichever set the tab currently has open.
+
+**In the backoffice (Firestore mode)**, a duplicated set has no screenshots of its own in Cloud
+Storage yet — only `default` (or whichever set `build:aso` actually synced) does. The new set's
+document therefore carries a `sourcesFrom: <original set id>` field (never chained: duplicating a
+duplicate still points at the set that actually has images), and the adapter resolves every source,
+artwork and sticker URL under `sourcesFrom` instead of the new set's own id until the backoffice's
+sync gives it real images. **The backoffice's `build:aso`/`pull:aso` scripts need to learn about
+this**: they must sync images (and update `gallery`) for every set id found in
+`backoffice/aso/sets`, not only `default`, or a duplicated set stays on its source's screenshots
+forever even after someone means to replace them.
+
 ### The four commands
 
 ```bash
@@ -287,10 +382,16 @@ forge dev --project ./aso                         # the editor on this project
 | `--by <name>`        | Who approves. Required for `approve`.                    |
 | `--port <n>`         | Dev server port. Default `4324`.                         |
 
-`render` clears the PNGs already in each output folder before it writes, so a set
-that lost a slot does not leave an orphan behind. `{n}` restarts at 1 for every
-target and locale, so two targets may share a folder only if the file name keeps
-them apart.
+`render` clears stale files from an earlier run before it writes — but only the ones matching
+this target's own file name shape (`{n}` as digits, `{storeLocale}` as that locale's value,
+everything else literal), not every PNG in the folder. A file with a different name pattern —
+`icon.png`, another target's files, anything not forge's — is left alone even if it sits in the
+same directory. **Behaviour change:** earlier versions deleted every `.png` in the folder; a stale
+file whose name no longer matches the current template is now left behind instead of removed.
+`{n}` restarts at 1 for every target and locale, so two targets may share a folder only if the
+file name keeps them apart — and `out` may omit `{n}` entirely only when the set renders exactly
+one tile per target and locale (one slot, span 1, like the feature graphic above); otherwise
+`forge check` rejects it, since a second tile would silently overwrite the first.
 
 ```bash
 forge render --project ./aso --target play --locale de --locale en --require-approval
@@ -348,9 +449,10 @@ pnpm typecheck && pnpm lint && pnpm test
 
 - Pulling screenshots straight off a booted simulator or emulator
 - Exporting every required size in one pass from the browser version
-- `artwork` slots — the kind exists in the project type, but validation rejects
-  it. A slot's `artwork` key is a different thing and does work: a framed screen
-  with a frameless image beside it
+- A background shape or decoration (a circle, a rule above the headline) —
+  `background` is still only a solid colour or a gradient
+- A marker band under the _subhead_; `*starred*` highlighting only ever
+  applies to the headline
 - A Firestore adapter. `ProjectStore` is the seam a remote backend would plug
   into; the file adapter behind `forge dev` is the only implementation
 - Two editors on one project. There is no locking, so the last write wins

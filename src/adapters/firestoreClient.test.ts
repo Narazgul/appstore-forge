@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { firestoreProjectStore, parseGalleryDoc, parseSetDoc, sourceObjectPath } from './firestoreClient'
 import type { CompatFirebase } from './firestoreClient'
-import type { Project } from '../project/types'
+import type { Project, ProjectSet } from '../project/types'
 
 const set = {
   version: 1,
@@ -147,5 +147,161 @@ describe('save across the iframe boundary', () => {
     expect(payload.set.id).toBe('default')
     expect(payload.copies).toEqual({})
     expect(payload.updatedBy).toBe('hofi@example.com')
+  })
+})
+
+/** A small in-memory stand-in for the sets collection, so `listSets`/`createSet`/`save` can be
+ *  driven end to end without a real Firestore. `update` only merges the keys it is given, exactly
+ *  like the real compat SDK — which is what lets a field outside the payload (`sourcesFrom`,
+ *  `gallery`) survive a save untouched. */
+function fakeFirestore(initialDocs: Record<string, Record<string, unknown>> = {}) {
+  const docs = new Map<string, Record<string, unknown>>(Object.entries(initialDocs))
+  const requestedPaths: string[] = []
+  const firebase = {
+    firestore: () => ({
+      collection: () => ({
+        doc: (id: string) => ({
+          get: () => Promise.resolve({ exists: docs.has(id), data: () => docs.get(id) }),
+          set: (data: unknown) => {
+            docs.set(id, data as Record<string, unknown>)
+            return Promise.resolve()
+          },
+          update: (data: unknown) => {
+            docs.set(id, { ...(docs.get(id) ?? {}), ...(data as Record<string, unknown>) })
+            return Promise.resolve()
+          },
+          onSnapshot: () => () => undefined,
+        }),
+        get: () => Promise.resolve({ docs: [...docs.keys()].sort().map((id) => ({ id })) }),
+      }),
+    }),
+    storage: () => ({
+      ref: (path: string) => {
+        requestedPaths.push(path)
+        return { getDownloadURL: () => Promise.resolve(`https://cdn/${path}`) }
+      },
+    }),
+    auth: () => ({ currentUser: { email: 'hofi@example.com', getIdToken: () => Promise.resolve('t') } }),
+  } as unknown as CompatFirebase
+  return { firebase, docs, requestedPaths }
+}
+
+const hostRealm2 = {
+  parse: (text: string) => Object.assign(JSON.parse(text) as object, { __fromHost: true }),
+  stringify: JSON.stringify,
+} as unknown as JSON
+
+const projectWith = (id: string, screen = 'shot'): ProjectSet => ({
+  ...set,
+  version: 1,
+  id,
+  locales: [{ id: 'en', store: {} }],
+  slots: [{ id: 'a', kind: 'screen', screen, overrides: {} }],
+})
+
+describe('listSets', () => {
+  it('lists every doc id in the collection, sorted', async () => {
+    const { firebase } = fakeFirestore({
+      default: { set: projectWith('default') },
+      promo: { set: projectWith('promo') },
+      abc: { set: projectWith('abc') },
+    })
+    const store = firestoreProjectStore({ setId: 'default', firebase })
+    await expect(store.listSets?.()).resolves.toEqual(['abc', 'default', 'promo'])
+  })
+})
+
+describe('createSet', () => {
+  it('refuses to overwrite a set that already exists', async () => {
+    const { firebase } = fakeFirestore({
+      default: { set: projectWith('default') },
+      promo: { set: projectWith('promo') },
+    })
+    const store = firestoreProjectStore({ setId: 'default', firebase, hostJson: hostRealm2 })
+    await store.load()
+    await expect(store.createSet?.({ set: projectWith('promo'), copies: {} })).rejects.toThrow(
+      /already exists/,
+    )
+  })
+
+  it('writes set/copies/gallery/sourcesFrom with a host-realm payload, via a full set()', async () => {
+    const { firebase, docs } = fakeFirestore({
+      default: { set: projectWith('default'), gallery: { en: { screens: ['shot'], artwork: [] } } },
+    })
+    const store = firestoreProjectStore({ setId: 'default', firebase, hostJson: hostRealm2 })
+    await store.load()
+    await store.createSet?.({
+      set: projectWith('promo'),
+      copies: { en: { a: { headline: 'Hi', subhead: '' } } },
+    })
+    const written = docs.get('promo') as Record<string, unknown>
+    expect(written.__fromHost).toBe(true)
+    expect((written.set as { id: string }).id).toBe('promo')
+    expect(written.copies).toEqual({ en: { a: { headline: 'Hi', subhead: '' } } })
+    expect(written.gallery).toEqual({ en: { screens: ['shot'], artwork: [] } })
+    expect(written.sourcesFrom).toBe('default')
+    expect(written.updatedBy).toBe('hofi@example.com')
+  })
+
+  it('never chains sourcesFrom: duplicating a duplicate still points at the original', async () => {
+    const { firebase, docs } = fakeFirestore({
+      copy1: { set: projectWith('copy1'), sourcesFrom: 'original' },
+    })
+    const store = firestoreProjectStore({ setId: 'copy1', firebase, hostJson: hostRealm2 })
+    await store.load()
+    await store.createSet?.({ set: projectWith('copy2'), copies: {} })
+    expect((docs.get('copy2') as Record<string, unknown>).sourcesFrom).toBe('original')
+  })
+})
+
+describe('sourcesFrom resolves images under the original set', () => {
+  it('resolves source and artwork URLs under sourcesFrom, not the duplicate’s own id', async () => {
+    const duplicateSet: ProjectSet = {
+      ...projectWith('copy1', 'shot'),
+      slots: [
+        {
+          id: 'a',
+          kind: 'screen',
+          screen: 'shot',
+          overrides: {},
+          artwork: 'badge',
+        },
+      ],
+    }
+    const { firebase, requestedPaths } = fakeFirestore({
+      copy1: { set: duplicateSet, sourcesFrom: 'original' },
+    })
+    const store = firestoreProjectStore({ setId: 'copy1', firebase })
+    await store.load()
+    expect(store.sourceUrl('en', 'shot')).toBe('https://cdn/backoffice/aso/sources/original/en/shot.png')
+    expect(store.artworkUrl?.('en', 'badge')).toBe('https://cdn/backoffice/aso/artwork/original/en/badge.png')
+    expect(requestedPaths).toContain('backoffice/aso/sources/original/en/shot.png')
+    expect(requestedPaths.some((p) => p.includes('/copy1/'))).toBe(false)
+  })
+
+  it('without sourcesFrom, resolves under the set’s own id as before', async () => {
+    const { firebase } = fakeFirestore({ default: { set: projectWith('default') } })
+    const store = firestoreProjectStore({ setId: 'default', firebase })
+    await store.load()
+    expect(store.sourceUrl('en', 'shot')).toBe('https://cdn/backoffice/aso/sources/default/en/shot.png')
+  })
+})
+
+describe('save keeps sourcesFrom (update never touches fields outside its payload)', () => {
+  it('a duplicated set keeps its sourcesFrom after an ordinary save', async () => {
+    const { firebase, docs } = fakeFirestore({
+      promo: {
+        set: projectWith('promo'),
+        sourcesFrom: 'default',
+        gallery: { en: { screens: [], artwork: [] } },
+      },
+    })
+    const store = firestoreProjectStore({ setId: 'promo', firebase, hostJson: hostRealm2 })
+    const project = await store.load()
+    await store.save({ ...project, copies: { en: { a: { headline: 'Edited', subhead: '' } } } })
+    const after = docs.get('promo') as Record<string, unknown>
+    expect(after.sourcesFrom).toBe('default')
+    expect(after.gallery).toEqual({ en: { screens: [], artwork: [] } })
+    expect((after.copies as Record<string, unknown>).en).toEqual({ a: { headline: 'Edited', subhead: '' } })
   })
 })

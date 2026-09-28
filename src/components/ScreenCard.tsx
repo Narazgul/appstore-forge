@@ -81,7 +81,7 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
 
       <div className="relative">
         <ScreenPreview screen={screen} width={width} height={height} />
-        {empty && (
+        {empty && screen.kind !== 'artwork' && (
           <button
             className="slot-cta"
             onClick={(e) => {
@@ -214,7 +214,7 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
             )}
           </>
         )}
-        {project && <SourcePicker screen={screen} />}
+        {project && screen.kind !== 'artwork' && <SourcePicker screen={screen} />}
         {project && (
           <textarea
             className="field note"

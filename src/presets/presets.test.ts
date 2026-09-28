@@ -159,11 +159,17 @@ describe('templates', () => {
 })
 
 describe('export sizes', () => {
-  it('are portrait pixel dimensions for a real store slot', () => {
+  it('are integer pixel dimensions for a real store slot', () => {
     for (const s of EXPORT_SIZES) {
       expect(Number.isInteger(s.w)).toBe(true)
       expect(Number.isInteger(s.h)).toBe(true)
-      expect(s.h).toBeGreaterThan(s.w)
+    }
+  })
+
+  it('are portrait, except a store landscape format (the Play feature graphic)', () => {
+    for (const s of EXPORT_SIZES) {
+      if (s.id === 'play-feature-graphic') expect(s.w).toBeGreaterThan(s.h)
+      else expect(s.h).toBeGreaterThan(s.w)
     }
   })
 })

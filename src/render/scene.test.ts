@@ -234,6 +234,63 @@ describe('renderScene with an artwork placement', () => {
   })
 })
 
+describe('renderScene with an artwork-kind screen', () => {
+  it('draws no device at all for a self-only arrangement', () => {
+    const { ctx, calls } = recorder()
+    const settings = { ...DEFAULT_SETTINGS, layout: 'text-top' as const, positionId: 'center' }
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), kind: 'artwork' }, settings, {
+      self: fakeImage(400, 800),
+    })
+    expect(drawn(calls)).toHaveLength(0)
+  })
+
+  it('still draws the slot-level artwork when the arrangement asks for one', () => {
+    const { ctx, calls } = recorder()
+    const settings = { ...DEFAULT_SETTINGS, layout: 'duo' as const, positionId: 'duo-artwork' }
+    const art = fakeImage(200, 100)
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), kind: 'artwork' }, settings, {
+      self: fakeImage(400, 800),
+      artwork: art,
+    })
+    const images = drawn(calls)
+    expect(images).toHaveLength(1)
+    expect(images[0].args[0]).toBe(art)
+  })
+
+  it('does not fall back to the screenshot when there is no artwork either', () => {
+    const { ctx, calls } = recorder()
+    const settings = { ...DEFAULT_SETTINGS, layout: 'duo' as const, positionId: 'duo-artwork' }
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), kind: 'artwork' }, settings, {
+      self: fakeImage(400, 800),
+      artwork: null,
+    })
+    expect(drawn(calls)).toHaveLength(0)
+  })
+
+  it('still draws stickers and text around the missing device', () => {
+    const { ctx, calls } = recorder()
+    const settings = { ...DEFAULT_SETTINGS, layout: 'banner-right' as const, positionId: 'center' }
+    const el: SceneElement = {
+      id: 'e',
+      imageId: 'mascot',
+      x: 0.2,
+      y: 0.5,
+      width: 0.3,
+      rotate: 0,
+      layer: 'front',
+      shadow: false,
+    }
+    const mascot = fakeImage(100, 100)
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), kind: 'artwork', elements: [el] }, settings, {
+      elements: { mascot },
+    })
+    const images = drawn(calls)
+    expect(images).toHaveLength(1)
+    expect(images[0].args[0]).toBe(mascot)
+    expect(calls.some((c) => c.fn === 'fillText')).toBe(true)
+  })
+})
+
 describe('drawSticker', () => {
   it('draws the image at exactly the given box, undistorted', () => {
     const { ctx, calls } = recorder()
