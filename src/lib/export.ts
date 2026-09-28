@@ -2,6 +2,7 @@ import { zipSync } from 'fflate'
 import { renderScene, sceneSpan } from '../render/scene'
 import { stripMarkup } from '../render/text'
 import { getSize } from '../presets/sizes'
+import { isStickerElement } from '../types'
 import type { Screen, Settings } from '../types'
 
 export type ExportResult = { kind: 'downloaded'; count: number }
@@ -54,10 +55,20 @@ export async function renderAll(
     canvas.width = size.w * span
     const ctx = canvas.getContext('2d', { alpha: false })
     if (!ctx) throw new Error('2D canvas unavailable')
+    // A named pair/artwork/sticker/mosaic-cell replaces the neighbour lookup, exactly as the
+    // preview resolves it (`useSceneSources`) — a plain neighbour-wrapping arrangement still
+    // works with no project fields set at all, which is all freeform mode ever has.
     renderScene(ctx, size.w, size.h, screen, settings, {
       self: imageAt(i),
-      next: imageAt(i + 1),
-      prev: imageAt(i - 1),
+      next: screen.pairId ? (images[screen.pairId] ?? null) : imageAt(i + 1),
+      prev: screen.pairPrevId ? (images[screen.pairPrevId] ?? null) : imageAt(i - 1),
+      artwork: screen.artworkId ? (images[screen.artworkId] ?? null) : null,
+      elements: Object.fromEntries(
+        (screen.elements ?? [])
+          .filter(isStickerElement)
+          .map((el) => [el.imageId, images[el.imageId] ?? null]),
+      ),
+      extra: screen.extraIds?.map((id) => images[id] ?? null),
     })
     for (let part = 0; part < span; part++) {
       tileCtx.drawImage(canvas, -part * size.w, 0)

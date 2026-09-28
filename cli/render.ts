@@ -15,8 +15,8 @@ import {
 import { isSlotSticker, slotScreens } from '../src/project/types'
 import type { Project } from '../src/project/types'
 import { renderScene, sceneSpan } from '../src/render/scene'
-import { isStickerElement } from '../src/types'
-import { measureTextBlock, type TextMeasurer } from '../src/render/text'
+import { isChipElement, isStickerElement } from '../src/types'
+import { fitChipText, measureTextBlock, type TextMeasurer } from '../src/render/text'
 import { effectiveSettings } from '../src/lib/settings'
 import { getLayout } from '../src/presets/layouts'
 import { getSize } from '../src/presets/sizes'
@@ -127,6 +127,24 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
             2,
           )
         }
+        // A chip never wraps; below the shrink floor it is the same failure as an overlong
+        // headline — abort an unattended render instead of writing an unreadably tiny pill.
+        for (const el of (screen.elements ?? []).filter(isChipElement)) {
+          const fit = fitChipText(
+            ctx as unknown as TextMeasurer,
+            el.text,
+            resolved,
+            el.width * size.w,
+            el.size * size.h,
+            screen.lang,
+          )
+          if (!fit.fits) {
+            throw new CliError(
+              `Chip text does not fit for slot ${screen.id}, chip ${el.id}, locale ${locale.id}: shorten the text or increase its width`,
+              2,
+            )
+          }
+        }
         const at = (k: number) => images[screens[(k + screens.length) % screens.length].imageId!] ?? null
         renderScene(ctx, size.w, size.h, screen, settings, {
           self: at(i) as unknown as CanvasImageSource,
@@ -140,6 +158,7 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
               .filter(isStickerElement)
               .map((el) => [el.imageId, (images[el.imageId] ?? null) as unknown as CanvasImageSource | null]),
           ),
+          extra: screen.extraIds?.map((id) => (images[id] ?? null) as unknown as CanvasImageSource | null),
         })
         for (let part = 0; part < span; part++) {
           const rgba = ctx.getImageData(part * size.w, 0, size.w, size.h).data

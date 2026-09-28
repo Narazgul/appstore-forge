@@ -1,4 +1,4 @@
-import { isSlotShape } from './types'
+import { isSlotSticker } from './types'
 import type { Project } from './types'
 
 export function canonicalJson(value: unknown): string {
@@ -17,8 +17,9 @@ const hex = (buf: ArrayBuffer) =>
 
 /**
  * Text parts first, then every referenced source image in locale × slot order, then the paired
- * screens and the artwork of the slots that name one. Those two come last and only when a slot
- * has them, so a set with neither keeps the exact hash it had before the feature existed.
+ * screens, the artwork/sticker images, and finally the mosaic layout's extra cells — each of
+ * those groups only when a slot has one, so a set using none of them keeps the exact hash it had
+ * before that feature existed.
  */
 export async function approvalHash(
   project: Project,
@@ -51,13 +52,20 @@ export async function approvalHash(
     }
     // Stickers resolve through the same artwork template. Last, and only for slots that have
     // one, so a set with none keeps the exact hash it had before this feature existed. A shape
-    // has no image at all — it already went into the set JSON above, and loads no bytes here.
+    // has no image at all, and a chip's text already went into the set JSON above (as part of
+    // `copies`) — neither loads bytes here.
     for (const locale of set.locales) {
       for (const slot of set.slots) {
-        for (const el of slot.elements ?? []) {
-          if (!isSlotShape(el)) parts.push(await artworkBytes(locale.id, el.artwork))
-        }
+        for (const el of (slot.elements ?? []).filter(isSlotSticker))
+          parts.push(await artworkBytes(locale.id, el.artwork))
       }
+    }
+  }
+  // The mosaic layout's extra cells, last of all and only for the slots that have them, so a set
+  // with none keeps the exact hash it had before this feature existed.
+  for (const locale of set.locales) {
+    for (const slot of set.slots) {
+      for (const screen of slot.extra ?? []) parts.push(await sourceBytes(locale.id, screen))
     }
   }
   const total = parts.reduce((n, p) => n + p.byteLength, 0)

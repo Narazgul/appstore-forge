@@ -6,6 +6,9 @@ import { PNG } from 'pngjs'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { registerFonts } from './fonts'
 import { outFilePattern, renderProject } from './render'
+import { getDevice } from '../src/presets/devices'
+import { getLayout } from '../src/presets/layouts'
+import { mosaicCells } from '../src/render/scene'
 import type { Project, SlotSticker } from '../src/project/types'
 
 async function fixture() {
@@ -104,6 +107,14 @@ const hasBlue = (buf: Buffer) => {
   return false
 }
 
+const hasMagenta = (buf: Buffer) => {
+  const { data } = PNG.sync.read(buf)
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] > 200 && data[i + 1] < 40 && data[i + 2] > 200) return true
+  }
+  return false
+}
+
 /** A single-slot, single-target/-locale set carrying one shape over a full-bleed device. */
 async function shapeFixture(layer: 'behind' | 'front') {
   const { repo, project } = await fixture()
@@ -142,6 +153,48 @@ async function stickerFixture(layer: 'behind' | 'front') {
       overrides: {},
       elements: [{ id: 'dot', artwork: 'dot', x: 0.5, y: 0.5, width: 0.6, rotate: 0, layer, shadow: false }],
     },
+  ]
+  return { repo, project }
+}
+
+/** A single-slot, single-target/-locale set carrying one chip over a full-bleed device. */
+async function chipFixture(layer: 'behind' | 'front') {
+  const { repo, project } = await fixture()
+  project.set.targets = [project.set.targets[0]]
+  project.set.locales = [project.set.locales[0]]
+  project.set.settings = { layout: 'bleed' }
+  project.set.slots = [
+    {
+      id: 'a',
+      kind: 'screen',
+      screen: 'shot',
+      overrides: {},
+      elements: [{ id: 'pill', chip: true, color: '#ff00ff', x: 0.5, y: 0.5, width: 0.6, size: 0.03, layer }],
+    },
+  ]
+  project.copies.en.a.chips = { pill: '+312 € saved' }
+  return { repo, project }
+}
+
+/** A single-slot, single-target/-locale mosaic set: the slot's own `shot` (red) plus three
+ *  distinctly coloured `extra` screens, so each cell can be told apart by its centre pixel. */
+async function mosaicFixture() {
+  const { repo, project } = await fixture()
+  const cell = async (name: string, color: string) => {
+    const c = createCanvas(400, 800)
+    const ctx = c.getContext('2d')
+    ctx.fillStyle = color
+    ctx.fillRect(0, 0, 400, 800)
+    await writeFile(join(repo, 'outputs', 'en', `${name}.png`), c.toBuffer('image/png'))
+  }
+  await cell('cell2', '#00ff00')
+  await cell('cell3', '#ffff00')
+  await cell('cell4', '#ff00ff')
+  project.set.targets = [project.set.targets[0]]
+  project.set.locales = [project.set.locales[0]]
+  project.set.settings = { layout: 'mosaic' }
+  project.set.slots = [
+    { id: 'a', kind: 'screen', screen: 'shot', extra: ['cell2', 'cell3', 'cell4'], overrides: {} },
   ]
   return { repo, project }
 }
@@ -401,5 +454,59 @@ describe('renderProject', { timeout: 30_000 }, () => {
     const [first, second] = await renderProject({ project, repoRoot: repo })
     expect(hasGreen(await readFile(first))).toBe(false)
     expect(hasGreen(await readFile(second))).toBe(true)
+  })
+
+  it('draws a front chip pill on top of the device', async () => {
+    const { repo, project } = await chipFixture('front')
+    const [file] = await renderProject({ project, repoRoot: repo })
+    expect(hasMagenta(await readFile(file))).toBe(true)
+  })
+
+  it('draws a behind chip under the device, where it never reaches the export', async () => {
+    const { repo, project } = await chipFixture('behind')
+    const [file] = await renderProject({ project, repoRoot: repo })
+    expect(hasMagenta(await readFile(file))).toBe(false)
+  })
+
+  it('refuses to render a chip whose text does not fit even at the shrink floor', async () => {
+    const { repo, project } = await chipFixture('front')
+    project.set.slots[0].elements![0] = {
+      id: 'pill',
+      chip: true,
+      color: '#ff00ff',
+      x: 0.5,
+      y: 0.5,
+      width: 0.02,
+      size: 0.03,
+      layer: 'front',
+    }
+    project.copies.en.a.chips = { pill: 'This chip text is far too long for such a narrow pill' }
+    await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
+      /Chip text does not fit for slot a, chip pill, locale en/,
+    )
+  })
+
+  it('draws every mosaic cell from its own named screen, self plus the three extra', async () => {
+    const { repo, project } = await mosaicFixture()
+    const [file] = await renderProject({ project, repoRoot: repo })
+    const png = await readFile(file)
+    const aspect = getDevice('iphone-17-pro').screenAspect
+    const boxes = mosaicCells(getLayout('mosaic'), 1320, 2868, aspect, 4)
+    const at = (i: number) => {
+      const b = boxes[i]
+      return pixelAt(png, Math.round(b.x + b.w / 2), Math.round(b.y + b.h / 2))
+    }
+    expect(at(0)).toEqual({ r: 255, g: 0, b: 0 }) // shot.png, en locale
+    expect(at(1)).toEqual({ r: 0, g: 255, b: 0 }) // cell2
+    expect(at(2)).toEqual({ r: 255, g: 255, b: 0 }) // cell3
+    expect(at(3)).toEqual({ r: 255, g: 0, b: 255 }) // cell4
+  })
+
+  it('fails with slot and locale when an extra mosaic screen is missing', async () => {
+    const { repo, project } = await mosaicFixture()
+    project.set.slots[0].extra = ['cell2', 'missing-cell', 'cell4']
+    await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
+      /slot a.*locale en.*missing-cell\.png/s,
+    )
   })
 })

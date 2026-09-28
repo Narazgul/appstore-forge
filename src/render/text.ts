@@ -17,9 +17,14 @@ export type TextMeasurer = {
 }
 
 /** A headline word with the index of the `*span*` it belongs to (-1 = plain). `glue` marks a
- *  piece that a segmenter split off its neighbour, so no space belongs in front of it. `break`
- *  marks a word that starts a forced line, from a `\n` in the copy. */
-export type Word = { text: string; span: number; glue?: boolean; break?: boolean }
+ *  word with no space in front of it: a piece a segmenter split off its neighbour, or text a
+ *  star sat against in the copy (`*Söyle*,`, `數位*信封*`). `join` marks glued text that must not
+ *  start a line either — punctuation, or the rest of a spaced-script word. `break` marks a word
+ *  that starts a forced line, from a `\n` in the copy. */
+export type Word = { text: string; span: number; glue?: boolean; join?: boolean; break?: boolean }
+
+/** Scripts written without spaces between words: a line may break at any star boundary there. */
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/u
 
 /** `The list that *feels* like a *notebook.*` → words tagged with their highlight span. A `\n`
  *  forces a line break at that point; markup spans still count across it (`pieces` and `wrap`
@@ -28,26 +33,39 @@ export function parseMarkup(text: string): Word[] {
   const words: Word[] = []
   const parts = text.replace(/\r\n?/g, '\n').split('*')
   let pendingBreak = false
+  let before = ''
   parts.forEach((part, i) => {
     // An unmatched trailing star is just dropped rather than highlighting the tail.
     const inSpan = i % 2 === 1 && i < parts.length - 1
     const span = inSpan ? (i - 1) / 2 : -1
+    const after = part.charAt(0)
+    const attached = !!before && !!after && !/\s/.test(before) && !/\s/.test(after)
+    const breakable = UNSPACED.test(before) && UNSPACED.test(after)
+    let first = true
     part.split(/\n+/).forEach((segment, si) => {
       if (si > 0) pendingBreak = true
       for (const t of segment.split(/\s+/)) {
         if (!t) continue
-        words.push(pendingBreak && words.length > 0 ? { text: t, span, break: true } : { text: t, span })
+        const word: Word = { text: t, span }
+        if (pendingBreak && words.length > 0) word.break = true
+        else if (first && attached && words.length > 0) {
+          word.glue = true
+          if (!breakable) word.join = true
+        }
+        words.push(word)
         pendingBreak = false
+        first = false
       }
     })
+    if (part) before = part.charAt(part.length - 1)
   })
   return words
 }
 
 export const stripMarkup = (text: string) =>
   parseMarkup(text)
-    .map((w) => w.text)
-    .join(' ')
+    .map((w, i) => (i && !w.glue ? ' ' : '') + w.text)
+    .join('')
 
 export type Line = { words: Word[]; widths: number[]; width: number }
 
@@ -65,12 +83,14 @@ function pieces(word: Word, lang: string | undefined): Word[] {
   )) {
     if (!segment.trim()) continue
     if (isWordLike) {
-      out.push({
+      const piece: Word = {
         text: lead + segment,
         span: word.span,
-        glue: out.length > 0,
+        glue: out.length > 0 || !!word.glue,
         break: out.length === 0 && !!word.break,
-      })
+      }
+      if (out.length === 0 && word.join) piece.join = true
+      out.push(piece)
       lead = ''
     } else if (out.length) {
       out[out.length - 1].text += segment
@@ -114,12 +134,24 @@ export function wrap(ctx: TextMeasurer, words: Word[], maxWidth: number, lang?: 
     const gap = line.words.length && !word.glue ? space : 0
     const next = line.width + gap + ww
     if (line.words.length && next > maxWidth) {
-      // A marker band split over two lines reads as two bands, so the earlier words of the
-      // span travel down with it — unless the span is too wide to sit on one line anyway.
+      // The new line's first word drags down what it cannot be parted from: joined text the
+      // word it hangs on, and a marker band the rest of its span, since a band split over two
+      // lines reads as two bands (unless the span is too wide for one line anyway).
+      const headAt = (n: number) => (n ? line.words[line.words.length - n] : word)
       let take = 0
-      if (word.span >= 0 && spanWidth(word.span) <= maxWidth) {
-        while (take < line.words.length - 1 && line.words[line.words.length - 1 - take].span === word.span)
-          take++
+      while (take < line.words.length - 1) {
+        const head = headAt(take)
+        const before = line.words[line.words.length - 1 - take]
+        const sameSpan = head.span >= 0 && before.span === head.span && spanWidth(head.span) <= maxWidth
+        if (!head.join && !sameSpan) break
+        take++
+      }
+      if (headAt(take).join) {
+        // Moving the chain would empty this line, so the joined text overflows it instead.
+        line.words.push(word)
+        line.widths.push(ww)
+        line.width = next
+        continue
       }
       const moved = line.words.splice(line.words.length - take, take)
       const movedWidths = line.widths.splice(line.widths.length - take, take)
@@ -145,6 +177,8 @@ export function wrap(ctx: TextMeasurer, words: Word[], maxWidth: number, lang?: 
  */
 export function availableTextHeight(layout: Layout, h: number): number {
   if (!layout.text) return 0
+  // No device band to leave room for — the text band itself is the limit.
+  if (layout.deviceless) return layout.text.height * h
   const textBelowDevice = layout.text.top > layout.device.top
   const limit = textBelowDevice ? 1 - layout.text.top - 0.03 : layout.device.top - layout.text.top - 0.02
   return Math.max(layout.text.height, limit) * h
@@ -177,6 +211,19 @@ export const BASELINE = 0.8
 export const HEAD_LH = 1.14
 export const SUB_LH = 1.4
 export const EYEBROW_LH = 1.2
+/** Row spacing for `feature-wall`'s list block — a touch airier than the headline's own lines. */
+export const LIST_LH = 1.28
+/** The list's shared size is capped at the headline's own base size (before its per-composition
+ *  shrink) times this — the list is `feature-wall`'s hero, so it is allowed to read up to 30%
+ *  bigger than the headline above it, not merely as its peer. */
+export const LIST_CAP_MULT = 1.3
+/** Below this fraction of `h` a shrinking block gives up — shared by the headline and the list,
+ *  so both report the same "too long" failure at the same absolute size. */
+export const MIN_TEXT_SIZE = 0.014
+/** The headline's own size before any per-composition shrink — what `layoutText` starts its
+ *  shrink loop from, and the basis `feature-wall`'s list caps itself against. */
+export const headlineBaseSize = (h: number, settings: Settings, textScale = 1) =>
+  h * 0.04 * settings.headlineScale * textScale
 /** Gap above the headline, as a multiple of the eyebrow's own size. */
 export const EYEBROW_GAP = 0.6
 /** Eyebrow size as a fraction of the headline size it sits above. */
@@ -203,6 +250,41 @@ export const LABEL_LINE_GAP = 0.3
 /** The label box's own height — text row height plus the vertical padding on both sides. Shared
  *  between `blockHeight` (measurement) and `drawTextBlock` (drawing) so they can never disagree. */
 export const labelBoxHeight = (subSize: number) => subSize * LABEL_LINE_HEIGHT + subSize * LABEL_PAD_Y * 2
+
+/** Chip pill geometry, em-relative to the chip's own (possibly shrunk) font size. */
+export const CHIP_HEIGHT = 1.9
+export const CHIP_PAD_X = 0.8
+/** Auto-shrink floor, as a fraction of the chip's configured size — below this the text does not
+ *  fit and `fitChipText` reports it, the same way `layoutText` reports a headline that does not. */
+export const CHIP_SIZE_FLOOR = 0.7
+
+export type ChipFit = { size: number; textWidth: number; fits: boolean }
+
+/**
+ * Shrinks a chip's text from `size` down to `CHIP_SIZE_FLOOR` of it until the pill (text plus its
+ * own horizontal padding on both sides) fits `maxWidth`. A chip never wraps, so this is `layoutText`'s
+ * shrink loop with a single line and a width-only stop condition instead of a block height.
+ */
+export function fitChipText(
+  ctx: TextMeasurer,
+  text: string,
+  settings: Settings,
+  maxWidth: number,
+  size: number,
+  lang?: string,
+): ChipFit {
+  const floor = size * CHIP_SIZE_FLOOR
+  let current = size
+  for (let i = 0; i < 30; i++) {
+    setChipFont(ctx, current, settings, lang)
+    const textWidth = ctx.measureText(text).width
+    if (textWidth + current * CHIP_PAD_X * 2 <= maxWidth) return { size: current, textWidth, fits: true }
+    if (current <= floor) return { size: floor, textWidth, fits: false }
+    current = Math.max(floor, current * 0.94)
+  }
+  setChipFont(ctx, floor, settings, lang)
+  return { size: floor, textWidth: ctx.measureText(text).width, fits: false }
+}
 
 type FontWeight = 400 | 600 | 700
 
@@ -255,6 +337,13 @@ export function setEyebrowFont(ctx: TextMeasurer, size: number, settings: Settin
   ctx.letterSpacing = `${size * 0.08}px`
 }
 
+/** A chip's text: headline weight, no tracking of its own — the pill's colour already does the
+ *  work a highlight band does for the headline. */
+export function setChipFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
+  setFont(ctx, 700, size, settings, lang)
+  ctx.letterSpacing = '0px'
+}
+
 /** The `subheadStyle: 'label'` subhead: weight 600, fully opaque, no tracking of its own. */
 export function setLabelSubFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
   setFont(ctx, 600, size, settings, lang)
@@ -294,7 +383,7 @@ export function layoutText(
   /** layout-level multiplier on the base type sizes; default 1 */
   textScale = 1,
 ): TextLayout {
-  let headSize = h * 0.04 * settings.headlineScale * textScale
+  let headSize = headlineBaseSize(h, settings, textScale)
   let subSize = h * 0.0205 * settings.subheadScale * textScale
   const gap = h * 0.018
   const headWords = parseMarkup(screen.headline)
@@ -341,7 +430,7 @@ export function layoutText(
       subheadStyle,
     }
     if (blockHeight(candidate) <= maxHeight) return candidate
-    if (headSize < h * 0.014) return { ...candidate, fits: false }
+    if (headSize < h * MIN_TEXT_SIZE) return { ...candidate, fits: false }
     headSize *= 0.94
     subSize *= 0.94
   }
@@ -360,8 +449,10 @@ export function layoutText(
   }
 }
 
-/** Draw one line of words at `y` (top of the em box), with marker bands under starred spans. */
-function drawLine(
+/** Draw one line of words at `y` (top of the em box), with marker bands under starred spans.
+ *  Exported so a chip — a single line with no markup, no wrapping — can reuse the exact same RTL
+ *  and baseline placement as the headline instead of a second, slightly different implementation. */
+export function drawLine(
   ctx: CanvasRenderingContext2D,
   line: Line,
   x0: number,
@@ -411,11 +502,14 @@ function drawLine(
   line.words.forEach((word, i) => ctx.fillText(word.text, xs[i], y + size * BASELINE))
 }
 
-/** The text box: the tile minus padding by default, or wherever the layout puts it. */
-const textBox = (layout: Layout, W: number, tileW: number) => ({
-  left: layout.text!.left !== undefined ? W * layout.text!.left : tileW * layout.padX,
-  maxWidth: layout.text!.width !== undefined ? W * layout.text!.width : tileW * (1 - layout.padX * 2),
+/** A band's box: the tile minus padding by default, or wherever the band's own `left`/`width`
+ *  puts it — the convention `layout.text` and `layout.list` both follow. */
+const bandBox = (band: { left?: number; width?: number }, layout: Layout, W: number, tileW: number) => ({
+  left: band.left !== undefined ? W * band.left : tileW * layout.padX,
+  maxWidth: band.width !== undefined ? W * band.width : tileW * (1 - layout.padX * 2),
 })
+const textBox = (layout: Layout, W: number, tileW: number) => bandBox(layout.text!, layout, W, tileW)
+const listBox = (layout: Layout, W: number, tileW: number) => bandBox(layout.list!, layout, W, tileW)
 
 /**
  * The measurement `drawTextBlock` does, without drawing. The CLI runs it up front so copy
@@ -541,6 +635,120 @@ export function drawTextBlock(
         y += subSize * SUB_LH
       }
     }
+  }
+  ctx.restore()
+}
+
+export type ListLayout = {
+  size: number
+  /** one already-wrapped line per entry — an entry never wraps, it only shrinks */
+  lines: Line[]
+  /** false when the shrink hit the floor and a row still overflows its band */
+  fits: boolean
+}
+
+/**
+ * `feature-wall`'s list: one shared size for every row — the headline's own weight and markup,
+ * never wrapped — the largest that keeps each row inside `maxWidth` and every row stacked inside
+ * `maxHeight`, capped at `capSize`. Shrinks the same way `layoutText` does, down to the same floor,
+ * so a list that cannot fit fails exactly like a headline that cannot.
+ */
+export function layoutList(
+  ctx: TextMeasurer,
+  entries: string[],
+  settings: Settings,
+  maxWidth: number,
+  maxHeight: number,
+  h: number,
+  capSize: number,
+  lang?: string,
+): ListLayout {
+  let size = capSize
+  for (let i = 0; i < 30; i++) {
+    setHeadFont(ctx, size, settings, lang)
+    // Each entry is validated single-line copy: `wrap` never needs to break it, only measure it.
+    const lines = entries.map(
+      (entry) =>
+        wrap(ctx, parseMarkup(entry), Number.POSITIVE_INFINITY, lang)[0] ?? {
+          words: [],
+          widths: [],
+          width: 0,
+        },
+    )
+    const fitsWidth = lines.every((line) => line.width <= maxWidth)
+    const fitsHeight = lines.length * size * LIST_LH <= maxHeight
+    if (fitsWidth && fitsHeight) return { size, lines, fits: true }
+    if (size < h * MIN_TEXT_SIZE) return { size, lines, fits: false }
+    size *= 0.94
+  }
+  return { size, lines: [], fits: false }
+}
+
+/** The measurement `drawListBlock` does, without drawing — the CLI's fit check. Returns null for
+ *  a composition with no list band or a screen carrying no list. */
+export function measureListBlock(
+  ctx: TextMeasurer,
+  W: number,
+  tileW: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+  capSize: number,
+): ListLayout | null {
+  if (!layout.list || !screen.list?.length) return null
+  const { maxWidth } = listBox(layout, W, tileW)
+  return layoutList(ctx, screen.list, settings, maxWidth, layout.list.height * h, h, capSize, screen.lang)
+}
+
+/** Draws `feature-wall`'s list band, centred in it exactly like the headline is centred in its
+ *  own band. Weight, markup and RTL/alignment all follow the headline's own rules — reusing
+ *  `parseMarkup`/`wrap`/`drawLine` is what keeps them identical rather than a second definition
+ *  of what a marker band or an RTL line looks like. */
+export function drawListBlock(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  tileW: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+  capSize: number,
+) {
+  if (!layout.list || !screen.list?.length) return
+
+  const { left: boxLeft, maxWidth } = listBox(layout, W, tileW)
+  const bandTop = layout.list.top * h
+  const bandHeight = layout.list.height * h
+  const { size, lines } = layoutList(
+    ctx,
+    screen.list,
+    settings,
+    maxWidth,
+    bandHeight,
+    h,
+    capSize,
+    screen.lang,
+  )
+
+  let y = bandTop + (bandHeight - lines.length * size * LIST_LH) / 2
+  const rtl = isRtl(screen.lang)
+  const startX = (lineWidth: number) =>
+    settings.textAlign === 'left'
+      ? rtl
+        ? boxLeft + maxWidth - lineWidth
+        : boxLeft
+      : boxLeft + (maxWidth - lineWidth) / 2
+
+  ctx.save()
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  ctx.direction = rtl ? 'rtl' : 'ltr'
+  ctx.fillStyle = settings.textColor
+  setHeadFont(ctx, size, settings, screen.lang)
+  for (const line of lines) {
+    drawLine(ctx, line, startX(line.width), y, size, settings.highlights, rtl)
+    y += size * LIST_LH
   }
   ctx.restore()
 }

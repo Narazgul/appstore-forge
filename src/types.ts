@@ -50,8 +50,13 @@ export type Position = {
 
 export type SceneElementLayer = 'behind' | 'front'
 
-/** A shape element's silhouette. One kind today; the union leaves room for more. */
-export type ShapeKind = 'circle'
+/** The soft drop shadow a device frame casts, or a flat hard-edged one, or none.
+ *  'soft' is the frame's original, hard-coded look — the default keeps every existing
+ *  export byte-identical. */
+export type DeviceShadow = 'soft' | 'hard' | 'none'
+
+/** A shape element's silhouette. */
+export type ShapeKind = 'circle' | 'ring' | 'blob'
 
 /** Fields every free-standing slot element shares — sticker or shape — independent of any
  *  device frame. Resolved from a project's `SlotElement` (see `project/types.ts`) with every
@@ -77,16 +82,39 @@ export type StickerElement = SceneElementBase & {
   shadow: boolean
 }
 
-/** A filled deco shape — no image, no shadow. */
+/** A filled deco shape — no image, no shadow. `stroke` and `seed` are only meaningful for the
+ *  shape kind that reads them (`ring`, `blob`); `drawShape` applies its own default when a kind
+ *  that does use one leaves it out. */
 export type ShapeElement = SceneElementBase & {
   shape: ShapeKind
   color: string
+  /** ring only: stroke width as a fraction of the outer diameter. Default 0.12. */
+  stroke?: number
+  /** blob only: seeds the deterministic PRNG that shapes it. Default 1. */
+  seed?: number
 }
 
-export type SceneElement = StickerElement | ShapeElement
+/**
+ * A floating pill of headline-weight text — a callout with a real number, independent of any
+ * device frame. `color`/`textColor` are left `undefined` when the slot names none: unlike a
+ * sticker or a shape, a chip's default look depends on the settings in force, not just its own
+ * fields, so `renderScene` resolves them at draw time (rules.md #2 — inheritance still resolves
+ * in exactly one place, this is a fallback on top of that, not a second inheritance path).
+ */
+export type ChipElement = SceneElementBase & {
+  text: string
+  color?: string
+  textColor?: string
+  /** font size, as a fraction of the tile height */
+  size: number
+  shadow: boolean
+}
+
+export type SceneElement = StickerElement | ShapeElement | ChipElement
 
 export const isShapeElement = (el: SceneElement): el is ShapeElement => 'shape' in el
-export const isStickerElement = (el: SceneElement): el is StickerElement => !isShapeElement(el)
+export const isChipElement = (el: SceneElement): el is ChipElement => 'text' in el
+export const isStickerElement = (el: SceneElement): el is StickerElement => 'imageId' in el
 
 export type LayoutId =
   | 'text-top'
@@ -100,6 +128,9 @@ export type LayoutId =
   | 'centered'
   | 'banner-left'
   | 'banner-right'
+  | 'text-only'
+  | 'feature-wall'
+  | 'mosaic'
 
 /**
  * A layout is one composition. Fractions are of the *tile* height for vertical values and of
@@ -119,13 +150,26 @@ export type Layout = {
   /**
    * Band the device is fitted into; bottom may exceed 1 to bleed off-canvas. `width` fixes the
    * frame width as a fraction of the tile width instead of fitting the band; `cx`/`cy` move the
-   * centre (fractions of composition width / tile height) off the band centre.
+   * centre (fractions of composition width / tile height) off the band centre. Ignored, but
+   * still required by the type, when `deviceless` is set — see its own doc.
    */
   device: { top: number; bottom: number; width?: number; cx?: number; cy?: number }
   padX: number
   /** Multiplies the base type sizes (fractions of *tile height*); default 1. A short tile — a
    *  landscape banner — needs this well above 1 to read as a headline rather than a caption. */
   textScale?: number
+  /**
+   * `true` = `renderScene` draws no device and no artwork placement for this layout, whatever the
+   * slot's kind or arrangement — the composition is copy (and stickers/shapes) alone. `text`'s
+   * band is then the auto-shrink's own limit, not the gap to a device band (`availableTextHeight`).
+   * Absent (the default) behaves exactly as before this field existed.
+   */
+  deviceless?: true
+  /**
+   * Band for the list block (`feature-wall` only) — same convention as `text`. Absent means the
+   * layout carries no list, as every layout but `feature-wall` does.
+   */
+  list?: { top: number; height: number; left?: number; width?: number }
 }
 
 export type ExportSize = {
@@ -159,6 +203,13 @@ export type Screen = {
   eyebrow?: string
   /** free-standing images (stickers) drawn behind or in front of the composition; absent = none */
   elements?: SceneElement[]
+  /** `feature-wall`'s list rows, one entry each, `*starred*` words highlighted like the headline;
+   *  absent or empty = none drawn. Ignored by every other layout. */
+  list?: string[]
+  /** keys into the image registry for the mosaic layout's extra cells (the first cell is always
+   *  `imageId`); absent or empty = the slot names none. Set by the project bridge from a slot's
+   *  `extra`, mirroring `pairId`/`pairPrevId`. */
+  extraIds?: string[]
 }
 
 /** Export size is deliberately global — every shot in a set must share one canvas size. */
@@ -196,6 +247,8 @@ export type Settings = {
   backdropColor: string | null
   deviceId: string
   frameColorId: string
+  /** the drop shadow a device frame casts; default 'soft' is the frame's original look */
+  deviceShadow: DeviceShadow
   positionId: string
   layout: LayoutId
   tilt: number

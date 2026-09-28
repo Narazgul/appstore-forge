@@ -14,13 +14,18 @@ import { resolveFontId } from '../presets/scripts'
 import { EXPORT_SIZES } from '../presets/sizes'
 import { parseMarkup } from '../render/text'
 import { DEFAULT_SETTINGS } from '../store'
-import type { Layout, Screen, Settings } from '../types'
+import type { Layout, Screen, Settings, ShapeKind } from '../types'
 import { DEFAULT_ARTWORK_SOURCES, artworkPath, sourcePath } from './bridge'
-import { isSlotShape, slotScreens } from './types'
-import type { Project, ProjectSet, ProjectSlot, SlotSticker } from './types'
+import { isSlotChip, isSlotShape, isSlotSticker, slotScreens } from './types'
+import type { Project, ProjectSet, ProjectSlot, SlotElement, SlotSticker } from './types'
 
 /** #rgb, #rrggbb or #rrggbbaa — the same reach as any CSS hex color the renderer's `fillStyle` accepts. */
 const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
+const SHAPE_KINDS: ShapeKind[] = ['circle', 'ring', 'blob']
+const RING_STROKE_RANGE = { min: 0.02, max: 0.5 }
+/** Exclusive at the low end (0 draws an invisible chip), inclusive at the high end. Below it
+ *  `roundRect` gets a negative radius, a `RangeError` in the browser. */
+const CHIP_SIZE_RANGE = { min: 0.005, max: 0.2 }
 
 export type Issue = { level: 'error' | 'warn'; message: string; slot?: string; locale?: string }
 
@@ -45,6 +50,9 @@ function contrastIssue(label: string, ratio: number, surface: string): Omit<Issu
 /** The arrangement a slot really renders in: the set's look, then the slot's own overrides. */
 const positionOf = (set: ProjectSet, slot: ProjectSlot) =>
   getPosition(slot.overrides.positionId ?? set.settings.positionId ?? DEFAULT_SETTINGS.positionId)
+
+const MOSAIC_MIN_EXTRA = 3
+const MOSAIC_MAX_EXTRA = 5
 
 /**
  * A sticker's box, approximated in the layout's own units: fractions of the composition width for
@@ -86,6 +94,8 @@ export function validateProject(
   eyebrowFits: (localeId: string, slotId: string) => boolean = () => true,
   /** A sticker's image aspect ratio (width / height in pixels), when the check can know it. */
   elementAspect: (localeId: string, artwork: string) => number | null = () => null,
+  /** Whether a `feature-wall` slot's list fits its band at the final render size, per locale. */
+  listFits: (localeId: string, slotId: string) => boolean = () => true,
 ): Issue[] {
   const { set, copies } = project
   const issues: Issue[] = []
@@ -96,18 +106,34 @@ export function validateProject(
   if (!artworkTemplate.includes('{artwork}')) error('artworkSources must contain {artwork}')
   const artworkPerLocale = artworkTemplate.includes('{locale}')
 
+  // Resolved once, reused everywhere a slot's actual composition matters (span, layout, colours).
+  const globalSettings: Settings = { ...DEFAULT_SETTINGS, ...set.settings }
+  /** Slot-override, then set-setting, then default — the same order `effectiveSettings` resolves
+   *  everything else in. Copy is irrelevant to which layout a slot draws, so the screen it builds
+   *  carries none. */
+  const layoutOf = (slot: ProjectSlot): Layout =>
+    getLayout(
+      effectiveSettings(
+        { id: slot.id, headline: '', subhead: '', imageId: null, overrides: slot.overrides },
+        globalSettings,
+      ).layout,
+    )
+  const slotLayouts = new Map(set.slots.map((slot): [string, Layout] => [slot.id, layoutOf(slot)]))
+  // A hand-edited project file may carry the wrong JSON shape for either field (a string instead
+  // of an array, say) — every read below goes through these instead of the raw slot field, so a
+  // wrong type never reaches a `.map`/`.filter`/spread and throws; the per-slot loop below reports
+  // it as a validation error once, up front.
+  const elementsOf = new Map<string, SlotElement[]>(
+    set.slots.map((slot) => [slot.id, Array.isArray(slot.elements) ? slot.elements : []]),
+  )
+  const extraOf = new Map<string, string[]>(
+    set.slots.map((slot) => [slot.id, Array.isArray(slot.extra) ? slot.extra : []]),
+  )
+
   // A target's `out` needs `{n}` to keep two tiles from overwriting each other — unless the set
   // can only ever produce one tile per target and locale in the first place. Span depends only on
   // the layout, which does not vary by target or locale, so this is safe to compute once.
-  const globalSettingsForSpan: Settings = { ...DEFAULT_SETTINGS, ...set.settings }
-  const oneTileOnly =
-    set.slots.length === 1 &&
-    getLayout(
-      effectiveSettings(
-        { id: set.slots[0].id, headline: '', subhead: '', imageId: null, overrides: set.slots[0].overrides },
-        globalSettingsForSpan,
-      ).layout,
-    ).span === 1
+  const oneTileOnly = set.slots.length === 1 && slotLayouts.get(set.slots[0].id)!.span === 1
 
   for (const target of set.targets) {
     if (!EXPORT_SIZES.some((s) => s.id === target.sizeId)) error(`Unknown size ${target.sizeId}`)
@@ -128,10 +154,14 @@ export function validateProject(
     }
   }
   const validSubheadStyle = (style: unknown): boolean => style === 'plain' || style === 'label'
+  const validDeviceShadow = (style: unknown): boolean =>
+    style === 'soft' || style === 'hard' || style === 'none'
   if (set.settings.accentBar != null && !validHexColor(set.settings.accentBar))
     error(`accentBar is not a hex colour: ${set.settings.accentBar}`)
   if (set.settings.subheadStyle !== undefined && !validSubheadStyle(set.settings.subheadStyle))
     error(`Unknown subheadStyle "${set.settings.subheadStyle}"`)
+  if (set.settings.deviceShadow !== undefined && !validDeviceShadow(set.settings.deviceShadow))
+    error(`Unknown deviceShadow "${set.settings.deviceShadow}"`)
 
   const seen = new Set<string>()
   for (const slot of set.slots) {
@@ -141,37 +171,114 @@ export function validateProject(
       error(`accentBar is not a hex colour: ${slot.overrides.accentBar}`, { slot: slot.id })
     if (slot.overrides.subheadStyle !== undefined && !validSubheadStyle(slot.overrides.subheadStyle))
       error(`Unknown subheadStyle "${slot.overrides.subheadStyle}"`, { slot: slot.id })
+    if (slot.overrides.deviceShadow !== undefined && !validDeviceShadow(slot.overrides.deviceShadow))
+      error(`Unknown deviceShadow "${slot.overrides.deviceShadow}"`, { slot: slot.id })
+    if (slot.elements !== undefined && !Array.isArray(slot.elements))
+      error('elements must be an array', { slot: slot.id })
+    if (slot.extra !== undefined && !Array.isArray(slot.extra))
+      error('extra must be an array', { slot: slot.id })
+    const elements = elementsOf.get(slot.id)!
+    const extra = extraOf.get(slot.id)!
     if (slot.kind === 'artwork') {
       if (slot.screen) error('Artwork slot must not name a screen', { slot: slot.id })
       if (slot.pair) error('Artwork slot must not name a pair', { slot: slot.id })
       if (slot.pairPrev) error('Artwork slot must not name a pairPrev', { slot: slot.id })
+      if (extra.length) error('Artwork slot must not name extra mosaic screens', { slot: slot.id })
     } else if (!slot.screen) error('Slot needs a screen', { slot: slot.id })
+    const layout = slotLayouts.get(slot.id)!
+    if (slot.kind === 'artwork' && layout.id === 'mosaic')
+      error('mosaic needs a screen slot', { slot: slot.id })
+    // A deviceless layout draws no device and no artwork placement at all (render/scene.ts), so
+    // neither a missing screen frame nor a missing artwork is a problem there — only a slot still
+    // carrying a screenshot nobody will ever see is.
+    if (slot.kind !== 'artwork' && layout.deviceless)
+      issues.push({
+        level: 'warn',
+        message: 'Quellbild wird nicht gezeichnet, Slot-Art artwork verwenden',
+        slot: slot.id,
+      })
     const position = positionOf(set, slot)
-    if (!slot.artwork && position.placements.some((p) => p.source === 'artwork'))
+    if (!slot.artwork && !layout.deviceless && position.placements.some((p) => p.source === 'artwork'))
       error(`Arrangement ${position.id} needs an artwork, but the slot names none`, { slot: slot.id })
     if (slot.note?.trim())
       issues.push({ level: 'warn', message: `Open feedback: ${slot.note.trim()}`, slot: slot.id })
 
+    // A mosaic tile draws cell 0 from `screen` and one cell per `extra` — the count is fixed at
+    // 4–6 total, so 3–5 named extras. Naming any on another layout does nothing (the layout may
+    // change back later, so it is a warning, not an error); naming one twice would draw the same
+    // cell image in two cells.
+    const extraCount = extra.length
+    if (extraCount > 0) {
+      if (layout.id !== 'mosaic')
+        issues.push({
+          level: 'warn',
+          message: `Layout "${layout.id}" never draws extra mosaic screens; only "mosaic" does`,
+          slot: slot.id,
+        })
+      const extraSeen = new Set<string>()
+      for (const name of extra) {
+        if (extraSeen.has(name)) error(`Duplicate mosaic screen "${name}" in extra`, { slot: slot.id })
+        extraSeen.add(name)
+        if (name === slot.screen) error(`extra names the slot's own screen "${name}"`, { slot: slot.id })
+      }
+    }
+    if (
+      slot.kind !== 'artwork' &&
+      layout.id === 'mosaic' &&
+      (extraCount < MOSAIC_MIN_EXTRA || extraCount > MOSAIC_MAX_EXTRA)
+    )
+      error(
+        `Mosaic layout needs ${MOSAIC_MIN_EXTRA}–${MOSAIC_MAX_EXTRA} extra screens (4–6 cells total), has ${extraCount}`,
+        { slot: slot.id },
+      )
+
     const elementIds = new Set<string>()
-    for (const el of slot.elements ?? []) {
-      const kind = isSlotShape(el) ? 'shape' : 'sticker'
+    for (const el of elements) {
+      const kind = isSlotShape(el) ? 'shape' : isSlotChip(el) ? 'chip' : 'sticker'
+      const label = kind === 'shape' ? 'Shape' : kind === 'chip' ? 'Chip' : 'Sticker'
       if (elementIds.has(el.id)) error(`Duplicate ${kind} id ${el.id}`, { slot: slot.id })
       elementIds.add(el.id)
       const hasArtwork = 'artwork' in el && el.artwork !== undefined
       const hasShape = 'shape' in el && el.shape !== undefined
-      if (hasArtwork === hasShape)
-        error(`Element ${el.id} must be exactly one of artwork or shape`, { slot: slot.id })
+      const hasChip = 'chip' in el && el.chip !== undefined
+      if ([hasArtwork, hasShape, hasChip].filter(Boolean).length !== 1)
+        error(`Element ${el.id} must be exactly one of artwork, shape or chip`, { slot: slot.id })
       if (![el.x, el.y, el.width, el.rotate ?? 0].every(Number.isFinite))
-        error(
-          `${kind === 'shape' ? 'Shape' : 'Sticker'} ${el.id} has a non-finite position, size or rotation`,
-          {
-            slot: slot.id,
-          },
+        error(`${label} ${el.id} has a non-finite position, size or rotation`, { slot: slot.id })
+      else if (el.width <= 0) error(`${label} ${el.id} has width <= 0`, { slot: slot.id })
+      if (isSlotShape(el)) {
+        if (!HEX_COLOR.test(el.color))
+          error(`Shape ${el.id} has an invalid color "${el.color}"`, { slot: slot.id })
+        if (!SHAPE_KINDS.includes(el.shape))
+          error(`Shape ${el.id} has an unknown shape "${el.shape}"`, { slot: slot.id })
+        if (el.stroke !== undefined) {
+          if (el.shape !== 'ring') error(`Shape ${el.id} has stroke set but is not a ring`, { slot: slot.id })
+          else if (el.stroke < RING_STROKE_RANGE.min || el.stroke > RING_STROKE_RANGE.max)
+            error(
+              `Shape ${el.id} has stroke ${el.stroke} outside the valid range ${RING_STROKE_RANGE.min}–${RING_STROKE_RANGE.max}`,
+              { slot: slot.id },
+            )
+        }
+        if (el.seed !== undefined) {
+          if (el.shape !== 'blob') error(`Shape ${el.id} has seed set but is not a blob`, { slot: slot.id })
+          else if (!Number.isInteger(el.seed))
+            error(`Shape ${el.id} has a non-integer seed`, { slot: slot.id })
+        }
+      }
+      if (isSlotChip(el)) {
+        if (el.color !== undefined && !HEX_COLOR.test(el.color))
+          error(`Chip ${el.id} has an invalid color "${el.color}"`, { slot: slot.id })
+        if (el.textColor !== undefined && !HEX_COLOR.test(el.textColor))
+          error(`Chip ${el.id} has an invalid textColor "${el.textColor}"`, { slot: slot.id })
+        if (
+          el.size !== undefined &&
+          (!Number.isFinite(el.size) || el.size <= CHIP_SIZE_RANGE.min || el.size > CHIP_SIZE_RANGE.max)
         )
-      else if (el.width <= 0)
-        error(`${kind === 'shape' ? 'Shape' : 'Sticker'} ${el.id} has width <= 0`, { slot: slot.id })
-      if (isSlotShape(el) && !HEX_COLOR.test(el.color))
-        error(`Shape ${el.id} has an invalid color "${el.color}"`, { slot: slot.id })
+          error(
+            `Chip ${el.id} has size ${el.size} outside the valid range (${CHIP_SIZE_RANGE.min}, ${CHIP_SIZE_RANGE.max}]`,
+            { slot: slot.id },
+          )
+      }
     }
   }
 
@@ -200,8 +307,8 @@ export function validateProject(
       }
       // A sticker's artwork is resolved and reported exactly like the slot's own — same template,
       // same wording — so two stickers sharing one file never repeat the message either. A shape
-      // has no image at all: it never reaches this check.
-      for (const el of (slot.elements ?? []).filter((e): e is SlotSticker => !isSlotShape(e))) {
+      // or a chip has no image at all: neither ever reaches this check.
+      for (const el of elementsOf.get(slot.id)!.filter(isSlotSticker)) {
         const path = artworkPath(set, locale.id, el.artwork)
         if (!artworkReported.has(path)) {
           artworkReported.add(path)
@@ -217,6 +324,67 @@ export function validateProject(
         error('Headline missing', { slot: slot.id, locale: locale.id })
       if (copy[slot.id]?.eyebrow && !eyebrowFits(locale.id, slot.id))
         error('Eyebrow does not fit on one line', { slot: slot.id, locale: locale.id })
+
+      const rawList = copy[slot.id]?.list
+      if (rawList !== undefined && !Array.isArray(rawList))
+        error('list must be an array of strings', { slot: slot.id, locale: locale.id })
+      const list = Array.isArray(rawList) ? rawList : undefined
+      if (slotLayouts.get(slot.id)!.id === 'feature-wall') {
+        if (!list || list.length < 2 || list.length > 8)
+          error(`feature-wall needs 2-8 list entries, has ${list?.length ?? 0}`, {
+            slot: slot.id,
+            locale: locale.id,
+          })
+        else {
+          for (const entry of list) {
+            if (typeof entry !== 'string')
+              error('List entry must be a string', { slot: slot.id, locale: locale.id })
+            else if (!entry.trim()) error('List entry is empty', { slot: slot.id, locale: locale.id })
+            else if (/[\r\n]/.test(entry))
+              error('List entry must be a single line', { slot: slot.id, locale: locale.id })
+          }
+          if (!listFits(locale.id, slot.id))
+            error('List does not fit its band', { slot: slot.id, locale: locale.id })
+        }
+      } else if (list?.length) {
+        issues.push({
+          level: 'warn',
+          message: 'List set but the layout is not feature-wall; unused',
+          slot: slot.id,
+          locale: locale.id,
+        })
+      }
+
+      // A chip is always meant to carry text — unlike an eyebrow, there is no "same as absent"
+      // reading of a blank one. It is also always one line: the pill never wraps.
+      const rawChips = copy[slot.id]?.chips
+      if (
+        rawChips !== undefined &&
+        (typeof rawChips !== 'object' || rawChips === null || Array.isArray(rawChips))
+      )
+        error('chips must be an object', { slot: slot.id, locale: locale.id })
+      const chips = rawChips && typeof rawChips === 'object' && !Array.isArray(rawChips) ? rawChips : {}
+      for (const el of elementsOf.get(slot.id)!.filter(isSlotChip)) {
+        const text = chips[el.id]
+        if (!text?.trim()) error(`Chip text missing: ${el.id}`, { slot: slot.id, locale: locale.id })
+        else if (/[\r\n]/.test(text))
+          error(`Chip text must be one line: ${el.id}`, { slot: slot.id, locale: locale.id })
+      }
+      const chipIds = new Set(
+        elementsOf
+          .get(slot.id)!
+          .filter(isSlotChip)
+          .map((c) => c.id),
+      )
+      for (const chipId of Object.keys(chips)) {
+        if (!chipIds.has(chipId))
+          issues.push({
+            level: 'warn',
+            message: `Copy for unknown chip "${chipId}"`,
+            slot: slot.id,
+            locale: locale.id,
+          })
+      }
     }
     for (const slotId of Object.keys(copy)) {
       if (!seen.has(slotId))
@@ -225,10 +393,10 @@ export function validateProject(
   }
 
   for (const slot of set.slots) {
-    if (slot.kind !== 'artwork' || slot.elements?.length) continue
+    if (slot.kind !== 'artwork' || elementsOf.get(slot.id)!.length) continue
     const hasCopy = set.locales.some((l) => {
       const c = copies[l.id]?.[slot.id]
-      return !!(c?.headline?.trim() || c?.subhead?.trim() || c?.eyebrow?.trim())
+      return !!(c?.headline?.trim() || c?.subhead?.trim() || c?.eyebrow?.trim() || c?.list?.length)
     })
     if (!hasCopy)
       issues.push({ level: 'warn', message: 'Artwork slot has neither stickers nor any copy', slot: slot.id })
@@ -260,7 +428,6 @@ export function validateProject(
   // Contrast. Colours are locale-independent (overrides never vary by locale), so each slot is
   // resolved once — exactly as the renderer resolves it, including an active "contrast tile" —
   // but subhead/eyebrow/highlight checks only fire when some locale actually carries that text.
-  const globalSettings: Settings = { ...DEFAULT_SETTINGS, ...set.settings }
   for (const slot of set.slots) {
     const screen: Screen = {
       id: slot.id,
@@ -279,14 +446,16 @@ export function validateProject(
     // aspect ratio when the check has loaded the image, otherwise the sticker is treated as a
     // square. A shape is deco, not content — it may sit under the headline on purpose (the big
     // background circle behind the feature graphic's stickers is exactly this), so it never warns.
-    const layout = getLayout(effective.layout)
+    // A chip's real box needs its shrunk font size, which this check has no canvas to measure —
+    // it is exempt too, rather than warn from a guess that could easily be wrong either way.
+    const layout = slotLayouts.get(slot.id)!
     if (layout.text) {
       const band = textBand(layout)
       const tileAspects = (set.targets.length ? set.targets : [{ sizeId: EXPORT_SIZES[0].id }]).map((t) => {
         const size = EXPORT_SIZES.find((s) => s.id === t.sizeId) ?? EXPORT_SIZES[0]
         return size.w / size.h
       })
-      for (const el of (slot.elements ?? []).filter((e): e is SlotSticker => !isSlotShape(e))) {
+      for (const el of elementsOf.get(slot.id)!.filter(isSlotSticker)) {
         if ((el.layer ?? 'front') !== 'front') continue
         const aspect = elementAspect(set.locales[0]?.id ?? '', el.artwork)
         if (
@@ -340,12 +509,17 @@ export function validateProject(
       )
     }
 
-    // Every span a `*starred*` headline actually uses, in any locale — mirrors how drawLine in
-    // render/text.ts picks `highlights[span % highlights.length]`.
+    // Every span a `*starred*` headline or feature-wall list entry actually uses, in any locale —
+    // mirrors how drawLine in render/text.ts picks `highlights[span % highlights.length]`.
     const spans = new Set<number>()
     for (const locale of set.locales) {
       for (const word of parseMarkup(copies[locale.id]?.[slot.id]?.headline ?? ''))
         if (word.span >= 0) spans.add(word.span)
+      const list = copies[locale.id]?.[slot.id]?.list
+      if (Array.isArray(list))
+        for (const entry of list)
+          if (typeof entry === 'string')
+            for (const word of parseMarkup(entry)) if (word.span >= 0) spans.add(word.span)
     }
     const highlightColors = new Set<string>()
     for (const span of spans) highlightColors.add(effective.highlights[span % effective.highlights.length])

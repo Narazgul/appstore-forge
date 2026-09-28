@@ -99,6 +99,25 @@ describe('fileProjectStore', () => {
     expect(calls[0].init?.method).toBe('PUT')
   })
 
+  it('save() carries a chip’s copy through the PUT body — nothing here maps fields by name', async () => {
+    vi.stubGlobal('location', new URL('http://localhost:4324/?set=promo'))
+    const calls: { url: string; init?: RequestInit }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        calls.push({ url, init })
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }),
+    )
+    const withChip: Project = {
+      ...project('promo'),
+      copies: { en: { a: { headline: 'Hi', subhead: '', chips: { pill: '+312 € saved' } } } },
+    }
+    await fileProjectStore().save(withChip)
+    const sent = JSON.parse(calls[0].init?.body as string) as Project
+    expect(sent.copies.en.a.chips).toEqual({ pill: '+312 € saved' })
+  })
+
   it('listSets() reads /api/sets', async () => {
     vi.stubGlobal(
       'fetch',

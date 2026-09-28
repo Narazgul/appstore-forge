@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastAgainstBackground, contrastRatio } from '../lib/contrast'
 import { validateProject } from './validate'
-import type { Project, ProjectLocale, SlotCopy, SlotElement, SlotShape } from './types'
+import type { Project, ProjectLocale, SlotChip, SlotCopy, SlotElement, SlotShape } from './types'
 
 /** Mirrors the message/level branching in validate.ts, for fixtures built to land in one branch. */
 const expectedContrastMessage = (label: string, ratio: number, surface: string) =>
@@ -360,6 +360,136 @@ describe('validateProject', () => {
   })
 })
 
+describe('mosaic extra', () => {
+  it('passes with 3 extra (4 cells)', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    p.set.slots[0].extra = ['e1', 'e2', 'e3']
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('passes with 5 extra (6 cells)', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    p.set.slots[0].extra = ['e1', 'e2', 'e3', 'e4', 'e5']
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('errors when a mosaic slot has fewer than 3 extra', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    p.set.slots[0].extra = ['e1', 'e2']
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Mosaic layout needs 3–5 extra screens (4–6 cells total), has 2',
+      slot: 'a',
+    })
+  })
+
+  it('errors when a mosaic slot has no extra at all', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Mosaic layout needs 3–5 extra screens (4–6 cells total), has 0',
+      slot: 'a',
+    })
+  })
+
+  it('errors when a mosaic slot has more than 5 extra', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    p.set.slots[0].extra = ['e1', 'e2', 'e3', 'e4', 'e5', 'e6']
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Mosaic layout needs 3–5 extra screens (4–6 cells total), has 6',
+      slot: 'a',
+    })
+  })
+
+  it('reads the slot override before the set layout, like effectiveSettings everywhere else', () => {
+    const p = base()
+    p.set.settings.layout = 'text-top'
+    p.set.slots[0].overrides.layout = 'mosaic'
+    p.set.slots[0].extra = ['e1', 'e2']
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Mosaic layout needs 3–5 extra screens (4–6 cells total), has 2',
+      slot: 'a',
+    })
+  })
+
+  it('warns, does not error, when extra is set but the effective layout is not mosaic', () => {
+    const p = base()
+    p.set.slots[0].extra = ['e1', 'e2', 'e3']
+    const issues = validateProject(p, always)
+    expect(issues).toContainEqual({
+      level: 'warn',
+      message: 'Layout "text-top" never draws extra mosaic screens; only "mosaic" does',
+      slot: 'a',
+    })
+    expect(issues.some((i) => i.level === 'error')).toBe(false)
+  })
+
+  it('errors when an artwork-kind slot names extra', () => {
+    const p = base()
+    p.set.slots = [{ id: 'feature', kind: 'artwork', extra: ['e1', 'e2', 'e3'], overrides: {} }]
+    p.copies.en = { feature: { headline: 'Hi', subhead: '' } }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Artwork slot must not name extra mosaic screens',
+      slot: 'feature',
+    })
+  })
+
+  it('errors on a name repeated within extra', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    p.set.slots[0].extra = ['e1', 'e2', 'e1']
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Duplicate mosaic screen "e1" in extra',
+      slot: 'a',
+    })
+  })
+
+  it('reports a missing extra source image the same way as any other slot source', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    p.set.slots[0].extra = ['e1', 'e2', 'e3']
+    const exists = (_l: string, screen: string) => screen !== 'e2'
+    expect(validateProject(p, exists)).toContainEqual({
+      level: 'error',
+      message: 'Source image missing: src/en/e2.png',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('errors when an artwork-kind slot resolves to mosaic — it has no screen to be cell 1', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    p.set.slots = [{ id: 'feature', kind: 'artwork', overrides: {} }]
+    p.copies.en = { feature: { headline: 'Hi', subhead: '' } }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'mosaic needs a screen slot',
+      slot: 'feature',
+    })
+  })
+
+  it('errors when extra names the slot’s own screen — preview and export would draw it twice', () => {
+    const p = base()
+    p.set.settings.layout = 'mosaic'
+    p.set.slots[0].extra = ['e1', 'shot', 'e2']
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'extra names the slot\'s own screen "shot"',
+      slot: 'a',
+    })
+  })
+})
+
 describe('stickers', () => {
   const sticker = (patch: Partial<SlotElement> = {}): SlotElement => ({
     id: 's',
@@ -555,7 +685,7 @@ describe('shapes', () => {
     p.set.slots[0].elements = [{ id: 'x', x: 0.5, y: 0.5, width: 0.3 } as SlotElement]
     expect(validateProject(p, always, always)).toContainEqual({
       level: 'error',
-      message: 'Element x must be exactly one of artwork or shape',
+      message: 'Element x must be exactly one of artwork, shape or chip',
       slot: 'a',
     })
   })
@@ -567,7 +697,340 @@ describe('shapes', () => {
     ]
     expect(validateProject(p, always, always)).toContainEqual({
       level: 'error',
-      message: 'Element x must be exactly one of artwork or shape',
+      message: 'Element x must be exactly one of artwork, shape or chip',
+      slot: 'a',
+    })
+  })
+
+  it('rejects an unknown shape kind', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'hexagon' as SlotShape['shape'] })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Shape kreis has an unknown shape "hexagon"',
+      slot: 'a',
+    })
+  })
+
+  it('accepts a well-formed ring with no artwork file needed', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'ring', stroke: 0.2 })]
+    expect(validateProject(p, always, () => false)).toEqual([])
+  })
+
+  it('accepts a ring with no stroke — the default applies at draw time', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'ring' })]
+    expect(validateProject(p, always, always)).toEqual([])
+  })
+
+  it.each([0.02, 0.3, 0.5])('accepts stroke %s, the edges of the valid range', (stroke) => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'ring', stroke })]
+    expect(validateProject(p, always, always)).toEqual([])
+  })
+
+  it.each([0.019, 0.51, 0, 1])('rejects stroke %s outside 0.02–0.5', (stroke) => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'ring', stroke })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: `Shape kreis has stroke ${stroke} outside the valid range 0.02–0.5`,
+      slot: 'a',
+    })
+  })
+
+  it('rejects a stroke on a shape that is not a ring', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'circle', stroke: 0.2 })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Shape kreis has stroke set but is not a ring',
+      slot: 'a',
+    })
+  })
+
+  it('accepts a well-formed blob', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'blob', seed: 7 })]
+    expect(validateProject(p, always, always)).toEqual([])
+  })
+
+  it('accepts a blob with no seed — the default applies at draw time', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'blob' })]
+    expect(validateProject(p, always, always)).toEqual([])
+  })
+
+  it('rejects a non-integer seed', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'blob', seed: 1.5 })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Shape kreis has a non-integer seed',
+      slot: 'a',
+    })
+  })
+
+  it('rejects a seed on a shape that is not a blob', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ shape: 'circle', seed: 1 })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Shape kreis has seed set but is not a blob',
+      slot: 'a',
+    })
+  })
+})
+
+describe('chips', () => {
+  const chip = (patch: Partial<SlotChip> = {}): SlotElement => ({
+    id: 'pill',
+    chip: true,
+    x: 0.5,
+    y: 0.2,
+    width: 0.4,
+    ...patch,
+  })
+
+  it('accepts a well-formed chip with text for every locale', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip()]
+    p.copies.en.a.chips = { pill: '+312 € saved' }
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('flags a chip with no text for a locale', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip()]
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip text missing: pill',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('flags a chip with blank text', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip()]
+    p.copies.en.a.chips = { pill: '   ' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip text missing: pill',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('flags a chip with a line break', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip()]
+    p.copies.en.a.chips = { pill: 'Notgroschen\n3 von 6' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip text must be one line: pill',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('warns about copy for a chip the slot does not have', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip()]
+    p.copies.en.a.chips = { pill: 'Hi', ghost: 'Bye' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'warn',
+      message: 'Copy for unknown chip "ghost"',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it.each(['#111114', '#111', '#111114cc'])('accepts hex color and textColor %s', (color) => {
+    const p = base()
+    p.set.slots[0].elements = [chip({ color, textColor: color })]
+    p.copies.en.a.chips = { pill: 'Hi' }
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('rejects an invalid chip color', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip({ color: 'not-a-color' })]
+    p.copies.en.a.chips = { pill: 'Hi' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip pill has an invalid color "not-a-color"',
+      slot: 'a',
+    })
+  })
+
+  it('rejects an invalid chip textColor', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip({ textColor: 'not-a-color' })]
+    p.copies.en.a.chips = { pill: 'Hi' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip pill has an invalid textColor "not-a-color"',
+      slot: 'a',
+    })
+  })
+
+  it('flags a chip with width <= 0', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip({ width: 0 })]
+    p.copies.en.a.chips = { pill: 'Hi' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip pill has width <= 0',
+      slot: 'a',
+    })
+  })
+
+  it('accepts a chip size at the top of the valid range', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip({ size: 0.2 })]
+    p.copies.en.a.chips = { pill: 'Hi' }
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('flags a negative chip size — a negative roundRect radius throws in the browser', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip({ size: -0.02 })]
+    p.copies.en.a.chips = { pill: 'Hi' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip pill has size -0.02 outside the valid range (0.005, 0.2]',
+      slot: 'a',
+    })
+  })
+
+  it('flags a chip size of 0 — it would draw an invisible chip', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip({ size: 0 })]
+    p.copies.en.a.chips = { pill: 'Hi' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip pill has size 0 outside the valid range (0.005, 0.2]',
+      slot: 'a',
+    })
+  })
+
+  it('flags a chip size above the valid range', () => {
+    const p = base()
+    p.set.slots[0].elements = [chip({ size: 0.3 })]
+    p.copies.en.a.chips = { pill: 'Hi' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Chip pill has size 0.3 outside the valid range (0.005, 0.2]',
+      slot: 'a',
+    })
+  })
+
+  it('rejects an element naming both shape and chip', () => {
+    const p = base()
+    p.set.slots[0].elements = [
+      { id: 'x', shape: 'circle', chip: true, color: '#fff', x: 0.5, y: 0.5, width: 0.3 } as SlotElement,
+    ]
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Element x must be exactly one of artwork, shape or chip',
+      slot: 'a',
+    })
+  })
+})
+
+// A hand-edited project or copy file can give any of these the wrong JSON shape. Each must land
+// as a clean, single error instead of throwing when validateProject (or the bridge and CLI
+// checkers it shares with `forge check`) tries to iterate or spread it.
+describe('malformed field types', () => {
+  it('flags a slot whose elements is not an array', () => {
+    const p = base()
+    p.set.slots[0].elements = 'oops' as unknown as SlotElement[]
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'elements must be an array',
+      slot: 'a',
+    })
+  })
+
+  it('flags a slot whose extra is not an array', () => {
+    const p = base()
+    p.set.slots[0].extra = 'oops' as unknown as string[]
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'extra must be an array',
+      slot: 'a',
+    })
+  })
+
+  it('flags a feature-wall list that is not an array', () => {
+    const p = base()
+    p.set.settings.layout = 'feature-wall'
+    p.copies.en.a.list = 'oops' as unknown as string[]
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'list must be an array of strings',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('flags chips that is not an object', () => {
+    const p = base()
+    p.copies.en.a.chips = 'oops' as unknown as Record<string, string>
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'chips must be an object',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('flags chips that is an array', () => {
+    const p = base()
+    p.copies.en.a.chips = ['oops'] as unknown as Record<string, string>
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'chips must be an object',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('does not throw when every field is malformed at once', () => {
+    const p = base()
+    p.set.slots[0].elements = 'oops' as unknown as SlotElement[]
+    p.set.slots[0].extra = 'oops' as unknown as string[]
+    p.copies.en.a.list = 'oops' as unknown as string[]
+    p.copies.en.a.chips = 'oops' as unknown as Record<string, string>
+    expect(() => validateProject(p, always)).not.toThrow()
+  })
+})
+
+describe('deviceShadow', () => {
+  it('accepts every known value, globally and as a slot override', () => {
+    const p = base()
+    p.set.settings.deviceShadow = 'hard'
+    p.set.slots[0].overrides.deviceShadow = 'none'
+    expect(validateProject(p, always)).toEqual([])
+  })
+
+  it('rejects an unknown global value', () => {
+    const p = base()
+    p.set.settings.deviceShadow = 'glow' as never
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Unknown deviceShadow "glow"',
+    })
+  })
+
+  it('rejects an unknown slot override', () => {
+    const p = base()
+    p.set.slots[0].overrides.deviceShadow = 'glow' as never
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Unknown deviceShadow "glow"',
       slot: 'a',
     })
   })
@@ -724,6 +1187,35 @@ describe('contrast', () => {
     ])
   })
 
+  it('d) checks a highlight a feature-wall list entry stars, not only the headline', () => {
+    const p = base()
+    p.set.settings = {
+      layout: 'feature-wall',
+      background: { kind: 'solid', color: '#ffffff' },
+      textColor: '#000000',
+      highlights: ['#000000'],
+    }
+    p.copies.en.a = { headline: 'Hi', subhead: '', list: ['Plain', '*Starred* entry'] }
+    const ratio = contrastRatio('#000000', '#000000')
+    expect(validateProject(p, always)).toContainEqual({
+      level: expectedContrastLevel(ratio),
+      message: expectedContrastMessage('Headline', ratio, 'highlight'),
+      slot: 'a',
+    })
+  })
+
+  it('d) never flags a highlight only a list entry’s markup would reach if the list is not an array', () => {
+    const p = base()
+    p.set.settings = {
+      layout: 'feature-wall',
+      background: { kind: 'solid', color: '#ffffff' },
+      textColor: '#000000',
+      highlights: ['#000000'],
+    }
+    p.copies.en.a = { headline: 'Hi', subhead: '', list: 'oops' as unknown as string[] }
+    expect(() => validateProject(p, always)).not.toThrow()
+  })
+
   it('lets an explicit slot override change which colours its own contrast check uses', () => {
     const p = base()
     p.set.settings = { background: { kind: 'solid', color: '#ffffff' }, textColor: '#000000' }
@@ -873,5 +1365,151 @@ describe('contrast', () => {
         slot: 'a',
       })
     })
+  })
+})
+
+describe('deviceless layouts', () => {
+  it('warns a screen-kind slot that its source image will never be drawn', () => {
+    const p = base()
+    p.set.settings = { layout: 'text-only' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'warn',
+      message: 'Quellbild wird nicht gezeichnet, Slot-Art artwork verwenden',
+      slot: 'a',
+    })
+  })
+
+  it('is silent about an artwork-kind slot — it never named a source image in the first place', () => {
+    const p = base()
+    p.set.settings = { layout: 'text-only' }
+    p.set.slots = [{ id: 'a', kind: 'artwork', overrides: {} }]
+    p.copies.en.a = { headline: 'Hi', subhead: '' }
+    expect(
+      validateProject(p, always).some((i) => i.message.includes('Quellbild wird nicht gezeichnet')),
+    ).toBe(false)
+  })
+
+  it('does not demand an artwork for an arrangement that would need one on an ordinary layout', () => {
+    const p = base()
+    p.set.settings = { layout: 'text-only', positionId: 'duo-artwork' }
+    expect(validateProject(p, always).some((i) => i.message.includes('needs an artwork'))).toBe(false)
+  })
+
+  it('still demands an artwork for that same arrangement on a layout with a device', () => {
+    const p = base()
+    p.set.settings = { positionId: 'duo-artwork' }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Arrangement duo-artwork needs an artwork, but the slot names none',
+      slot: 'a',
+    })
+  })
+})
+
+describe('feature-wall list', () => {
+  // Artwork-kind: `feature-wall` is deviceless, and a screen-kind slot there would also carry
+  // the "source image will never be drawn" warning these tests are not about.
+  const withList = (list?: string[]) => {
+    const p = base()
+    p.set.settings = { layout: 'feature-wall' }
+    p.set.slots = [{ id: 'a', kind: 'artwork', overrides: {} }]
+    p.copies.en.a = { headline: 'Hi', subhead: '', ...(list ? { list } : {}) }
+    return p
+  }
+
+  it('errors when the slot has no list at all', () => {
+    expect(validateProject(withList(), always)).toContainEqual({
+      level: 'error',
+      message: 'feature-wall needs 2-8 list entries, has 0',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('errors below the minimum of two entries', () => {
+    expect(validateProject(withList(['Budget']), always)).toContainEqual({
+      level: 'error',
+      message: 'feature-wall needs 2-8 list entries, has 1',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('errors above the maximum of eight entries', () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `Entry ${i}`)
+    expect(validateProject(withList(nine), always)).toContainEqual({
+      level: 'error',
+      message: 'feature-wall needs 2-8 list entries, has 9',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('passes a list of two to eight non-empty single-line entries', () => {
+    expect(validateProject(withList(['Budget', 'Sparziele', 'Notgroschen']), always)).toEqual([])
+  })
+
+  it('flags an empty entry', () => {
+    expect(validateProject(withList(['Budget', '']), always)).toContainEqual({
+      level: 'error',
+      message: 'List entry is empty',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('flags an entry that is not a single line', () => {
+    expect(validateProject(withList(['Budget', 'Two\nlines']), always)).toContainEqual({
+      level: 'error',
+      message: 'List entry must be a single line',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('is silent about fit when the check is not wired up', () => {
+    expect(
+      validateProject(withList(['Budget', 'Sparziele']), always).some((i) =>
+        i.message.includes('does not fit'),
+      ),
+    ).toBe(false)
+  })
+
+  it('flags a list the injected check reports as not fitting its band', () => {
+    const p = withList(['Budget', 'Sparziele'])
+    expect(
+      validateProject(
+        p,
+        always,
+        always,
+        always,
+        () => null,
+        () => false,
+      ),
+    ).toContainEqual({
+      level: 'error',
+      message: 'List does not fit its band',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('warns that a list on any other layout is unused', () => {
+    const p = base()
+    p.copies.en.a = { headline: 'Hi', subhead: '', list: ['Budget', 'Sparziele'] }
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'warn',
+      message: 'List set but the layout is not feature-wall; unused',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('lets an artwork-kind slot carry only a list, with no headline, and stay silent', () => {
+    const p = base()
+    p.set.settings = { layout: 'feature-wall' }
+    p.set.slots = [{ id: 'a', kind: 'artwork', overrides: {} }]
+    p.copies.en.a = { headline: '', subhead: '', list: ['Budget', 'Sparziele'] }
+    expect(validateProject(p, always)).toEqual([])
   })
 })

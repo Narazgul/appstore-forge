@@ -6,7 +6,7 @@ import { artworkIdFor, imageIdFor, screensFor, settingsFor } from './project/bri
 import { approvalHash } from './project/hash'
 import { EMPTY_GALLERY } from './project/store'
 import type { Gallery, ProjectStore } from './project/store'
-import { isSlotSticker } from './project/types'
+import { isSlotChip, isSlotSticker } from './project/types'
 import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy, SlotElement } from './project/types'
 import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   backdropColor: null,
   deviceId: 'iphone-17-pro',
   frameColorId: 'deep-blue',
+  deviceShadow: 'soft',
   positionId: 'center',
   layout: 'text-top',
   tilt: 0,
@@ -81,6 +82,28 @@ export function projectAfterScreenPatch(
   // An empty eyebrow is the same as none; keeping the key would persist a no-op edit and
   // change the approval hash for a project that never had the field.
   if (!merged.eyebrow) delete merged.eyebrow
+  if (!merged.list?.length) delete merged.list
+  return {
+    set: { ...project.set, approval: null },
+    copies: { ...project.copies, [localeId]: { ...locale, [screenId]: merged } },
+  }
+}
+
+/**
+ * Merges one chip's text into a slot's copy, leaving every other chip's text (and the headline,
+ * subhead, eyebrow) untouched — `setCopy`'s `chips` patch would otherwise be a full replacement
+ * and lose the rest of the map.
+ */
+export function projectAfterChipPatch(
+  project: Project,
+  localeId: string,
+  screenId: string,
+  chipId: string,
+  text: string,
+): Project {
+  const locale = project.copies[localeId] ?? {}
+  const current = locale[screenId] ?? { headline: '', subhead: '' }
+  const merged: SlotCopy = { ...current, chips: { ...current.chips, [chipId]: text } }
   return {
     set: { ...project.set, approval: null },
     copies: { ...project.copies, [localeId]: { ...locale, [screenId]: merged } },
@@ -177,8 +200,29 @@ export function projectAfterSlotSource(
 /**
  * Writes a slot's sticker list. An empty list drops the key entirely — the GUI must never
  * persist `elements: []`, or a project that never had a sticker would hash differently forever.
+ * A chip removed from the list takes its copy with it, in every locale, in this same step — one
+ * write, one undo entry restoring both the element and its text together. Left behind, that copy
+ * would sit under a "Copy for unknown chip" warning forever, count in the approval hash, and hand
+ * itself to the next chip that happens to land on the freed id (`freeElementId` in
+ * `StickersSection.tsx` reuses `chip` once nothing still claims it).
  */
 export function projectAfterSlotElements(project: Project, slotId: string, elements: SlotElement[]): Project {
+  const keptChipIds = new Set(elements.filter(isSlotChip).map((el) => el.id))
+  const copies: ProjectCopies = {}
+  for (const [localeId, locale] of Object.entries(project.copies)) {
+    const chips = locale[slotId]?.chips
+    const chipIds = chips ? Object.keys(chips) : []
+    if (!chips || chipIds.every((id) => keptChipIds.has(id))) {
+      copies[localeId] = locale
+      continue
+    }
+    const keptChips = Object.fromEntries(
+      chipIds.filter((id) => keptChipIds.has(id)).map((id) => [id, chips[id]]),
+    )
+    const merged: SlotCopy = { ...locale[slotId]!, chips: keptChips }
+    if (!Object.keys(keptChips).length) delete merged.chips
+    copies[localeId] = { ...locale, [slotId]: merged }
+  }
   return {
     set: {
       ...project.set,
@@ -190,6 +234,29 @@ export function projectAfterSlotElements(project: Project, slotId: string, eleme
           return rest
         }
         return { ...slot, elements }
+      }),
+    },
+    copies,
+  }
+}
+
+/**
+ * Writes a slot's mosaic extra-screen list, same convention as `projectAfterSlotElements`: an
+ * empty list drops the key entirely, so a set that never used the mosaic layout keeps its exact
+ * approval hash.
+ */
+export function projectAfterSlotExtra(project: Project, slotId: string, extra: string[]): Project {
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      slots: project.set.slots.map((slot) => {
+        if (slot.id !== slotId) return slot
+        if (!extra.length) {
+          const { extra: _dropped, ...rest } = slot
+          return rest
+        }
+        return { ...slot, extra }
       }),
     },
     copies: project.copies,
@@ -288,12 +355,16 @@ type State = {
   setLocale: (id: string) => void
   setTarget: (id: string) => void
   setCopy: (localeId: string, slotId: string, patch: Partial<SlotCopy>) => void
+  /** one chip's text, for one locale — merges into `copies[localeId][slotId].chips` */
+  setChipText: (localeId: string, slotId: string, chipId: string, text: string) => void
   /** feedback for the agent; it is not part of the set, so the approval survives it */
   setSlotNote: (slotId: string, note: string) => void
   /** put a gallery image into one frame of a slot; null clears an optional one */
   setSlotSource: (slotId: string, role: SlotRole, name: string | null) => Promise<void>
   /** replace a slot's sticker list; an empty list removes the key */
   setSlotElements: (slotId: string, elements: SlotElement[]) => Promise<void>
+  /** replace a slot's mosaic extra-screen list; an empty list removes the key */
+  setSlotExtra: (slotId: string, extra: string[]) => Promise<void>
   /** append a tile, filled with the first gallery image the active language has */
   addSlot: () => Promise<void>
   updateTarget: (id: string, patch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>>) => void
@@ -334,7 +405,7 @@ async function loadProjectImages(
   const keys = project.set.locales.flatMap((l) =>
     project.set.slots.flatMap((s) => {
       const rows = s.screen ? [{ id: imageIdFor(l.id, s.screen), url: store.sourceUrl(l.id, s.screen) }] : []
-      for (const screen of [s.pair, s.pairPrev]) {
+      for (const screen of [s.pair, s.pairPrev, ...(s.extra ?? [])]) {
         if (screen) rows.push({ id: imageIdFor(l.id, screen), url: store.sourceUrl(l.id, screen) })
       }
       if (s.artwork && artworkUrl)
@@ -678,10 +749,8 @@ export const useStore = create<State>((set, get) => ({
     if (patch.headline !== undefined) copy.headline = patch.headline
     if (patch.subhead !== undefined) copy.subhead = patch.subhead
     if (patch.eyebrow !== undefined) copy.eyebrow = patch.eyebrow
-    if (
-      !state.project ||
-      (copy.headline === undefined && copy.subhead === undefined && copy.eyebrow === undefined)
-    ) {
+    if (patch.list !== undefined) copy.list = patch.list
+    if (!state.project || Object.keys(copy).length === 0) {
       return set({ screens, ...pushHistory(state, `screen:${id}:${sortedKeys(patch)}`) })
     }
     const project = projectAfterScreenPatch(state.project, state.localeId, id, copy)
@@ -893,6 +962,17 @@ export const useStore = create<State>((set, get) => ({
     scheduleSave(get)
   },
 
+  setChipText: (localeId, slotId, chipId, text) => {
+    const state = get()
+    if (!state.project) return
+    const project = projectAfterChipPatch(state.project, localeId, slotId, chipId, text)
+    set({
+      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...pushHistory(state, `chip:${localeId}:${slotId}:${chipId}`),
+    })
+    scheduleSave(get)
+  },
+
   // Feedback for the regenerating agent, not the document — it stays out of the approval hash
   // (see `projectAfterNote`) and, for the same reason, out of undo/redo.
   setSlotNote: (slotId, note) => {
@@ -933,6 +1013,23 @@ export const useStore = create<State>((set, get) => ({
     const fresh: Record<string, HTMLImageElement> = {}
     for (const name of names)
       Object.assign(fresh, await loadNewSources(project, store, get().images, name, 'artwork'))
+    if (Object.keys(fresh).length) set({ images: { ...get().images, ...fresh } })
+  },
+
+  setSlotExtra: async (slotId, extra) => {
+    const state = get()
+    const store = state.projectStore
+    if (!state.project || !store) return
+    const project = projectAfterSlotExtra(state.project, slotId, extra)
+    set({
+      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...pushHistory(state, `extra:${slotId}`),
+    })
+    scheduleSave(get)
+    // An extra cell names a plain screen, resolved exactly like the slot's own `screen`.
+    const fresh: Record<string, HTMLImageElement> = {}
+    for (const name of [...new Set(extra)])
+      Object.assign(fresh, await loadNewSources(project, store, get().images, name, 'screen'))
     if (Object.keys(fresh).length) set({ images: { ...get().images, ...fresh } })
   },
 

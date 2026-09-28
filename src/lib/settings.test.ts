@@ -29,6 +29,12 @@ describe('effectiveSettings', () => {
     expect(resolved.layout).toBe(DEFAULT_SETTINGS.layout)
   })
 
+  it('defaults deviceShadow to "soft" and lets a screen override it', () => {
+    expect(DEFAULT_SETTINGS.deviceShadow).toBe('soft')
+    const resolved = effectiveSettings(screen({ deviceShadow: 'hard' }), DEFAULT_SETTINGS)
+    expect(resolved.deviceShadow).toBe('hard')
+  })
+
   it('does not mutate either input', () => {
     const global = { ...DEFAULT_SETTINGS }
     const s = screen({ tilt: 8 })

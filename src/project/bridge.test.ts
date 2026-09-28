@@ -95,6 +95,36 @@ describe('screensFor', () => {
     expect(screensFor(withBlank, 'en')[0].eyebrow).toBeUndefined()
   })
 
+  it('maps the list when the copy has one', () => {
+    const withList: Project = {
+      ...project,
+      copies: {
+        ...project.copies,
+        en: {
+          ...project.copies.en,
+          'budget-light': { headline: 'Hi', subhead: '', list: ['Budget', 'Sparziele'] },
+        },
+      },
+    }
+    expect(screensFor(withList, 'en')[0].list).toEqual(['Budget', 'Sparziele'])
+  })
+
+  it('leaves the list absent, not empty, when the copy has none', () => {
+    const [budget] = screensFor(project, 'en')
+    expect(budget.list).toBeUndefined()
+  })
+
+  it('treats an empty list in the copy file the same as absent', () => {
+    const withEmpty: Project = {
+      ...project,
+      copies: {
+        ...project.copies,
+        en: { ...project.copies.en, 'budget-light': { headline: 'Hi', subhead: '', list: [] } },
+      },
+    }
+    expect(screensFor(withEmpty, 'en')[0].list).toBeUndefined()
+  })
+
   it('never shares the overrides object with the project', () => {
     const [budget] = screensFor(project, 'de')
     expect(budget.overrides).not.toBe(project.set.slots[0].overrides)
@@ -280,6 +310,126 @@ describe('shapes', () => {
     })
     expect(screen.elements?.[0]).not.toHaveProperty('imageId')
     expect(screen.elements?.[0]).not.toHaveProperty('shadow')
+  })
+
+  const withRingAndBlob = (): Project => ({
+    ...project,
+    set: {
+      ...project.set,
+      slots: [
+        {
+          id: 'budget-light',
+          kind: 'screen',
+          screen: 'budget_screen',
+          overrides: {},
+          elements: [
+            { id: 'ring', shape: 'ring', color: '#eaf2ff', x: 0.5, y: 0.5, width: 0.3, stroke: 0.2 },
+            { id: 'blob', shape: 'blob', color: '#111114', x: 0.5, y: 0.5, width: 0.4, seed: 7 },
+          ],
+        },
+      ],
+    },
+  })
+
+  it('carries stroke through for a ring', () => {
+    const [screen] = screensFor(withRingAndBlob(), 'en')
+    expect(screen.elements?.[0]).toMatchObject({ shape: 'ring', stroke: 0.2 })
+    expect((screen.elements?.[0] as { seed?: number }).seed).toBeUndefined()
+  })
+
+  it('carries seed through for a blob', () => {
+    const [screen] = screensFor(withRingAndBlob(), 'en')
+    expect(screen.elements?.[1]).toMatchObject({ shape: 'blob', seed: 7 })
+  })
+
+  it('leaves stroke and seed undefined, not defaulted, when the slot names neither', () => {
+    const [screen] = screensFor(withShape(), 'en')
+    const el = screen.elements?.[0] as { stroke?: number; seed?: number }
+    expect(el.stroke).toBeUndefined()
+    expect(el.seed).toBeUndefined()
+  })
+})
+
+describe('chips', () => {
+  const withChip = (elements: Project['set']['slots'][number]['elements']): Project => ({
+    ...project,
+    set: {
+      ...project.set,
+      slots: [{ id: 'budget-light', kind: 'screen', screen: 'budget_screen', overrides: {}, elements }],
+    },
+    copies: {
+      ...project.copies,
+      en: {
+        ...project.copies.en,
+        'budget-light': { ...project.copies.en['budget-light'], chips: { pill: '+312 €' } },
+      },
+    },
+  })
+
+  it('resolves the chip text from the locale copy, keyed by the element id', () => {
+    const [screen] = screensFor(withChip([{ id: 'pill', chip: true, x: 0.5, y: 0.2, width: 0.4 }]), 'en')
+    expect(screen.elements?.[0]).toMatchObject({ id: 'pill', text: '+312 €', x: 0.5, y: 0.2, width: 0.4 })
+  })
+
+  it('resolves an empty string when the locale has no copy for that chip', () => {
+    const [screen] = screensFor(withChip([{ id: 'other', chip: true, x: 0.5, y: 0.2, width: 0.4 }]), 'en')
+    expect(screen.elements?.[0]).toMatchObject({ text: '' })
+  })
+
+  it('defaults size, rotate, layer and shadow, and leaves color/textColor undefined', () => {
+    const [screen] = screensFor(withChip([{ id: 'pill', chip: true, x: 0.5, y: 0.2, width: 0.4 }]), 'en')
+    expect(screen.elements?.[0]).toMatchObject({ rotate: 0, layer: 'front', shadow: false, size: 0.026 })
+    // Left as `undefined`, not omitted — the renderer resolves the default from the settings in
+    // force (rules.md #2), which this bridge function does not have.
+    expect((screen.elements?.[0] as { color?: string }).color).toBeUndefined()
+    expect((screen.elements?.[0] as { textColor?: string }).textColor).toBeUndefined()
+  })
+
+  it('keeps an explicit size, color and textColor', () => {
+    const [screen] = screensFor(
+      withChip([
+        {
+          id: 'pill',
+          chip: true,
+          x: 0.5,
+          y: 0.2,
+          width: 0.4,
+          size: 0.03,
+          color: '#111114',
+          textColor: '#ffffff',
+        },
+      ]),
+      'en',
+    )
+    expect(screen.elements?.[0]).toMatchObject({ size: 0.03, color: '#111114', textColor: '#ffffff' })
+  })
+})
+
+describe('extra (mosaic cells)', () => {
+  const withExtra = (): Project => ({
+    ...project,
+    set: {
+      ...project.set,
+      slots: [
+        {
+          id: 'overview',
+          kind: 'screen',
+          screen: 'budget_screen',
+          extra: ['account_screen', 'liga_screen', 'planer_screen'],
+          overrides: { layout: 'mosaic' },
+        },
+      ],
+    },
+  })
+
+  it('keys every extra screen into the image registry, in order', () => {
+    const [overview] = screensFor(withExtra(), 'de')
+    expect(overview.extraIds).toEqual(['de/account_screen', 'de/liga_screen', 'de/planer_screen'])
+  })
+
+  it('leaves extraIds absent, not an empty array, when the slot names none', () => {
+    const [budget] = screensFor(project, 'de')
+    expect(budget.extraIds).toBeUndefined()
   })
 })
 

@@ -123,6 +123,18 @@ describe('projectAfterScreenPatch', () => {
     expect(cleared.copies.en.a).toEqual({ headline: 'Hi', subhead: '' })
     expect('eyebrow' in cleared.copies.en.a).toBe(false)
   })
+
+  it('writes a non-empty list', () => {
+    const next = projectAfterScreenPatch(project(), 'en', 'a', { list: ['Budget', 'Sparziele'] })
+    expect(next.copies.en.a).toEqual({ headline: 'Hi', subhead: '', list: ['Budget', 'Sparziele'] })
+  })
+
+  it('drops the list key instead of persisting an empty array', () => {
+    const withList = projectAfterScreenPatch(project(), 'en', 'a', { list: ['Budget'] })
+    const cleared = projectAfterScreenPatch(withList, 'en', 'a', { list: [] })
+    expect(cleared.copies.en.a).toEqual({ headline: 'Hi', subhead: '' })
+    expect('list' in cleared.copies.en.a).toBe(false)
+  })
 })
 
 describe('projectAfterOverride', () => {
@@ -306,6 +318,58 @@ describe('projectAfterSlotElements', () => {
     const next = projectAfterSlotElements(p, 'b', [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.2 }])
     expect(next.set.slots[0]).not.toHaveProperty('elements')
     expect(p.set.slots[1]).not.toHaveProperty('elements')
+  })
+
+  describe('a chip dropped from the list', () => {
+    const withChip = (): Project => {
+      const p = project()
+      p.set.slots[0].elements = [{ id: 'pill', chip: true, x: 0.5, y: 0.2, width: 0.3 }]
+      p.copies.en.a = { headline: 'Hi', subhead: '', chips: { pill: '+312 € saved' } }
+      p.copies.de = { a: { headline: 'Hallo', subhead: '', chips: { pill: '+312 € gespart' } } }
+      return p
+    }
+
+    it('takes its copy with it, in every locale, in the same step', () => {
+      const next = projectAfterSlotElements(withChip(), 'a', [])
+      expect(next.copies.en.a).toEqual({ headline: 'Hi', subhead: '' })
+      expect(next.copies.de.a).toEqual({ headline: 'Hallo', subhead: '' })
+    })
+
+    it('never persists an empty chips object', () => {
+      const next = projectAfterSlotElements(withChip(), 'a', [])
+      expect(next.copies.en.a).not.toHaveProperty('chips')
+    })
+
+    it('leaves a surviving chip’s copy untouched', () => {
+      const p = withChip()
+      const kept = p.set.slots[0].elements![0]
+      const next = projectAfterSlotElements(p, 'a', [
+        kept,
+        { id: 's', artwork: 'dot', x: 0.5, y: 0.75, width: 0.3 },
+      ])
+      expect(next.copies.en.a.chips).toEqual({ pill: '+312 € saved' })
+    })
+
+    it('drops only the removed chip’s text, keeping a surviving chip’s own', () => {
+      const p = withChip()
+      p.set.slots[0].elements!.push({ id: 'pill2', chip: true, x: 0.5, y: 0.4, width: 0.3 })
+      p.copies.en.a.chips!.pill2 = 'Second'
+      const next = projectAfterSlotElements(p, 'a', [{ id: 'pill2', chip: true, x: 0.5, y: 0.4, width: 0.3 }])
+      expect(next.copies.en.a.chips).toEqual({ pill2: 'Second' })
+    })
+
+    it('leaves a locale with no copy for the slot untouched', () => {
+      const p = withChip()
+      p.copies.fr = {}
+      const next = projectAfterSlotElements(p, 'a', [])
+      expect(next.copies.fr).toEqual({})
+    })
+
+    it('does not mutate the input project', () => {
+      const p = withChip()
+      projectAfterSlotElements(p, 'a', [])
+      expect(p.copies.en.a.chips).toEqual({ pill: '+312 € saved' })
+    })
   })
 })
 
@@ -1066,6 +1130,25 @@ describe('undo / redo', () => {
     expect(useStore.getState().project!.set.slots[0]).not.toHaveProperty('elements')
   })
 
+  it('removing a chip drops its copy in the same step, and undo restores both together', async () => {
+    const p = project()
+    p.set.slots[0].elements = [{ id: 'pill', chip: true, x: 0.5, y: 0.2, width: 0.3 }]
+    p.copies.en.a = { headline: 'Hi', subhead: '', chips: { pill: '+312 € saved' } }
+    open(p, fakeProjectStore(p))
+
+    await useStore.getState().setSlotElements('a', [])
+    expect(useStore.getState().project!.set.slots[0]).not.toHaveProperty('elements')
+    expect(useStore.getState().project!.copies.en.a).not.toHaveProperty('chips')
+
+    useStore.getState().undo()
+    expect(useStore.getState().project!.set.slots[0].elements).toEqual(p.set.slots[0].elements)
+    expect(useStore.getState().project!.copies.en.a.chips).toEqual({ pill: '+312 € saved' })
+
+    useStore.getState().redo()
+    expect(useStore.getState().project!.set.slots[0]).not.toHaveProperty('elements')
+    expect(useStore.getState().project!.copies.en.a).not.toHaveProperty('chips')
+  })
+
   it('copy edits including the eyebrow are undoable', () => {
     const p = project()
     open(p, fakeProjectStore(p))
@@ -1074,6 +1157,17 @@ describe('undo / redo', () => {
 
     useStore.getState().undo()
     expect(useStore.getState().project!.copies.en.a).not.toHaveProperty('eyebrow')
+  })
+
+  it('a list edit through updateScreen is undoable', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().updateScreen('a', { list: ['Budget', 'Sparziele'] })
+    expect(useStore.getState().project!.copies.en.a.list).toEqual(['Budget', 'Sparziele'])
+    expect(useStore.getState().screens[0].list).toEqual(['Budget', 'Sparziele'])
+
+    useStore.getState().undo()
+    expect(useStore.getState().project!.copies.en.a).not.toHaveProperty('list')
   })
 })
 

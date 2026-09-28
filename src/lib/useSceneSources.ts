@@ -48,5 +48,8 @@ export function useSceneSources(screen: Screen, screens?: Screen[]): SceneSource
     const stickers = (screen.elements ?? []).filter(isStickerElement)
     return Object.fromEntries(stickers.map((el, i) => [el.imageId, elementImages[i]]))
   }, [screen.elements, elementImages])
-  return useMemo(() => ({ ...base, elements }), [base, elements])
+  // The mosaic layout's cells after the first — a dedicated selector for the same reason as
+  // `elementImages`: an array is what `useShallow` compares entry by entry.
+  const extra = useStore(useShallow((s) => (screen.extraIds ?? []).map((id) => s.images[id] ?? null)))
+  return useMemo(() => ({ ...base, elements, extra }), [base, elements, extra])
 }

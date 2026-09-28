@@ -89,6 +89,26 @@ describe('approvalHash', () => {
     expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(project(), bytes('img')))
   })
 
+  it('is unchanged for a copy entry that has no list key, whether or not one is passed explicitly', async () => {
+    const withUndefined = project()
+    withUndefined.copies.en.a.list = undefined
+    expect(await approvalHash(withUndefined, bytes('img'))).toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('changes when a slot gains a list', async () => {
+    const p = project()
+    p.copies.en.a.list = ['Budget', 'Sparziele']
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('changes when a list entry changes', async () => {
+    const p = project()
+    p.copies.en.a.list = ['Budget']
+    const q = project()
+    q.copies.en.a.list = ['Sparziele']
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(q, bytes('img')))
+  })
+
   it('is unchanged for a set that names no sticker, whether or not a reader is passed', async () => {
     expect(await approvalHash(project(), bytes('img'), bytes('art'))).toBe(
       await approvalHash(project(), bytes('img')),
@@ -174,6 +194,61 @@ describe('approvalHash', () => {
     const q = project()
     q.set.slots = [{ id: 'a', kind: 'artwork', overrides: { tilt: 5 } }]
     expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(q, bytes('img')))
+  })
+
+  it('is unchanged for a set that names no chip — the exact hash a set had before chips existed', async () => {
+    expect(await approvalHash(project(), bytes('img'), bytes('art'))).toBe(
+      await approvalHash(project(), bytes('img')),
+    )
+  })
+
+  it('changes when a slot gains a chip, through the set JSON alone, with no reader passed at all', async () => {
+    const p = project()
+    p.set.slots[0].elements = [{ id: 'pill', chip: true, x: 0.5, y: 0.2, width: 0.4 }]
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('never asks for artwork bytes of a chip, which has no image to hash', async () => {
+    const p = project()
+    p.set.slots[0].elements = [{ id: 'pill', chip: true, x: 0.5, y: 0.2, width: 0.4 }]
+    const throwing = async () => {
+      throw new Error('should not be called for a chip')
+    }
+    await expect(approvalHash(p, bytes('img'), throwing)).resolves.toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('changes when a chip gains copy, through the copies map alone', async () => {
+    const p = project()
+    p.set.slots[0].elements = [{ id: 'pill', chip: true, x: 0.5, y: 0.2, width: 0.4 }]
+    const withText = project()
+    withText.set.slots[0].elements = p.set.slots[0].elements
+    withText.copies.en.a.chips = { pill: '+312 € saved' }
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(withText, bytes('img')))
+  })
+
+  it('is unchanged for a copy entry that has no chips key, whether or not one is passed explicitly', async () => {
+    const withUndefined = project()
+    withUndefined.copies.en.a.chips = undefined
+    expect(await approvalHash(withUndefined, bytes('img'))).toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('is unchanged for a set that names no mosaic extra, whether or not the reader is passed', async () => {
+    expect(await approvalHash(project(), bytes('img'))).toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('changes when a slot gains a mosaic extra', async () => {
+    const p = project()
+    p.set.slots[0].extra = ['e1', 'e2', 'e3']
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('changes when a mosaic extra screen changes bytes, exactly like a screenshot', async () => {
+    const p = project()
+    p.set.slots[0].extra = ['e1']
+    const a = async (_l: string, screen: string) => new TextEncoder().encode(`img-${screen}`)
+    const b = async (_l: string, screen: string) =>
+      new TextEncoder().encode(screen === 'e1' ? 'moved' : `img-${screen}`)
+    expect(await approvalHash(p, a)).not.toBe(await approvalHash(p, b))
   })
 
   it('changes when the paired screen changes', async () => {

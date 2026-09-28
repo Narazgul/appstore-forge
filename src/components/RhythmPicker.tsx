@@ -2,9 +2,12 @@ import { frameAspect, getDevice } from '../presets/devices'
 import { getLayout } from '../presets/layouts'
 import { RHYTHMS } from '../presets/rhythms'
 import { getTemplateSpec } from '../presets/templates'
-import { composeDevices } from '../render/scene'
+import { composeDevices, mosaicCells } from '../render/scene'
 import { useStore } from '../store'
 import type { Rhythm, RhythmStep } from '../types'
+
+/** A representative cell count for the mosaic glyph — any 4–6 count reads the same at this size. */
+const GLYPH_MOSAIC_COUNT = 5
 
 /** One store tile in glyph units; the ratio matches a 1320×2868 screenshot. */
 const TILE = { w: 46, h: 100 }
@@ -15,7 +18,7 @@ const GAP = 4
  * position and tilt — from the same geometry the renderer draws, so the picker shows the
  * compositions themselves rather than describing them.
  */
-function Glyph({ step, x, aspect }: { step: RhythmStep; x: number; aspect: number }) {
+export function Glyph({ step, x, aspect }: { step: RhythmStep; x: number; aspect: number }) {
   const layout = getLayout(step.layout)
   const W = TILE.w * layout.span
   const bars: { x: number; y: number; w: number }[] = []
@@ -28,7 +31,27 @@ function Glyph({ step, x, aspect }: { step: RhythmStep; x: number; aspect: numbe
       bars.push({ x: step.textAlign === 'left' ? boxLeft : boxLeft + (boxW - w) / 2, y: top + i * 6.5, w })
     }
   }
-  const devices = composeDevices(layout, step.positionId, TILE.w, TILE.h, aspect, 1, 0)
+  // `feature-wall`'s list band, sketched as a handful of short rows below the headline bars —
+  // the same geometry the renderer reads, so the glyph shows the list rather than describing it.
+  if (layout.list) {
+    const boxLeft = layout.list.left !== undefined ? W * layout.list.left : TILE.w * layout.padX
+    const boxW = layout.list.width !== undefined ? W * layout.list.width : TILE.w * (1 - layout.padX * 2)
+    const top = TILE.h * layout.list.top + 2
+    const rowGap = 6
+    const rows = Math.min(5, Math.max(2, Math.floor((TILE.h * layout.list.height) / rowGap)))
+    for (let i = 0; i < rows; i++) {
+      const w = boxW * (i % 2 === 0 ? 0.62 : 0.46)
+      bars.push({ x: step.textAlign === 'left' ? boxLeft : boxLeft + (boxW - w) / 2, y: top + i * rowGap, w })
+    }
+  }
+  // The mosaic layout draws no device at all (its own grid instead), so it gets no boxes from
+  // `composeDevices` — sketching it means the real cell geometry (`mosaicCells`) instead. Reusing
+  // `aspect` (the device's *frame* aspect) rather than its screen aspect is a small, deliberate
+  // approximation: the two are close enough that a glyph this size never shows the difference, and
+  // it saves threading a second aspect prop through every caller for a schematic icon.
+  const isMosaic = layout.id === 'mosaic'
+  const devices = isMosaic ? [] : composeDevices(layout, step.positionId, TILE.w, TILE.h, aspect, 1, 0)
+  const cells = isMosaic ? mosaicCells(layout, TILE.w, TILE.h, aspect, GLYPH_MOSAIC_COUNT) : []
   const clip = `glyph-${step.layout}-${step.positionId}-${x}`
   return (
     <g transform={`translate(${x} 0)`}>
@@ -50,6 +73,19 @@ function Glyph({ step, x, aspect }: { step: RhythmStep; x: number; aspect: numbe
             rx={d.box.w * 0.15}
             fill={d.source === 'self' ? 'rgba(22,22,26,0.82)' : 'rgba(22,22,26,0.42)'}
             transform={`rotate(${d.angle} ${d.box.x + d.box.w / 2} ${d.box.y + d.box.h / 2})`}
+          />
+        ))}
+        {cells.map((b, i) => (
+          // The tile's own clipPath (above) crops a cell that bleeds off the bottom, exactly as
+          // the export does — no separate truncation needed here.
+          <rect
+            key={i}
+            x={b.x}
+            y={b.y}
+            width={b.w}
+            height={b.h}
+            rx={b.w * 0.15}
+            fill={i === 0 ? 'rgba(22,22,26,0.82)' : 'rgba(22,22,26,0.42)'}
           />
         ))}
       </g>

@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { effectiveSettings } from '../lib/settings'
 import { getLayout } from '../presets/layouts'
+import { isSlotChip } from '../project/types'
 import { sceneSpan } from '../render/scene'
 import { useStore } from '../store'
 import type { Screen } from '../types'
@@ -15,6 +17,48 @@ const SUBHEAD_SOFT = 90
 const normalizeNewlines = (value: string) => value.replace(/\r\n?/g, '\n')
 /** Only an explicit line break adds a row; soft wrapping would hide the rest of a one-line headline. */
 const rowsFor = (value: string) => Math.min(4, (value.match(/\n/g)?.length ?? 0) + 1)
+/** One list entry per line; blank lines are never entries. */
+const linesToList = (value: string) =>
+  normalizeNewlines(value)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+/**
+ * The store only ever holds the *cleaned* list (trimmed, blank lines dropped) — a textarea bound
+ * straight to it would eat a trailing space or a blank line the user is mid-typing, since every
+ * keystroke round-trips through `linesToList`. This keeps the raw text locally instead, and only
+ * resyncs it from the stored list when the two have actually diverged — an outside change (undo,
+ * switching locale, a reload), never the user's own edit landing back through the store, since
+ * `linesToList(draft)` already equals the freshly stored list by the time that write completes.
+ */
+function ListTextarea({
+  list,
+  placeholder,
+  onChange,
+}: {
+  list: string[] | undefined
+  placeholder: string
+  onChange: (list: string[]) => void
+}) {
+  const stored = list ?? []
+  const [draft, setDraft] = useState(() => stored.join('\n'))
+  if (linesToList(draft).join('\n') !== stored.join('\n')) setDraft(stored.join('\n'))
+
+  return (
+    <textarea
+      className="field"
+      rows={Math.min(8, Math.max(4, draft.split('\n').length))}
+      value={draft}
+      placeholder={placeholder}
+      onChange={(e) => {
+        const next = normalizeNewlines(e.target.value)
+        setDraft(next)
+        onChange(linesToList(next))
+      }}
+    />
+  )
+}
 
 type Props = {
   screen: Screen
@@ -38,6 +82,12 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
   const project = useStore((s) => s.project)
   const localeId = useStore((s) => s.localeId)
   const setCopy = useStore((s) => s.setCopy)
+  const setChipText = useStore((s) => s.setChipText)
+  const chips = useStore(
+    useShallow(
+      (s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.elements?.filter(isSlotChip) ?? [],
+    ),
+  )
   const note = useStore((s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.note ?? '')
   const setSlotNote = useStore((s) => s.setSlotNote)
   const layout = useStore((s) => getLayout(effectiveSettings(screen, s.settings).layout))
@@ -141,6 +191,37 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
                 {screen.subhead.length}
               </span>
             </div>
+            {(layout.id === 'feature-wall' || (screen.list?.length ?? 0) > 0) && (
+              <div className="flex flex-col gap-1">
+                {layout.id !== 'feature-wall' && (
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="text-[11px]" style={{ color: 'var(--muted)' }}>
+                      List set but this layout is not feature-wall — unused
+                    </span>
+                    <button className="linkish" onClick={() => updateScreen(screen.id, { list: [] })}>
+                      Remove
+                    </button>
+                  </div>
+                )}
+                <ListTextarea
+                  list={screen.list}
+                  placeholder="List, one entry per line (2–8) — *stars* highlight a word"
+                  onChange={(list) => updateScreen(screen.id, { list })}
+                />
+              </div>
+            )}
+            {chips.map((chip) => (
+              <div key={chip.id} className="flex items-center gap-1.5">
+                <input
+                  className="field"
+                  value={project?.copies[localeId]?.[screen.id]?.chips?.[chip.id] ?? ''}
+                  placeholder={`Chip "${chip.id}" — one line, e.g. "+312 € saved"`}
+                  onChange={(e) =>
+                    setChipText(localeId, screen.id, chip.id, e.target.value.replace(/[\r\n]+/g, ' '))
+                  }
+                />
+              </div>
+            ))}
             {otherLocales.length > 0 && (
               <>
                 <button className="linkish self-start" onClick={() => setAllLocales(!allLocales)}>
@@ -207,6 +288,39 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
                           />
                           <span className="count" aria-hidden />
                         </div>
+                        {(layout.id === 'feature-wall' || (copy?.list?.length ?? 0) > 0) && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-9 shrink-0" aria-hidden />
+                            <ListTextarea
+                              list={copy?.list}
+                              placeholder="List, one entry per line"
+                              onChange={(list) => setCopy(l.id, screen.id, { list })}
+                            />
+                            {layout.id !== 'feature-wall' && (
+                              <button
+                                className="seg"
+                                title="List set but this layout is not feature-wall — unused"
+                                onClick={() => setCopy(l.id, screen.id, { list: [] })}
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {chips.map((chip) => (
+                          <div key={chip.id} className="flex items-center gap-1.5">
+                            <span className="w-9 shrink-0" aria-hidden />
+                            <input
+                              className="field"
+                              value={copy?.chips?.[chip.id] ?? ''}
+                              placeholder={`Chip "${chip.id}"`}
+                              onChange={(e) =>
+                                setChipText(l.id, screen.id, chip.id, e.target.value.replace(/[\r\n]+/g, ' '))
+                              }
+                            />
+                            <span className="count" aria-hidden />
+                          </div>
+                        ))}
                       </div>
                     )
                   })}

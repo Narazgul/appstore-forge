@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
+import { DEFAULT_CHIP_SIZE } from '../../project/bridge'
 import { EMPTY_GALLERY } from '../../project/store'
-import { isSlotShape } from '../../project/types'
-import type { SlotElement, SlotShape, SlotSticker } from '../../project/types'
+import { isSlotChip, isSlotShape } from '../../project/types'
+import type { SlotChip, SlotElement, SlotShape, SlotSticker } from '../../project/types'
 import { useStore } from '../../store'
+import type { ShapeKind } from '../../types'
 import { Row } from './Controls'
 
 const STICKER_DEFAULTS: Pick<Required<SlotSticker>, 'x' | 'y' | 'width' | 'rotate' | 'layer' | 'shadow'> = {
@@ -22,6 +24,25 @@ const SHAPE_DEFAULTS: Pick<Required<SlotShape>, 'x' | 'y' | 'width' | 'rotate' |
   rotate: 0,
   layer: 'behind',
   color: '#eaf2ff',
+}
+
+const SHAPE_KIND_OPTIONS: { kind: ShapeKind; label: string }[] = [
+  { kind: 'circle', label: 'Add circle' },
+  { kind: 'ring', label: 'Add ring' },
+  { kind: 'blob', label: 'Add blob' },
+]
+const DEFAULT_RING_STROKE = 0.12
+const DEFAULT_BLOB_SEED = 1
+
+/** No `color`/`textColor` here — a fresh chip leaves them unset, so it starts out inheriting the
+ *  slot's own highlight and text colour (see `ChipElement` in `types.ts`). */
+const CHIP_DEFAULTS: Pick<SlotChip, 'x' | 'y' | 'width' | 'rotate' | 'layer' | 'shadow'> = {
+  x: 0.5,
+  y: 0.25,
+  width: 0.5,
+  rotate: 0,
+  layer: 'front',
+  shadow: false,
 }
 
 /** An element id has to be unique within the slot; the artwork name (or "circle") is the obvious start. */
@@ -48,7 +69,7 @@ export function StickersSection({ slotId }: { slotId: string }) {
   if (!projectStore) return null
 
   const write = (next: SlotElement[]) => void setSlotElements(slotId, next)
-  const update = (id: string, patch: Partial<SlotSticker> & Partial<SlotShape>) =>
+  const update = (id: string, patch: Partial<SlotSticker> & Partial<SlotShape> & Partial<SlotChip>) =>
     write(elements.map((el) => (el.id === id ? { ...el, ...patch } : el)))
   const move = (index: number, delta: number) => {
     const to = index + delta
@@ -67,12 +88,21 @@ export function StickersSection({ slotId }: { slotId: string }) {
     write([...elements, { id, artwork, ...STICKER_DEFAULTS }])
     setPickerOpen(false)
   }
-  const addShape = () => {
+  const addShape = (kind: ShapeKind) => {
     const id = freeElementId(
       elements.map((el) => el.id),
-      'circle',
+      kind,
     )
-    write([...elements, { id, shape: 'circle', ...SHAPE_DEFAULTS }])
+    const extra =
+      kind === 'ring' ? { stroke: DEFAULT_RING_STROKE } : kind === 'blob' ? { seed: DEFAULT_BLOB_SEED } : {}
+    write([...elements, { id, shape: kind, ...SHAPE_DEFAULTS, ...extra }])
+  }
+  const addChip = () => {
+    const id = freeElementId(
+      elements.map((el) => el.id),
+      'chip',
+    )
+    write([...elements, { id, chip: true, ...CHIP_DEFAULTS }])
   }
 
   return (
@@ -96,6 +126,25 @@ export function StickersSection({ slotId }: { slotId: string }) {
                 value={el.color}
                 onChange={(e) => update(el.id, { color: e.target.value })}
               />
+              <button className="seg" disabled={index === 0} onClick={() => move(index, -1)}>
+                ↑
+              </button>
+              <button className="seg" disabled={index === elements.length - 1} onClick={() => move(index, 1)}>
+                ↓
+              </button>
+              <button className="seg" onClick={() => remove(el.id)}>
+                Remove
+              </button>
+            </div>
+          ) : isSlotChip(el) ? (
+            <div className="flex items-center gap-2">
+              <span
+                className="rounded-full"
+                style={{ width: 14, height: 14, background: el.color ?? 'var(--accent)' }}
+              />
+              <span className="flex-1 truncate text-[12px]" title={el.id}>
+                Chip: {el.id}
+              </span>
               <button className="seg" disabled={index === 0} onClick={() => move(index, -1)}>
                 ↑
               </button>
@@ -148,7 +197,7 @@ export function StickersSection({ slotId }: { slotId: string }) {
               onChange={(e) => update(el.id, { y: Number(e.target.value) })}
             />
           </Row>
-          <Row label={`Width ${Math.round(el.width * 100)}%`}>
+          <Row label={`${isSlotChip(el) ? 'Max width' : 'Width'} ${Math.round(el.width * 100)}%`}>
             <input
               type="range"
               min={0.05}
@@ -158,6 +207,70 @@ export function StickersSection({ slotId }: { slotId: string }) {
               onChange={(e) => update(el.id, { width: Number(e.target.value) })}
             />
           </Row>
+          {isSlotShape(el) && el.shape === 'ring' && (
+            <Row label={`Stroke ${Math.round((el.stroke ?? DEFAULT_RING_STROKE) * 100)}%`}>
+              <input
+                type="range"
+                min={0.02}
+                max={0.5}
+                step={0.01}
+                value={el.stroke ?? DEFAULT_RING_STROKE}
+                onChange={(e) => update(el.id, { stroke: Number(e.target.value) })}
+              />
+            </Row>
+          )}
+          {isSlotShape(el) && el.shape === 'blob' && (
+            <Row label={`Seed ${el.seed ?? DEFAULT_BLOB_SEED}`}>
+              <button
+                className="seg"
+                onClick={() => update(el.id, { seed: Math.floor(Math.random() * 100000) })}
+              >
+                Shuffle
+              </button>
+            </Row>
+          )}
+          {isSlotChip(el) && (
+            <>
+              <Row label={`Text size ${Math.round((el.size ?? DEFAULT_CHIP_SIZE) * 1000) / 10}%`}>
+                <input
+                  type="range"
+                  min={0.01}
+                  max={0.05}
+                  step={0.001}
+                  value={el.size ?? DEFAULT_CHIP_SIZE}
+                  onChange={(e) => update(el.id, { size: Number(e.target.value) })}
+                />
+              </Row>
+              <Row label="Fill">
+                <input
+                  type="color"
+                  value={el.color ?? '#ffffff'}
+                  onChange={(e) => update(el.id, { color: e.target.value })}
+                  style={{ width: 28, height: 28, padding: 0, border: 'none', background: 'none' }}
+                />
+                <input
+                  className="field flex-1"
+                  value={el.color ?? ''}
+                  placeholder="Default (first highlight)"
+                  onChange={(e) => update(el.id, { color: e.target.value || undefined })}
+                />
+              </Row>
+              <Row label="Text">
+                <input
+                  type="color"
+                  value={el.textColor ?? '#111114'}
+                  onChange={(e) => update(el.id, { textColor: e.target.value })}
+                  style={{ width: 28, height: 28, padding: 0, border: 'none', background: 'none' }}
+                />
+                <input
+                  className="field flex-1"
+                  value={el.textColor ?? ''}
+                  placeholder="Default (text colour)"
+                  onChange={(e) => update(el.id, { textColor: e.target.value || undefined })}
+                />
+              </Row>
+            </>
+          )}
           {!isSlotShape(el) && (
             <Row label={`Rotate ${el.rotate ?? 0}°`}>
               <input
@@ -230,8 +343,13 @@ export function StickersSection({ slotId }: { slotId: string }) {
         <button className="linkish" onClick={() => setPickerOpen(!pickerOpen)}>
           {pickerOpen ? 'Cancel' : 'Add sticker'}
         </button>
-        <button className="linkish" onClick={addShape}>
-          Add circle
+        {SHAPE_KIND_OPTIONS.map((o) => (
+          <button key={o.kind} className="linkish" onClick={() => addShape(o.kind)}>
+            {o.label}
+          </button>
+        ))}
+        <button className="linkish" onClick={addChip}>
+          Add chip
         </button>
       </div>
     </>

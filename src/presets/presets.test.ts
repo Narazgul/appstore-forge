@@ -7,6 +7,7 @@ import { RHYTHMS, getRhythm, rhythmStep } from './rhythms'
 import { EXPORT_SIZES, getSize } from './sizes'
 import { TEMPLATES, getTemplateSpec } from './templates'
 import { DEFAULT_SETTINGS } from '../store'
+import { composeDevices } from '../render/scene'
 import type { LayoutId } from '../types'
 
 /**
@@ -95,6 +96,21 @@ describe('layouts', () => {
       expect(l.device.bottom).toBeGreaterThan(l.device.top)
       expect(l.padX).toBeGreaterThanOrEqual(0)
       expect(l.padX).toBeLessThan(0.5)
+    }
+  })
+
+  it('keep the list band on the canvas, wherever one exists', () => {
+    for (const l of LAYOUTS) {
+      if (!l.list) continue
+      expect(l.list.top).toBeGreaterThanOrEqual(0)
+      expect(l.list.top + l.list.height).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('never draw a device for a deviceless layout', () => {
+    for (const l of LAYOUTS) {
+      if (!l.deviceless) continue
+      expect(composeDevices(l, 'center', 100, 200, 0.5, 1, 0)).toEqual([])
     }
   })
 

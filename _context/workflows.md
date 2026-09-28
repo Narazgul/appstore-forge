@@ -44,7 +44,12 @@ left tile. The text block is centred in its band, so a banner gets a tall band.
 (a landscape banner) needs it well above `1` for the headline to read as one.
 A `device` band is still required by the type even for a layout meant for an
 artwork slot (no device is ever drawn there) — give it a plausible-looking one
-anyway, since `availableTextHeight`'s shrink gate still reads `device.top`.
+anyway, since `availableTextHeight`'s shrink gate still reads `device.top`. The
+`mosaic` layout is the same idea one step further: no device frame is ever
+drawn for it either, but `device.top` is still real — `mosaicCells` in
+`render/scene.ts` reads it as the row where the cell grid starts — while
+`device.bottom` is unused, since the grid's own height comes from its cell
+count, not the band.
 Nothing else needs touching: preview, gallery strips, the store page and
 export all read `span` from the layout.
 

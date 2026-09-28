@@ -39,6 +39,44 @@ export const LAYOUTS: Layout[] = [
     padX: 0.06,
     textScale: 5,
   },
+  // No device at all — a set willing to break the "handset parade" for one tile. The text band
+  // is the whole tile height; `availableTextHeight` grows the block up to it instead of stopping
+  // at a device band that does not exist. `device` here is unused geometry, kept only because the
+  // type requires one.
+  {
+    id: 'text-only',
+    label: 'Text only',
+    span: 1,
+    text: { top: 0.12, height: 0.76 },
+    device: { top: 0.9, bottom: 1.05 },
+    padX: 0.09,
+    textScale: 2,
+    deviceless: true,
+  },
+  // A closing tile: the ordinary headline band up top, a big keyword list filling the rest.
+  {
+    id: 'feature-wall',
+    label: 'Feature wall',
+    span: 1,
+    text: { top: 0.065, height: 0.2 },
+    list: { top: 0.3, height: 0.5 },
+    device: { top: 0.9, bottom: 1.05 },
+    padX: 0.09,
+    deviceless: true,
+  },
+  // An overview tile: 4–6 rahmenlose mini-screens (Screen.extraIds) in a staggered grid,
+  // `mosaicCells` in render/scene.ts (its own margins, not `padX`, size and place the cells;
+  // `padX` here still positions the text band, same as any other layout). No device is ever
+  // drawn for it — `device.top` only marks where the grid starts, right under the text band
+  // (the rule-4 shrink gate also reads it), `device.bottom` is unused.
+  {
+    id: 'mosaic',
+    label: 'Mosaic',
+    span: 1,
+    text: { top: 0.065, height: 0.165 },
+    device: { top: 0.255, bottom: 1.3 },
+    padX: 0.07,
+  },
 ]
 
 export const getLayout = (id: LayoutId): Layout => LAYOUTS.find((t) => t.id === id) ?? LAYOUTS[0]

@@ -9,6 +9,11 @@ a real bug.
    output with CSS/DOM and never add a second export path. If a feature seems to
    need one, it belongs in `renderScene` with a size parameter.
 
+   A generated shape counts as a second render path the moment its geometry needs
+   anything beyond its own fields: `blobPoints` in `render/frames.ts` draws a blob
+   from its `seed` alone, never `Math.random` or the clock. Picking a _new_ seed
+   (the GUI's "Shuffle" button) may be random; the shape drawn from a seed may not.
+
 2. **Resolve overrides in exactly one place** — the top of `renderScene`.
    Callers pass the raw `screen` and global `settings`. If preview and export
    both resolved inheritance themselves, they would eventually disagree.
@@ -36,6 +41,13 @@ a real bug.
    gap down to the device band. When adding a size control, measure against that
    real gap, not the nominal band, or the control will fight the shrink and feel
    broken.
+
+   A `deviceless` layout (`text-only`, `feature-wall`) has no device band to leave
+   room for, so its own text band is the shrink's limit instead (`availableTextHeight`
+   in `render/text.ts`). `composeDevices` returns no boxes at all for one, whatever
+   the slot's kind or arrangement — a new deviceless layout gets this for free; a new
+   deviceless _feature_ elsewhere does not, and has to check `layout.deviceless` itself
+   the way `render/scene.ts`'s backdrop does.
 
 5. **Fit source screenshots top-anchored, not centred.** Cover-fit anchored to
    the top keeps the status bar visible and crops the bottom.

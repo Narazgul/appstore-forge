@@ -188,3 +188,61 @@ describe('eyebrow overflow', () => {
     })
   })
 })
+
+// A hand-edited project file can give `extra`, `elements`, `list` or `chips` the wrong JSON shape
+// (a string instead of an array, say). Before this was guarded, `eyebrowFitsChecker`/
+// `listFitsChecker` built screens (and, for `list`, laid them out) ahead of `validateProject`
+// itself, so a wrong type crashed with a raw TypeError — exit 1, the CLI's usage-error code —
+// instead of `validateProject` reporting it cleanly through the normal exit-2 path.
+describe('malformed slot or copy fields', () => {
+  it('reports a clean validation error, exit 2, when a slot’s extra is not an array', async () => {
+    const { dir } = await scaffold()
+    const project = await readProject(dir)
+    await writeFile(
+      join(dir, 'default.json'),
+      JSON.stringify({ ...project.set, slots: [{ ...project.set.slots[0], extra: 'oops' }] }),
+    )
+    const failing = renderCommand({ projectDir: dir, setId: 'default', requireApproval: false })
+    await expect(failing).rejects.toThrow(/extra must be an array/)
+    await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
+  })
+
+  it('reports a clean validation error, exit 2, when a slot’s elements is not an array', async () => {
+    const { dir } = await scaffold()
+    const project = await readProject(dir)
+    await writeFile(
+      join(dir, 'default.json'),
+      JSON.stringify({ ...project.set, slots: [{ ...project.set.slots[0], elements: 'oops' }] }),
+    )
+    const failing = renderCommand({ projectDir: dir, setId: 'default', requireApproval: false })
+    await expect(failing).rejects.toThrow(/elements must be an array/)
+    await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
+  })
+
+  it('reports a clean validation error, exit 2, when a feature-wall list is not an array', async () => {
+    const { dir } = await scaffold()
+    const project = await readProject(dir)
+    await writeFile(
+      join(dir, 'default.json'),
+      JSON.stringify({ ...project.set, settings: { ...project.set.settings, layout: 'feature-wall' } }),
+    )
+    await writeFile(
+      join(dir, 'copy', 'en.json'),
+      JSON.stringify({ a: { headline: 'Hi', subhead: '', list: 'oops' } }),
+    )
+    const failing = renderCommand({ projectDir: dir, setId: 'default', requireApproval: false })
+    await expect(failing).rejects.toThrow(/list must be an array of strings/)
+    await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
+  })
+
+  it('reports a clean validation error, exit 2, when a slot’s chips is not an object', async () => {
+    const { dir } = await scaffold()
+    await writeFile(
+      join(dir, 'copy', 'en.json'),
+      JSON.stringify({ a: { headline: 'Hi', subhead: '', chips: 'oops' } }),
+    )
+    const failing = renderCommand({ projectDir: dir, setId: 'default', requireApproval: false })
+    await expect(failing).rejects.toThrow(/chips must be an object/)
+    await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
+  })
+})

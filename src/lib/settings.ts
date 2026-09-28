@@ -26,7 +26,7 @@ export const isOverridden = (screen: Screen | null, key: OverridableKey): boolea
 /** Which controls belong to which sidebar section, for the per-section reset affordance. */
 export const SECTION_KEYS: Record<string, OverridableKey[]> = {
   background: ['background', 'backdropColor', 'altColors', 'inverted'],
-  device: ['deviceId', 'frameColorId'],
+  device: ['deviceId', 'frameColorId', 'deviceShadow'],
   layout: ['layout', 'positionId'],
   type: [
     'fontId',

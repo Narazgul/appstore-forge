@@ -11,7 +11,13 @@ import { isSlotSticker } from '../src/project/types'
 import type { Approval, Project } from '../src/project/types'
 import { validateProject, type Issue } from '../src/project/validate'
 import { sceneSpan } from '../src/render/scene'
-import { measureTextBlock, type TextMeasurer } from '../src/render/text'
+import {
+  headlineBaseSize,
+  LIST_CAP_MULT,
+  measureListBlock,
+  measureTextBlock,
+  type TextMeasurer,
+} from '../src/render/text'
 import { CliError } from './errors'
 import { registerFonts } from './fonts'
 import { readProject, repoRootOf, writeProject } from './project-io'
@@ -52,6 +58,34 @@ function eyebrowFitsChecker(project: Project): (localeId: string, slotId: string
 }
 
 /**
+ * Whether each `feature-wall` slot's list fits its band, per locale, at the size it settles on
+ * for each target — the same shape as `eyebrowFitsChecker`, capped the same way `render/scene.ts`
+ * caps it (the headline's own base size × `LIST_CAP_MULT`).
+ */
+function listFitsChecker(project: Project): (localeId: string, slotId: string) => boolean {
+  registerFonts()
+  const fits = new Map<string, boolean>()
+  for (const target of project.set.targets) {
+    const settings = settingsFor(project, target.id)
+    const size = getSize(settings.sizeId)
+    for (const locale of project.set.locales) {
+      for (const screen of screensFor(project, locale.id)) {
+        if (!screen.list?.length) continue
+        const resolved = effectiveSettings(screen, settings)
+        const layout = getLayout(resolved.layout)
+        const span = sceneSpan(screen, settings)
+        const ctx = createCanvas(size.w * span, size.h).getContext('2d') as unknown as TextMeasurer
+        const capSize = headlineBaseSize(size.h, resolved, layout.textScale) * LIST_CAP_MULT
+        const block = measureListBlock(ctx, size.w * span, size.w, size.h, layout, screen, resolved, capSize)
+        const key = `${locale.id}:${screen.id}`
+        fits.set(key, (fits.get(key) ?? true) && (!block || block.fits))
+      }
+    }
+  }
+  return (localeId, slotId) => fits.get(`${localeId}:${slotId}`) ?? true
+}
+
+/**
  * A sticker's real aspect ratio, per locale, when the file is on disk — the check then draws its
  * text-band overlap warning from the actual image instead of assuming a square. A missing file is
  * already reported by `validateProject` itself, so this stays silent about it.
@@ -63,7 +97,10 @@ async function elementAspectChecker(
   const aspects = new Map<string, number>()
   for (const locale of project.set.locales) {
     for (const slot of project.set.slots) {
-      for (const el of (slot.elements ?? []).filter(isSlotSticker)) {
+      // A hand-edited project file may give `elements` the wrong JSON shape; `validateProject`
+      // reports that on its own, but this runs ahead of it (see `checkCommand`), so a wrong type
+      // must fall back to "none" here rather than throw `.filter` on a non-array.
+      for (const el of (Array.isArray(slot.elements) ? slot.elements : []).filter(isSlotSticker)) {
         const key = `${locale.id}:${el.artwork}`
         if (aspects.has(key)) continue
         const path = join(repoRoot, artworkPath(project.set, locale.id, el.artwork))
@@ -115,6 +152,7 @@ export async function checkCommand(opts: { projectDir: string; setId: string; re
     artExists,
     eyebrowFitsChecker(project),
     await elementAspectChecker(project, repoRoot),
+    listFitsChecker(project),
   )
   const approvalOk =
     opts.requireApproval && !issues.some((i) => i.level === 'error')
@@ -138,6 +176,7 @@ export async function renderCommand(opts: {
       artExists,
       eyebrowFitsChecker(project),
       await elementAspectChecker(project, repoRoot),
+      listFitsChecker(project),
     ),
   )
   if (opts.requireApproval && !(await approvalMatches(project, bytes, artBytes))) {
@@ -164,6 +203,7 @@ export async function approveCommand(opts: {
       artExists,
       eyebrowFitsChecker(project),
       await elementAspectChecker(project, repoRoot),
+      listFitsChecker(project),
     ),
   )
   const approval: Approval = {

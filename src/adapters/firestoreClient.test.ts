@@ -23,6 +23,11 @@ describe('parseSetDoc', () => {
   it('defaults missing copies to an empty map', () => {
     expect(parseSetDoc({ set }).copies).toEqual({})
   })
+  it('carries a slot’s chip copy through unchanged, alongside headline and subhead', () => {
+    const copies = { en: { a: { headline: 'Hi', subhead: '', chips: { pill: '+312 € saved' } } } }
+    const p = parseSetDoc({ set, copies })
+    expect(p.copies.en.a.chips).toEqual({ pill: '+312 € saved' })
+  })
   it('throws on a document without a set', () => {
     expect(() => parseSetDoc({ copies: {} })).toThrow(/set/)
     expect(() => parseSetDoc(undefined)).toThrow(/set/)
@@ -185,6 +190,22 @@ describe('save across the iframe boundary', () => {
     expect(payload.set.id).toBe('default')
     expect(payload.copies).toEqual({})
     expect(payload.updatedBy).toBe('hofi@example.com')
+  })
+
+  it('carries a chip’s text through the save payload — the adapter passes copy through generically', async () => {
+    const written: unknown[] = []
+    const store = firestoreProjectStore({
+      setId: 'default',
+      firebase: spyFirebase(written),
+      hostJson: hostRealm,
+    })
+    const withChip: Project = {
+      ...project,
+      copies: { en: { a: { headline: 'Hi', subhead: '', chips: { pill: '+312 € saved' } } } },
+    }
+    await store.save(withChip)
+    const payload = written[0] as { copies: { en: { a: { chips?: Record<string, string> } } } }
+    expect(payload.copies.en.a.chips).toEqual({ pill: '+312 € saved' })
   })
 })
 

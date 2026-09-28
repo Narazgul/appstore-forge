@@ -291,17 +291,161 @@ involved at all.
 
 An entry is a sticker or a shape — exactly one of `artwork` or `shape`,
 `forge check` rejects both or neither. `x`, `y`, `width`, `rotate` and `layer`
-mean exactly what they do for a sticker (`width` is a circle's diameter, a
-fraction of the tile width; height always equals width, so it stays a circle
-however wide or short the tile is). `color` is `#rgb`, `#rrggbb` or
-`#rrggbbaa`. A shape never casts the sticker drop shadow and is never flagged
-by the "may cover the headline" warning — it is deco, not content, and is
-allowed to sit under or over the copy on purpose. A shape adds no bytes to the
-approval hash beyond its own JSON (there is no image to read), so a set with
-no shapes hashes exactly as it did before this feature existed.
+mean exactly what they do for a sticker (`width` is the shape's outer
+diameter, a fraction of the tile width; height always equals width, so it
+stays a circle however wide or short the tile is). `color` is `#rgb`,
+`#rrggbb` or `#rrggbbaa`. A shape never casts the sticker drop shadow and is
+never flagged by the "may cover the headline" warning — it is deco, not
+content, and is allowed to sit under or over the copy on purpose. A shape adds
+no bytes to the approval hash beyond its own JSON (there is no image to
+read), so a set with no shapes hashes exactly as it did before this feature
+existed.
 
-In the GUI, "Add circle" sits next to "Add sticker" in the same "Stickers"
-section.
+`shape` is `"circle"`, `"ring"` or `"blob"`:
+
+- **`ring`** — a stroked circle, not filled. `stroke` sets the stroke width as
+  a fraction of the outer diameter (default `0.12`, valid `0.02`–`0.5`; `forge
+check` rejects anything outside that range, or on any other shape). The
+  ring's outer edge, not its centreline, lands exactly on the box, so it never
+  bleeds past its own `width`.
+- **`blob`** — a soft, organic filled outline: seven points around a circle,
+  each pulled in to somewhere between 0.78 and 1.0 of the radius and nudged
+  off its even 7-way angle spacing, closed into a smooth loop. `seed`
+  (default `1`, an integer) is the only input — the same seed always draws
+  the same blob, in the GUI and under `forge render` alike, since the point
+  generator is one small seeded PRNG and nothing else is random. `forge check`
+  rejects `seed` on any shape but `blob`.
+
+```json
+{ "id": "ring1", "shape": "ring", "color": "#5d47e8", "stroke": 0.08, "x": 0.5, "y": 0.5, "width": 0.5 }
+{ "id": "blob1", "shape": "blob", "color": "#eaf2ff", "seed": 3, "x": 0.3, "y": 0.7, "width": 0.6 }
+```
+
+In the GUI, "Add circle" / "Add ring" / "Add blob" sit next to "Add sticker"
+in the same "Stickers" section; a ring gets a stroke-width slider, a blob a
+"Shuffle" button that picks a new seed.
+
+### Device shadow
+
+`settings.deviceShadow` (`"soft" | "hard" | "none"`, default `"soft"`,
+overridable per screen like any other setting) is the drop shadow a device
+frame casts. `"soft"` reproduces the frame's original, hard-coded shadow
+exactly — the default changes no existing export. `"hard"` is flat, with no
+blur, offset `0.03` of the frame width down and to the right, in the tile's
+own effective `textColor`. `"none"` casts none. It applies to a bezelled frame
+and to the bezel-less silhouette alike; a sticker's own `shadow` (still a
+plain on/off) and `drawArtwork` are unaffected. In the GUI it is a three-way
+toggle in the device section of the tune panel.
+
+### A slot's chips
+
+`elements` also takes a third kind of entry: a floating pill of a short line
+of text — a real number or a short claim ("+312 € saved", "Notgroschen: 3 von
+6 Monaten") — no image involved, drawn like a sticker rather than laid out
+like a headline.
+
+```json
+{
+  "id": "saved",
+  "chip": true,
+  "color": "#111114",
+  "textColor": "#ffffff",
+  "size": 0.03,
+  "x": 0.72,
+  "y": 0.62,
+  "width": 0.5,
+  "rotate": -6,
+  "layer": "front",
+  "shadow": true
+}
+```
+
+`chip: true` is the discriminator; an entry is a sticker, a shape or a chip —
+exactly one of `artwork`, `shape` or `chip`, `forge check` rejects any other
+count. `x`, `y`, `rotate` and `layer` mean exactly what they do for a sticker.
+`width` is the pill's **maximum** width, a fraction of the tile width like
+every other element's — the pill itself hugs its text up to that ceiling, it
+never stretches to fill it. `size` is the chip's font size, a fraction of the
+tile height (default calibrated to read a touch larger than the subtitle);
+`color` is the pill's fill (default: the settings' first highlight colour, or
+white with none) and `textColor` the text's own colour (default: the settings'
+text colour) — both `#rgb`, `#rrggbb` or `#rrggbbaa`, and both left unset to
+inherit rather than pinned to today's colour. `shadow` (default `false`) is the
+same soft drop shadow a sticker can cast.
+
+The text itself lives in the copy, not in the set — one line per chip id, per
+locale:
+
+```json
+{ "saved": { "headline": "…", "subhead": "…", "chips": { "saved": "+312 € gespart" } } }
+```
+
+A chip is always meant to carry text: a missing or blank entry for any locale
+in the set is a validation error, and so is a line break — a chip never wraps.
+`forge check` also warns about a `chips` key with no matching chip element,
+the same way it warns about copy for a slot that no longer exists.
+
+Drawing auto-shrinks the font — never the pill's shape, which always hugs
+whatever size the text settles on — from `size` down to 70% of it until the
+pill (the text plus its own horizontal padding, about 1.6× the font size) fits
+inside `width`. Below that floor the render refuses, the same way it refuses a
+headline that only "fits" by shrinking past its own floor: `forge render`
+stops with `Chip text does not fit for slot <slot>, chip <id>, locale <locale>:
+shorten the text or increase its width`. The pill itself is fully rounded,
+about 1.9× the font size tall; the text sits weight 700, single line, in the
+script and direction (RTL, CJK, …) the locale's language already uses for the
+headline and subtitle.
+
+A chip adds no bytes to the approval hash beyond its own JSON and its copy
+entry — there is no image to read — so a set naming no chips hashes exactly as
+it did before this feature existed. `forge check` does not warn about a chip
+covering the headline the way it does for a sticker: the real box depends on
+the shrunk font size, which the check has no canvas to measure, so guessing
+would as often be wrong as right.
+
+In the GUI, "Add chip" sits next to "Add sticker" and "Add circle" in the same
+"Stickers" section, with the geometry and colour controls next to it; a
+chip's text is edited per language wherever the slot's headline and subtitle
+already are.
+
+### A slot's mosaic cells
+
+The `mosaic` layout is a headline band over a staggered brick-pattern grid of
+4–6 rahmenlose (frameless) mini-screens, starting right under the headline and
+cut off at the bottom — a closing or overview tile ("everything in one app").
+4 cells lay out as two columns of two, with the right one staggered down; 5–6
+switch to three columns (6 = 2/2/2, 5 = 2/1/2 — the middle column drops a
+cell and its one remains centred between the outer rows), with the middle
+column staggered down. Cell 1 is always the slot's own `screen`; cells 2..n
+come from `extra`, 3–5 more screen names:
+
+```json
+{
+  "id": "overview",
+  "kind": "screen",
+  "screen": "budget_screen",
+  "extra": ["accounts_screen", "liga_screen", "planer_screen"],
+  "overrides": { "layout": "mosaic" }
+}
+```
+
+Each name in `extra` resolves through the same `sources` template as `screen`
+or `pair` — no second path mechanism. A slot whose effective layout is
+`mosaic` needs exactly 3–5 of them (4–6 cells total); `forge check` errors
+otherwise, errors if an artwork-kind slot names any (it has no `screen` to be
+cell 1), errors on a name repeated in the list, and warns — not an error, since
+the layout may still change later — when a slot names `extra` but its
+effective layout is something else. No device frame is ever drawn for a mosaic
+tile: each cell is a plain white rounded card with today's soft device shadow,
+its image cover-fitted and anchored to the top exactly like a screenshot in a
+device, no bezel, no notch. A missing or not-yet-rendered cell image still
+draws its white card, same as an empty device. `extra`'s bytes feed the
+approval hash exactly like a `pair`'s — last, and only for the slots that name
+one, so a set with no mosaic slot hashes exactly as it did before this feature
+existed.
+
+In the GUI, a slot whose effective layout is `mosaic` shows a "Mosaic cells"
+list above the usual per-frame picker, with add/remove and reorder controls.
 
 ### Feature graphic
 
@@ -375,6 +519,35 @@ Two settings shape the copy of a banner (both work on any slot, both are off by 
 `accentBar` draws a short rounded bar in that colour above the text block, aligned like the text;
 `subheadStyle: "label"` sets each subtitle line in weight 600, fully opaque, on a rounded box in
 the first highlight colour (the contrast check then measures the subtitle against that box).
+
+### Layouts without a device
+
+`text-only` and `feature-wall` (`presets/layouts.ts`, `deviceless: true`) draw no device and no
+artwork placement at all — a set willing to break the "handset parade" for one tile. A `screen`
+slot still names a source image (the type does not require otherwise), but nothing ever draws it;
+`forge check` warns rather than blocks, since the slot may still carry stickers or copy worth
+keeping. `text-only` is large display type, vertically centred in its own band, no device to leave
+room for — eyebrow, accent bar, stickers and shapes all work exactly as on any other layout.
+
+`feature-wall` is a closing tile: the ordinary headline band on top, a keyword list filling the
+rest. Give a slot a `list` in its copy file, one entry per line:
+
+```json
+{
+  "wall": {
+    "headline": "*Everything* in one app",
+    "subhead": "",
+    "list": ["Budget", "Sparziele", "Notgroschen"]
+  }
+}
+```
+
+2–8 non-empty, single-line entries per locale; `forge check` errors otherwise. Every row shares one
+size — the largest that keeps each row inside the band and every row stacked inside it, capped at
+1.3× the headline's own size (the list is this layout's hero, so it may read bigger, not merely as
+big) — and `*word*` markup, RTL and `textAlign` all follow the headline's own rules. `list` on any
+other layout is ignored and `forge check` warns about it; an absent or empty `list` changes nothing
+in the approval hash.
 
 ### Custom product pages: more sets
 

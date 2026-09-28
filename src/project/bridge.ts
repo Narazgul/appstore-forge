@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS } from '../store'
 import type { Screen, SceneElement, Settings } from '../types'
-import { isSlotShape } from './types'
+import { isSlotChip, isSlotShape } from './types'
 import type { Project, ProjectSet, ProjectTarget } from './types'
 
 export const imageIdFor = (localeId: string, screen: string) => `${localeId}/${screen}`
@@ -10,46 +10,79 @@ export const artworkIdFor = (localeId: string, artwork: string) => `artwork/${lo
 
 export const DEFAULT_ARTWORK_SOURCES = 'aso/artwork/{artwork}.png'
 
+/** A chip's font size, as a fraction of tile height, when the slot names none — calibrated to
+ *  read a touch larger than the default subhead (`h * 0.0205`, see `render/text.ts`). */
+export const DEFAULT_CHIP_SIZE = 0.026
+
 export function screensFor(project: Project, localeId: string): Screen[] {
   const copy = project.copies[localeId] ?? {}
-  return project.set.slots.map((slot) => ({
-    id: slot.id,
-    headline: copy[slot.id]?.headline ?? '',
-    subhead: copy[slot.id]?.subhead ?? '',
-    imageId: slot.kind === 'artwork' ? null : imageIdFor(localeId, slot.screen!),
-    kind: slot.kind === 'artwork' ? ('artwork' as const) : undefined,
-    artworkId: slot.artwork ? artworkIdFor(localeId, slot.artwork) : null,
-    pairId: slot.pair ? imageIdFor(localeId, slot.pair) : null,
-    pairPrevId: slot.pairPrev ? imageIdFor(localeId, slot.pairPrev) : null,
-    overrides: { ...slot.overrides },
-    lang: localeId,
-    eyebrow: copy[slot.id]?.eyebrow || undefined,
-    elements: slot.elements?.length
-      ? slot.elements.map((el): SceneElement =>
-          isSlotShape(el)
-            ? {
+  return project.set.slots.map((slot) => {
+    // A hand-edited project file may give any of these the wrong JSON shape (a string instead of
+    // an array, say); `validateProject` reports that as its own issue, but this bridge runs ahead
+    // of that check too (`forge check`'s fits-checkers build screens before validating), so a
+    // wrong type must fall back to "none" here rather than throw.
+    const elements = Array.isArray(slot.elements) ? slot.elements : []
+    const extra = Array.isArray(slot.extra) ? slot.extra : []
+    const list = copy[slot.id]?.list
+    return {
+      id: slot.id,
+      headline: copy[slot.id]?.headline ?? '',
+      subhead: copy[slot.id]?.subhead ?? '',
+      imageId: slot.kind === 'artwork' ? null : imageIdFor(localeId, slot.screen!),
+      kind: slot.kind === 'artwork' ? ('artwork' as const) : undefined,
+      artworkId: slot.artwork ? artworkIdFor(localeId, slot.artwork) : null,
+      pairId: slot.pair ? imageIdFor(localeId, slot.pair) : null,
+      pairPrevId: slot.pairPrev ? imageIdFor(localeId, slot.pairPrev) : null,
+      extraIds: extra.length ? extra.map((screen) => imageIdFor(localeId, screen)) : undefined,
+      overrides: { ...slot.overrides },
+      lang: localeId,
+      eyebrow: copy[slot.id]?.eyebrow || undefined,
+      list: Array.isArray(list) && list.length ? list : undefined,
+      elements: elements.length
+        ? elements.map((el): SceneElement => {
+            if (isSlotShape(el))
+              return {
                 id: el.id,
                 shape: el.shape,
                 color: el.color,
+                stroke: el.stroke,
+                seed: el.seed,
                 x: el.x,
                 y: el.y,
                 width: el.width,
                 rotate: el.rotate ?? 0,
                 layer: el.layer ?? 'front',
               }
-            : {
+            if (isSlotChip(el))
+              return {
                 id: el.id,
-                imageId: artworkIdFor(localeId, el.artwork),
+                text: copy[slot.id]?.chips?.[el.id] ?? '',
+                // Colours stay undefined here on purpose — a chip's default depends on the
+                // slot's *effective* settings, which this function does not resolve (rules.md #2).
+                color: el.color,
+                textColor: el.textColor,
+                size: el.size ?? DEFAULT_CHIP_SIZE,
                 x: el.x,
                 y: el.y,
                 width: el.width,
                 rotate: el.rotate ?? 0,
                 layer: el.layer ?? 'front',
                 shadow: el.shadow ?? false,
-              },
-        )
-      : undefined,
-  }))
+              }
+            return {
+              id: el.id,
+              imageId: artworkIdFor(localeId, el.artwork),
+              x: el.x,
+              y: el.y,
+              width: el.width,
+              rotate: el.rotate ?? 0,
+              layer: el.layer ?? 'front',
+              shadow: el.shadow ?? false,
+            }
+          })
+        : undefined,
+    }
+  })
 }
 
 export function settingsFor(project: Project, targetId: string): Settings {

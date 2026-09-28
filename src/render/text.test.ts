@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
+  drawListBlock,
   drawTextBlock,
   BASELINE,
+  CHIP_PAD_X,
+  CHIP_SIZE_FLOOR,
   HEAD_LH,
   LABEL_PAD_X,
+  LIST_LH,
   availableTextHeight,
   blockHeight,
+  fitChipText,
+  headlineBaseSize,
+  layoutList,
   layoutText,
+  measureListBlock,
   parseMarkup,
   stripMarkup,
   wrap,
@@ -87,6 +95,60 @@ describe('parseMarkup', () => {
   })
 })
 
+/** A line's text as drawn: a space in front of every word except a glued one. */
+const drawnText = (line: { words: { text: string; glue?: boolean }[] }) =>
+  line.words.map((w, i) => (i && !w.glue ? ' ' : '') + w.text).join('')
+
+describe('markup without whitespace at a star', () => {
+  const ctx = measurer()
+
+  it('sets punctuation right after a span without a space', () => {
+    const lines = wrap(ctx, parseMarkup('*Söyle*, yeter'), 1000)
+    expect(lines.map(drawnText)).toEqual(['Söyle, yeter'])
+    expect(lines[0].width).toBe(120)
+  })
+
+  it('sets a span inside a CJK run without spaces around it', () => {
+    const lines = wrap(ctx, parseMarkup('數位*信封*理財法'), 1000)
+    expect(lines[0].width).toBe(70)
+  })
+
+  it('keeps the CJK run unspaced when the segmenter splits it for a language', () => {
+    const lines = wrap(ctx, parseMarkup('數位*信封*理財法'), 1000, 'zh-TW')
+    expect(lines[0].width).toBe(70)
+  })
+
+  it('sets a span inside a Latin word without spaces', () => {
+    const lines = wrap(ctx, parseMarkup('un*glaub*lich'), 1000)
+    expect(lines.map(drawnText)).toEqual(['unglaublich'])
+  })
+
+  it('brings the whole marker span down with the punctuation that hangs on it', () => {
+    const lines = wrap(ctx, parseMarkup('Sag *es einfach*, bitte'), 145)
+    expect(lines.map(drawnText)).toEqual(['Sag', 'es einfach,', 'bitte'])
+  })
+
+  it('lets hanging punctuation overflow rather than start a line of its own', () => {
+    const lines = wrap(ctx, parseMarkup('*Unabhängigkeit*, klar'), 145)
+    expect(lines.map(drawnText)).toEqual(['Unabhängigkeit,', 'klar'])
+  })
+
+  it('never starts a line with the punctuation that hangs on a span', () => {
+    const lines = wrap(ctx, parseMarkup('aaaa *bbbb*, cc'), 90)
+    expect(lines.map(drawnText)).toEqual(['aaaa', 'bbbb, cc'])
+  })
+
+  it('still breaks a CJK run at a star, as between any two CJK characters', () => {
+    const lines = wrap(ctx, parseMarkup('數位*信封*理財法'), 50)
+    expect(lines.map(drawnText)).toEqual(['數位信封', '理財法'])
+  })
+
+  it('keeps the space where the copy has one', () => {
+    const lines = wrap(ctx, parseMarkup('Track *every* habit'), 1000)
+    expect(lines[0].width).toBe(170)
+  })
+})
+
 describe('stripMarkup', () => {
   it('gives back the sentence without stars, for export filenames', () => {
     expect(stripMarkup('Track *every* habit')).toBe('Track every habit')
@@ -94,6 +156,10 @@ describe('stripMarkup', () => {
 
   it('joins a forced break with a single space', () => {
     expect(stripMarkup('Track *every*\nhabit')).toBe('Track every habit')
+  })
+
+  it('adds no space where a star sits against a word or punctuation', () => {
+    expect(stripMarkup('*Söyle*, yeter')).toBe('Söyle, yeter')
   })
 })
 
@@ -230,6 +296,42 @@ describe('layoutText', () => {
   })
 })
 
+describe('fitChipText', () => {
+  it('keeps the requested size when the text already fits', () => {
+    const fit = fitChipText(measurer(), 'Hi', DEFAULT_SETTINGS, 10_000, 40)
+    expect(fit.size).toBe(40)
+    expect(fit.fits).toBe(true)
+    expect(fit.textWidth).toBe(20)
+  })
+
+  it('shrinks until the pill (text plus its own padding) fits maxWidth', () => {
+    // At size 40 the text (20) plus its padding (2 × 0.8 × 40 = 64) is 84, past a 75-wide box —
+    // but the floor (0.7 × 40 = 28) still leaves room to fit before shrinking that far.
+    const fit = fitChipText(measurer(), 'Hi', DEFAULT_SETTINGS, 75, 40)
+    expect(fit.size).toBeLessThan(40)
+    expect(fit.fits).toBe(true)
+    expect(fit.textWidth + fit.size * CHIP_PAD_X * 2).toBeLessThanOrEqual(75)
+  })
+
+  it('never shrinks below the floor', () => {
+    const fit = fitChipText(measurer(), 'A very long chip text indeed', DEFAULT_SETTINGS, 10, 40)
+    expect(fit.size).toBeCloseTo(40 * CHIP_SIZE_FLOOR, 5)
+  })
+
+  it('reports no fit when even the floor overruns maxWidth', () => {
+    const fit = fitChipText(measurer(), 'A very long chip text indeed', DEFAULT_SETTINGS, 10, 40)
+    expect(fit.fits).toBe(false)
+  })
+
+  it('reports a fit once shrinking clears the width, not only at the exact requested size', () => {
+    // The stub measures the whole string regardless of font size — 'one two three'.length is 13,
+    // so the text alone is 130 wide; only the padding shrinks, and it has to shrink to fit 185.
+    const fit = fitChipText(measurer(), 'one two three', DEFAULT_SETTINGS, 185, 40)
+    expect(fit.fits).toBe(true)
+    expect(fit.size).toBeLessThan(40)
+  })
+})
+
 describe('eyebrow', () => {
   const H = 2868
 
@@ -281,6 +383,11 @@ describe('availableTextHeight', () => {
   it('gives copy below the device the room down to the bottom edge', () => {
     const layout = getLayout('text-bottom')
     expect(availableTextHeight(layout, 1000)).toBeGreaterThanOrEqual(layout.text!.height * 1000)
+  })
+
+  it('is exactly the text band for a deviceless layout — there is no device gap to grow into', () => {
+    const layout = getLayout('text-only')
+    expect(availableTextHeight(layout, 1000)).toBe(layout.text!.height * 1000)
   })
 })
 
@@ -627,5 +734,145 @@ describe('drawTextBlock subheadStyle "label"', () => {
     const subText = rec.texts.find((t) => t.text === 'Sub')!
     expect(subText.alpha).toBe(0.72)
     expect(rec.bands).toHaveLength(0)
+  })
+})
+
+describe('headlineBaseSize', () => {
+  it('matches the size layoutText starts its own shrink from', () => {
+    const size = headlineBaseSize(1000, DEFAULT_SETTINGS)
+    const block = layoutText(measurer(0), screen(''), DEFAULT_SETTINGS, 10_000, 10_000, 1000)
+    expect(block.headSize).toBe(size)
+  })
+
+  it('scales with headlineScale and the layout textScale, like layoutText does', () => {
+    const settings = { ...DEFAULT_SETTINGS, headlineScale: 1.5 }
+    expect(headlineBaseSize(1000, settings, 2)).toBe(1000 * 0.04 * 1.5 * 2)
+  })
+})
+
+/** A canvas stand-in whose measured width scales with the px size baked into `ctx.font`, so a
+ *  shrink loop actually narrows what it measures — unlike `measurer`'s fixed 10px-per-char. */
+const sizeAware = (perCharAt10px = 10): TextMeasurer => {
+  const m: TextMeasurer = {
+    font: '',
+    letterSpacing: '0px',
+    measureText: (text: string) => {
+      const px = Number(/(\d+(?:\.\d+)?)px/.exec(m.font)?.[1] ?? 10)
+      return { width: text.length * perCharAt10px * (px / 10) }
+    },
+  }
+  return m
+}
+
+describe('layoutList', () => {
+  const H = 1000
+  const settings = DEFAULT_SETTINGS
+
+  it('keeps the cap size when every row already fits', () => {
+    const block = layoutList(measurer(10), ['One', 'Two'], settings, 1000, 1000, H, 40)
+    expect(block).toMatchObject({ size: 40, fits: true })
+    expect(block.lines).toHaveLength(2)
+  })
+
+  it('shrinks until the widest row fits maxWidth', () => {
+    const block = layoutList(sizeAware(), ['A very long list entry indeed'], settings, 600, 1000, H, 40)
+    expect(block.size).toBeLessThan(40)
+    expect(block.fits).toBe(true)
+    expect(block.lines[0].width).toBeLessThanOrEqual(600)
+  })
+
+  it('shrinks until every stacked row fits maxHeight', () => {
+    const entries = ['One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight']
+    const block = layoutList(measurer(10), entries, settings, 10_000, 200, H, 40)
+    expect(block.size).toBeLessThan(40)
+    expect(block.size * entries.length * LIST_LH).toBeLessThanOrEqual(200 + 1e-6)
+  })
+
+  it('reports no fit once the shrink hits the same floor the headline uses', () => {
+    const block = layoutList(measurer(10), ['Way too wide for this box'], settings, 5, 5, H, 40)
+    expect(block.fits).toBe(false)
+  })
+
+  it('never wraps a row across two lines — one Line per entry, however wide', () => {
+    const block = layoutList(measurer(10), ['A very long list entry indeed'], settings, 5, 10_000, H, 40)
+    expect(block.lines).toHaveLength(1)
+  })
+
+  it('parses `*star*` markup in each row the same way the headline does', () => {
+    const block = layoutList(measurer(10), ['Save *money* fast'], settings, 10_000, 10_000, H, 40)
+    expect(block.lines[0].words.some((w) => w.span >= 0)).toBe(true)
+  })
+})
+
+describe('measureListBlock', () => {
+  const H = 1000
+  const settings = DEFAULT_SETTINGS
+
+  it('is null for a layout with no list band', () => {
+    const layout = getLayout('text-top')
+    const s = { ...screen('Head'), list: ['One', 'Two'] }
+    expect(measureListBlock(measurer(10), 500, 500, H, layout, s, settings, 40)).toBeNull()
+  })
+
+  it('is null when the screen carries no list', () => {
+    const layout = getLayout('feature-wall')
+    expect(measureListBlock(measurer(10), 500, 500, H, layout, screen('Head'), settings, 40)).toBeNull()
+  })
+
+  it('measures the rows inside the list band width', () => {
+    const layout = getLayout('feature-wall')
+    const s = { ...screen('Head'), list: ['One', 'Two', 'Three'] }
+    const block = measureListBlock(measurer(10), 500, 500, H, layout, s, settings, 40)
+    expect(block).not.toBeNull()
+    expect(block!.lines).toHaveLength(3)
+  })
+})
+
+describe('drawListBlock', () => {
+  const H = 1000
+  const W = 500
+  const layout = getLayout('feature-wall')
+  const settings = { ...DEFAULT_SETTINGS, textAlign: 'left' as const }
+
+  it('draws nothing when the screen carries no list', () => {
+    const rec = recorder()
+    drawListBlock(rec.ctx, W, W, H, layout, screen('Head'), settings, 40)
+    expect(rec.texts).toHaveLength(0)
+  })
+
+  it('draws one text per row, in order, at headline weight', () => {
+    const rec = recorder()
+    const s = { ...screen('Head'), list: ['Budget', 'Sparziele'] }
+    drawListBlock(rec.ctx, W, W, H, layout, s, settings, 40)
+    expect(rec.texts.map((t) => t.text)).toEqual(['Budget', 'Sparziele'])
+    expect(rec.texts.every((t) => t.font.includes('700'))).toBe(true)
+  })
+
+  it('draws a marker band for a starred word, like the headline', () => {
+    const rec = recorder()
+    const s = { ...screen('Head'), list: ['Save *money* fast'] }
+    drawListBlock(rec.ctx, W, W, H, layout, s, { ...settings, highlights: ['#ffe27a'] }, 40)
+    expect(rec.bands.some((b) => b.color === '#ffe27a')).toBe(true)
+  })
+
+  it('draws nothing for a layout with no list band', () => {
+    const rec = recorder()
+    const s = { ...screen('Head'), list: ['One', 'Two'] }
+    drawListBlock(rec.ctx, W, W, H, getLayout('text-top'), s, settings, 40)
+    expect(rec.texts).toHaveLength(0)
+  })
+
+  it('lays an RTL row out from the right edge of the list box, like the headline', () => {
+    const rec = recorder()
+    const s = { ...screen('Head'), list: ['ab'], lang: 'ar' }
+    drawListBlock(rec.ctx, W, W, H, layout, s, settings, 40)
+    expect(rec.state.direction).toBe('rtl')
+  })
+
+  it('caps the shared size at capSize, never bigger', () => {
+    const rec = recorder()
+    const s = { ...screen('Head'), list: ['Hi'] }
+    drawListBlock(rec.ctx, W, W, H, layout, s, settings, 40)
+    expect(rec.texts[0].font).toContain('40px')
   })
 })
