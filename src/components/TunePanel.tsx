@@ -6,6 +6,7 @@ import { BackgroundSection } from './tune/BackgroundSection'
 import { Section } from './tune/Controls'
 import { DeviceSection } from './tune/DeviceSection'
 import { LayoutSection } from './tune/LayoutSection'
+import { StickersSection } from './tune/StickersSection'
 import { TypeSection } from './tune/TypeSection'
 
 /**
@@ -14,6 +15,7 @@ import { TypeSection } from './tune/TypeSection'
  * The sections themselves live in `./tune` — this file owns only the scope switch.
  */
 export function TunePanel() {
+  const project = useStore((s) => s.project)
   const global = useStore((s) => s.settings)
   const setSettings = useStore((s) => s.setSettings)
   const screens = useStore((s) => s.screens)
@@ -88,6 +90,12 @@ export function TunePanel() {
       <Section id="adjust" title="Adjust" defaultOpen={false} {...scope('adjust')}>
         <AdjustSection settings={settings} put={put} />
       </Section>
+
+      {project && selected && (
+        <Section id="stickers" title="Stickers" defaultOpen={false}>
+          <StickersSection slotId={selected.id} />
+        </Section>
+      )}
     </aside>
   )
 }

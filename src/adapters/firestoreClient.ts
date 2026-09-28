@@ -91,7 +91,11 @@ export function firestoreProjectStore({
           path: sourceObjectPath(setId, l.id, screen),
         })),
       )
-      const referencedArtwork = project.set.slots.map((s) => s.artwork).filter((a): a is string => !!a)
+      // A sticker names its image the same way a slot's own artwork does, so it needs the same
+      // resolved-even-before-the-gallery-syncs treatment.
+      const referencedArtwork = project.set.slots.flatMap((s) =>
+        [s.artwork, ...(s.elements ?? []).map((el) => el.artwork)].filter((a): a is string => !!a),
+      )
       const artworkKeys = project.set.locales.flatMap((l) =>
         unique([...referencedArtwork, ...(galleries[l.id]?.artwork ?? [])]).map((artwork) => ({
           key: `${l.id}/${artwork}`,

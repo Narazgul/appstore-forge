@@ -89,6 +89,36 @@ describe('approvalHash', () => {
     expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(project(), bytes('img')))
   })
 
+  it('is unchanged for a set that names no sticker, whether or not a reader is passed', async () => {
+    expect(await approvalHash(project(), bytes('img'), bytes('art'))).toBe(
+      await approvalHash(project(), bytes('img')),
+    )
+  })
+
+  it('changes when a slot gains a sticker', async () => {
+    const p = project()
+    p.set.slots[0].elements = [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.3 }]
+    expect(await approvalHash(p, bytes('img'), bytes('art'))).not.toBe(
+      await approvalHash(project(), bytes('img'), bytes('art')),
+    )
+  })
+
+  it('changes when a sticker moves, through the set JSON alone', async () => {
+    const p = project()
+    p.set.slots[0].elements = [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.3 }]
+    const moved = project()
+    moved.set.slots[0].elements = [{ id: 's', artwork: 'dot', x: 0.6, y: 0.5, width: 0.3 }]
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(moved, bytes('img')))
+  })
+
+  it('changes when the sticker artwork bytes change, exactly like a screenshot', async () => {
+    const p = project()
+    p.set.slots[0].elements = [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.3 }]
+    expect(await approvalHash(p, bytes('img'), bytes('art2'))).not.toBe(
+      await approvalHash(p, bytes('img'), bytes('art')),
+    )
+  })
+
   it('changes when the paired screen changes', async () => {
     const p = project()
     p.set.slots[0].pair = 'other'

@@ -22,6 +22,18 @@ export function screensFor(project: Project, localeId: string): Screen[] {
     overrides: { ...slot.overrides },
     lang: localeId,
     eyebrow: copy[slot.id]?.eyebrow || undefined,
+    elements: slot.elements?.length
+      ? slot.elements.map((el) => ({
+          id: el.id,
+          imageId: artworkIdFor(localeId, el.artwork),
+          x: el.x,
+          y: el.y,
+          width: el.width,
+          rotate: el.rotate ?? 0,
+          layer: el.layer ?? 'front',
+          shadow: el.shadow ?? false,
+        }))
+      : undefined,
   }))
 }
 

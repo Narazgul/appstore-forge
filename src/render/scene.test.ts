@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { drawSticker } from './frames'
 import { composeDevices, renderScene, sceneSpan, textFloor } from './scene'
 import { getLayout } from '../presets/layouts'
 import { POSITIONS, getPosition } from '../presets/positions'
 import { DEFAULT_SETTINGS } from '../store'
-import type { Screen } from '../types'
+import type { Screen, SceneElement } from '../types'
 
 const TILE = { w: 1320, h: 2868 }
 const ASPECT = 0.46
@@ -230,5 +231,110 @@ describe('renderScene with an artwork placement', () => {
       artwork: fakeImage(200, 100),
     })
     expect(drawn(calls)).toHaveLength(2)
+  })
+})
+
+describe('drawSticker', () => {
+  it('draws the image at exactly the given box, undistorted', () => {
+    const { ctx, calls } = recorder()
+    const img = fakeImage(200, 100)
+    drawSticker(ctx, { x: 10, y: 20, w: 150, h: 75 }, img, false)
+    expect(drawn(calls)).toEqual([{ fn: 'drawImage', args: [img, 10, 20, 150, 75] }])
+  })
+
+  it('sets a soft drop shadow, sized off the box width, exactly like a device frame', () => {
+    const { ctx } = recorder()
+    drawSticker(ctx, { x: 0, y: 0, w: 200, h: 100 }, fakeImage(200, 100), true)
+    expect(ctx.shadowColor).toBe('rgba(15, 23, 42, 0.30)')
+    expect(ctx.shadowBlur).toBeCloseTo(200 * 0.09, 5)
+    expect(ctx.shadowOffsetY).toBeCloseTo(200 * 0.035, 5)
+  })
+})
+
+describe('renderScene with stickers', () => {
+  const settings = { ...DEFAULT_SETTINGS, layout: 'text-top' as const, positionId: 'center' }
+  const el = (patch: Partial<SceneElement> = {}): SceneElement => ({
+    id: 'sticker',
+    imageId: 'sticker',
+    x: 0.5,
+    y: 0.5,
+    width: 0.3,
+    rotate: 0,
+    layer: 'front',
+    shadow: false,
+    ...patch,
+  })
+
+  it('draws a behind sticker before the device and a front sticker after it', () => {
+    const device = fakeImage(400, 800)
+    const sticker = fakeImage(100, 100)
+
+    const behind = recorder()
+    renderScene(behind.ctx, TILE.w, TILE.h, { ...screen(), elements: [el({ layer: 'behind' })] }, settings, {
+      self: device,
+      elements: { sticker },
+    })
+    const behindImages = drawn(behind.calls)
+    expect(behindImages.map((c) => c.args[0])).toEqual([sticker, device])
+
+    const front = recorder()
+    renderScene(front.ctx, TILE.w, TILE.h, { ...screen(), elements: [el({ layer: 'front' })] }, settings, {
+      self: device,
+      elements: { sticker },
+    })
+    const frontImages = drawn(front.calls)
+    expect(frontImages.map((c) => c.args[0])).toEqual([device, sticker])
+  })
+
+  it('keeps the sticker centred regardless of rotation — only the surrounding transform turns', () => {
+    const sticker = fakeImage(200, 100)
+    const flat = recorder()
+    renderScene(flat.ctx, TILE.w, TILE.h, { ...screen(), elements: [el({ rotate: 0 })] }, settings, {
+      self: null,
+      elements: { sticker },
+    })
+    const rotated = recorder()
+    renderScene(rotated.ctx, TILE.w, TILE.h, { ...screen(), elements: [el({ rotate: 25 })] }, settings, {
+      self: null,
+      elements: { sticker },
+    })
+    expect(drawn(rotated.calls)[0].args).toEqual(drawn(flat.calls)[0].args)
+  })
+
+  it('draws nothing for a sticker whose image is missing', () => {
+    const { ctx, calls } = recorder()
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), elements: [el()] }, settings, {
+      self: null,
+      elements: {},
+    })
+    expect(drawn(calls)).toHaveLength(0)
+  })
+
+  it('sizes the sticker from its own width and the image aspect ratio, not a fitted band', () => {
+    const sticker = fakeImage(200, 100)
+    const { ctx, calls } = recorder()
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), elements: [el({ width: 0.4 })] }, settings, {
+      self: null,
+      elements: { sticker },
+    })
+    const [call] = drawn(calls)
+    const dw = 0.4 * TILE.w
+    const dh = (dw * 100) / 200
+    expect(call.args.slice(1)).toEqual([0.5 * TILE.w - dw / 2, 0.5 * TILE.h - dh / 2, dw, dh])
+  })
+
+  it('positions a sticker against the full composition width, so it can sit across a panorama seam', () => {
+    const sticker = fakeImage(100, 100)
+    const layout = getLayout('panorama')
+    const panorama = { ...DEFAULT_SETTINGS, layout: 'panorama' as const, positionId: 'lean' }
+    const { ctx, calls } = recorder()
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), elements: [el({ x: 0.75, width: 0.2 })] }, panorama, {
+      self: null,
+      elements: { sticker },
+    })
+    const [call] = drawn(calls).filter((c) => c.args[0] === sticker)
+    const W = TILE.w * layout.span
+    const dw = 0.2 * TILE.w
+    expect(call.args[1]).toBeCloseTo(0.75 * W - dw / 2, 5)
   })
 })

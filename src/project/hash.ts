@@ -46,6 +46,13 @@ export async function approvalHash(
         if (slot.artwork) parts.push(await artworkBytes(locale.id, slot.artwork))
       }
     }
+    // Stickers resolve through the same artwork template. Last, and only for slots that have
+    // one, so a set with none keeps the exact hash it had before this feature existed.
+    for (const locale of set.locales) {
+      for (const slot of set.slots) {
+        for (const el of slot.elements ?? []) parts.push(await artworkBytes(locale.id, el.artwork))
+      }
+    }
   }
   const total = parts.reduce((n, p) => n + p.byteLength, 0)
   const joined = new Uint8Array(total)

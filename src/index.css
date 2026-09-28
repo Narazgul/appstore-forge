@@ -624,6 +624,10 @@ input[type='color'] {
   color: var(--ink);
   cursor: pointer;
 }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .btn-primary {
   padding: 8px 18px;
   border-radius: 9px;

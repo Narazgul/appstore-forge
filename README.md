@@ -207,6 +207,67 @@ files feed the approval hash exactly like a screenshot: change one and the stamp
 goes stale. Note that `kind: "artwork"` is something else entirely — that slot
 kind is still rejected.
 
+### A slot's stickers
+
+A slot can carry free-standing images — stickers — independent of any device
+frame:
+
+```json
+{
+  "id": "budget-light",
+  "kind": "screen",
+  "screen": "budget_screen",
+  "overrides": {},
+  "elements": [
+    {
+      "id": "badge",
+      "artwork": "new-badge",
+      "x": 0.78,
+      "y": 0.18,
+      "width": 0.28,
+      "rotate": -12,
+      "layer": "front",
+      "shadow": true
+    }
+  ]
+}
+```
+
+Each entry in `elements`:
+
+- **`artwork`** names a file exactly like a slot's own `artwork` — no directory,
+  no extension, resolved through the same `artworkSources` template. There is
+  no second path mechanism.
+- **`x`, `y`** are the sticker's centre. `x` is a fraction of the
+  _composition_ width (tile width × the layout's span, so a sticker can sit
+  across a panorama seam like a device); `y` is a fraction of the tile height —
+  the same convention every layout already uses.
+- **`width`** is a fraction of the tile width; the drawn height follows the
+  image's own aspect ratio, so there is no separate height to keep in sync.
+- **`rotate`** is degrees, clockwise positive, like a placement's `rotate`.
+  Default `0`.
+- **`layer`** is `"front"` (default) or `"behind"`. The draw order is
+  background → backdrop → behind-stickers → headline/subhead → devices →
+  front-stickers, so a `"behind"` sticker sits under the text and the devices,
+  and a `"front"` one sits over everything, including the device frame.
+- **`shadow`** (default `false`) adds the same soft drop shadow a device frame
+  casts, scaled to the sticker's own width.
+
+A sticker with a missing artwork file draws nothing (and `forge check` reports
+it, worded exactly like a missing slot artwork); one that would cover the
+headline only gets a warning, since the check does not always know the image's
+real proportions. A sticker may deliberately bleed off the tile.
+
+Adding, removing, or moving a sticker changes the approval hash through the set
+JSON; re-imaging one (same file name, new bytes) changes it through the
+artwork's bytes, exactly like a slot's own artwork. A slot with no `elements`
+key hashes and renders exactly as it did before this feature existed — the GUI
+never writes an empty `elements: []`.
+
+In the GUI, stickers live in the tune panel's "Stickers" section, shown only
+when exactly one screen is selected (a sticker belongs to a slot, not to the
+shared settings).
+
 ### The four commands
 
 ```bash

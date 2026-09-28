@@ -2,15 +2,16 @@ import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastAgainstBackground, contrastRatio
 import { effectiveSettings } from '../lib/settings'
 import { DEVICES } from '../presets/devices'
 import { getFont } from '../presets/fonts'
+import { getLayout } from '../presets/layouts'
 import { getPosition } from '../presets/positions'
 import { resolveFontId } from '../presets/scripts'
 import { EXPORT_SIZES } from '../presets/sizes'
 import { parseMarkup } from '../render/text'
 import { DEFAULT_SETTINGS } from '../store'
-import type { Screen, Settings } from '../types'
+import type { Layout, Screen, Settings } from '../types'
 import { DEFAULT_ARTWORK_SOURCES, artworkPath, sourcePath } from './bridge'
 import { slotScreens } from './types'
-import type { Project, ProjectSet, ProjectSlot } from './types'
+import type { Project, ProjectSet, ProjectSlot, SlotElement } from './types'
 
 export type Issue = { level: 'error' | 'warn'; message: string; slot?: string; locale?: string }
 
@@ -36,12 +37,46 @@ function contrastIssue(label: string, ratio: number, surface: string): Omit<Issu
 const positionOf = (set: ProjectSet, slot: ProjectSlot) =>
   getPosition(slot.overrides.positionId ?? set.settings.positionId ?? DEFAULT_SETTINGS.positionId)
 
+/**
+ * A sticker's box, approximated in the layout's own units: fractions of the composition width for
+ * `x`/`left`/`right`, fractions of the tile height for `y`/`top`/`bottom`. The renderer draws the
+ * real box from the image's aspect ratio (see `render/scene.ts`); here the height is only known
+ * when `aspect` (width/height in pixels) is passed in, so an unknown image falls back to treating
+ * the sticker as a square — good enough for a warning, not for a pixel claim.
+ */
+/** `tileAspect` is tile width / height: `width` counts in tile widths, the box height in tile heights. */
+function stickerBox(el: SlotElement, span: number, aspect: number | null, tileAspect: number) {
+  const halfWidthOfW = el.width / (2 * span)
+  const heightFraction = (aspect ? el.width / aspect : el.width) * tileAspect
+  return {
+    left: el.x - halfWidthOfW,
+    right: el.x + halfWidthOfW,
+    top: el.y - heightFraction / 2,
+    bottom: el.y + heightFraction / 2,
+  }
+}
+
+/** The layout's text band in the same units as `stickerBox`, applying its "tile minus padX" default. */
+function textBand(layout: Layout) {
+  const text = layout.text!
+  const left = text.left ?? layout.padX / layout.span
+  const width = text.width ?? (1 - 2 * layout.padX) / layout.span
+  return { left, right: left + width, top: text.top, bottom: text.top + text.height }
+}
+
+const boxesOverlap = (
+  a: { left: number; right: number; top: number; bottom: number },
+  b: { left: number; right: number; top: number; bottom: number },
+) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+
 export function validateProject(
   project: Project,
   sourceExists: (localeId: string, screen: string) => boolean,
   artworkExists: (localeId: string, artwork: string) => boolean = () => true,
   /** Whether a slot's eyebrow fits its box on one line at the final render size, per locale. */
   eyebrowFits: (localeId: string, slotId: string) => boolean = () => true,
+  /** A sticker's image aspect ratio (width / height in pixels), when the check can know it. */
+  elementAspect: (localeId: string, artwork: string) => number | null = () => null,
 ): Issue[] {
   const { set, copies } = project
   const issues: Issue[] = []
@@ -70,6 +105,15 @@ export function validateProject(
       error(`Arrangement ${position.id} needs an artwork, but the slot names none`, { slot: slot.id })
     if (slot.note?.trim())
       issues.push({ level: 'warn', message: `Open feedback: ${slot.note.trim()}`, slot: slot.id })
+
+    const elementIds = new Set<string>()
+    for (const el of slot.elements ?? []) {
+      if (elementIds.has(el.id)) error(`Duplicate sticker id ${el.id}`, { slot: slot.id })
+      elementIds.add(el.id)
+      if (![el.x, el.y, el.width, el.rotate ?? 0].every(Number.isFinite))
+        error(`Sticker ${el.id} has a non-finite position, size or rotation`, { slot: slot.id })
+      else if (el.width <= 0) error(`Sticker ${el.id} has width <= 0`, { slot: slot.id })
+    }
   }
 
   // One artwork may serve every language; reporting the same missing file 19 times helps nobody.
@@ -89,6 +133,19 @@ export function validateProject(
         if (!artworkReported.has(path)) {
           artworkReported.add(path)
           if (!artworkExists(locale.id, slot.artwork))
+            error(
+              `Artwork image missing: ${path}`,
+              artworkPerLocale ? { slot: slot.id, locale: locale.id } : { slot: slot.id },
+            )
+        }
+      }
+      // A sticker's artwork is resolved and reported exactly like the slot's own — same template,
+      // same wording — so two stickers sharing one file never repeat the message either.
+      for (const el of slot.elements ?? []) {
+        const path = artworkPath(set, locale.id, el.artwork)
+        if (!artworkReported.has(path)) {
+          artworkReported.add(path)
+          if (!artworkExists(locale.id, el.artwork))
             error(
               `Artwork image missing: ${path}`,
               artworkPerLocale ? { slot: slot.id, locale: locale.id } : { slot: slot.id },
@@ -143,6 +200,32 @@ export function validateProject(
     const effective = effectiveSettings(screen, globalSettings)
     const push = (issue: Omit<Issue, 'slot' | 'locale'> | null) => {
       if (issue) issues.push({ ...issue, slot: slot.id })
+    }
+
+    // A 'behind' sticker sits under the text block and can never cover it; a 'front' one is drawn
+    // last, over everything. The box is only ever approximate: `elementAspect` gives the real
+    // aspect ratio when the check has loaded the image, otherwise the sticker is treated as a square.
+    const layout = getLayout(effective.layout)
+    if (layout.text) {
+      const band = textBand(layout)
+      const tileAspects = (set.targets.length ? set.targets : [{ sizeId: EXPORT_SIZES[0].id }]).map((t) => {
+        const size = EXPORT_SIZES.find((s) => s.id === t.sizeId) ?? EXPORT_SIZES[0]
+        return size.w / size.h
+      })
+      for (const el of slot.elements ?? []) {
+        if ((el.layer ?? 'front') !== 'front') continue
+        const aspect = elementAspect(set.locales[0]?.id ?? '', el.artwork)
+        if (
+          tileAspects.some((tileAspect) =>
+            boxesOverlap(stickerBox(el, layout.span, aspect, tileAspect), band),
+          )
+        )
+          issues.push({
+            level: 'warn',
+            message: `Sticker "${el.id}" may cover the headline (box approximated from width${aspect ? " and the image's aspect ratio" : ' as a square, since the image size is not known here'})`,
+            slot: slot.id,
+          })
+      }
     }
 
     push(

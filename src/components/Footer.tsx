@@ -22,6 +22,10 @@ export function Footer({ onExport, exporting }: { onExport: () => void; exportin
   const index = STEPS.indexOf(step)
   // Belongs in the footer and not in one step: a save can fail wherever the user is editing.
   const lastError = useStore((s) => s.lastError)
+  const canUndo = useStore((s) => s.canUndo)
+  const canRedo = useStore((s) => s.canRedo)
+  const undo = useStore((s) => s.undo)
+  const redo = useStore((s) => s.redo)
 
   const summary =
     r.total === 0
@@ -42,6 +46,12 @@ export function Footer({ onExport, exporting }: { onExport: () => void; exportin
         {lastError ?? summary}
       </span>
       <span className="flex items-center gap-2">
+        <button className="btn" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)" aria-label="Undo">
+          ↶
+        </button>
+        <button className="btn" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)" aria-label="Redo">
+          ↷
+        </button>
         {index > 0 && (
           <button className="btn" onClick={() => setStep(STEPS[index - 1])}>
             ← Back

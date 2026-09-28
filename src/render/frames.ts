@@ -32,6 +32,27 @@ export function drawArtwork(ctx: CanvasRenderingContext2D, box: Box, img: Canvas
   ctx.drawImage(img, box.x + (box.w - dw) / 2, box.y + (box.h - dh) / 2, dw, dh)
 }
 
+/**
+ * A sticker: the image alone, drawn at exactly `box`, optionally with the same soft drop shadow
+ * a device frame casts. Unlike `drawArtwork` this never fits into a band — the caller already
+ * sized `box` from the sticker's own width and the image's aspect ratio.
+ */
+export function drawSticker(
+  ctx: CanvasRenderingContext2D,
+  box: Box,
+  img: CanvasImageSource,
+  shadow: boolean,
+) {
+  ctx.save()
+  if (shadow) {
+    ctx.shadowColor = 'rgba(15, 23, 42, 0.30)'
+    ctx.shadowBlur = box.w * 0.09
+    ctx.shadowOffsetY = box.w * 0.035
+  }
+  ctx.drawImage(img, box.x, box.y, box.w, box.h)
+  ctx.restore()
+}
+
 function drawNotch(ctx: CanvasRenderingContext2D, screen: Box, device: DeviceSpec, frameW: number) {
   if (device.notch === 'island') {
     const w = frameW * 0.3

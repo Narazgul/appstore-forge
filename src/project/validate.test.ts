@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastAgainstBackground, contrastRatio } from '../lib/contrast'
 import { validateProject } from './validate'
-import type { Project, ProjectLocale, SlotCopy } from './types'
+import type { Project, ProjectLocale, SlotCopy, SlotElement } from './types'
 
 /** Mirrors the message/level branching in validate.ts, for fixtures built to land in one branch. */
 const expectedContrastMessage = (label: string, ratio: number, surface: string) =>
@@ -280,6 +280,126 @@ describe('validateProject', () => {
     p.copies.en.a.eyebrow = 'New'
     p.copies.de.a.eyebrow = 'Neu'
     expect(validateProject(p, always).some((i) => i.message.includes('Eyebrow set for some'))).toBe(false)
+  })
+})
+
+describe('stickers', () => {
+  const sticker = (patch: Partial<SlotElement> = {}): SlotElement => ({
+    id: 's',
+    artwork: 'dot',
+    x: 0.5,
+    y: 0.75,
+    width: 0.3,
+    ...patch,
+  })
+
+  it('flags a missing sticker artwork file, worded like a missing slot artwork', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker()]
+    expect(validateProject(p, always, () => false)).toContainEqual({
+      level: 'error',
+      message: 'Artwork image missing: aso/artwork/dot.png',
+      slot: 'a',
+    })
+  })
+
+  it('accepts a sticker whose artwork is there', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker()]
+    expect(validateProject(p, always, always)).toEqual([])
+  })
+
+  it('reports a missing artwork file only once for two stickers sharing it', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker({ id: 's1' }), sticker({ id: 's2' })]
+    const issues = validateProject(p, always, () => false).filter((i) => i.message.startsWith('Artwork'))
+    expect(issues).toHaveLength(1)
+  })
+
+  it('flags duplicate sticker ids within a slot', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker({ id: 'dupe' }), sticker({ id: 'dupe' })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Duplicate sticker id dupe',
+      slot: 'a',
+    })
+  })
+
+  it('flags a sticker with width <= 0', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker({ width: 0 })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Sticker s has width <= 0',
+      slot: 'a',
+    })
+  })
+
+  it('flags a sticker with a non-finite position, size or rotation', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker({ x: NaN })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Sticker s has a non-finite position, size or rotation',
+      slot: 'a',
+    })
+  })
+
+  it('warns when a front sticker overlaps the layout text band, and names the approximation used', () => {
+    const p = base()
+    // text-top's band: top 0.065, height 0.165 — a sticker centred well inside it, as a square.
+    p.set.slots[0].elements = [sticker({ y: 0.1, width: 0.5, layer: 'front' })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'warn',
+      message:
+        'Sticker "s" may cover the headline (box approximated from width as a square, since the image size is not known here)',
+      slot: 'a',
+    })
+  })
+
+  it('uses the real aspect ratio when the check can supply one', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker({ y: 0.1, width: 0.5, layer: 'front' })]
+    const issues = validateProject(
+      p,
+      always,
+      always,
+      () => true,
+      () => 2,
+    )
+    expect(issues).toContainEqual({
+      level: 'warn',
+      message:
+        'Sticker "s" may cover the headline (box approximated from width and the image\'s aspect ratio)',
+      slot: 'a',
+    })
+  })
+
+  it('measures the box height in tile heights, so a square sticker below the band on a tall tile stays quiet', () => {
+    const p = base()
+    // 0.4 tile widths is only ~0.18 of a 1320×2868 tile's height: the box spans ~0.29–0.47, clear of 0.23.
+    p.set.slots[0].elements = [sticker({ y: 0.38, width: 0.4, layer: 'front' })]
+    const issues = validateProject(
+      p,
+      always,
+      always,
+      () => true,
+      () => 1,
+    )
+    expect(issues.some((i) => i.message.includes('may cover'))).toBe(false)
+  })
+
+  it('never warns about a behind sticker, since the text is drawn over it', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker({ y: 0.1, width: 0.5, layer: 'behind' })]
+    expect(validateProject(p, always, always).some((i) => i.message.includes('may cover'))).toBe(false)
+  })
+
+  it('stays quiet about a front sticker that sits away from the text band', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker({ y: 0.9, width: 0.1, layer: 'front' })]
+    expect(validateProject(p, always, always).some((i) => i.message.includes('may cover'))).toBe(false)
   })
 })
 

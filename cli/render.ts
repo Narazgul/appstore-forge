@@ -63,11 +63,22 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
           throw new Error(`Source image missing for slot ${slot.id}, locale ${locale.id}: ${path}`)
         images[imageIdFor(locale.id, screen)] = await loadImage(path)
       }
-      if (!slot.artwork) continue
-      const art = join(repoRoot, artworkPath(set, locale.id, slot.artwork))
-      if (!existsSync(art))
-        throw new Error(`Artwork image missing for slot ${slot.id}, locale ${locale.id}: ${art}`)
-      images[artworkIdFor(locale.id, slot.artwork)] = await loadImage(art)
+      if (slot.artwork) {
+        const art = join(repoRoot, artworkPath(set, locale.id, slot.artwork))
+        if (!existsSync(art))
+          throw new Error(`Artwork image missing for slot ${slot.id}, locale ${locale.id}: ${art}`)
+        images[artworkIdFor(locale.id, slot.artwork)] = await loadImage(art)
+      }
+      // Stickers share the artwork registry, keyed by the same id — a sticker reusing a slot's
+      // own artwork file (or another sticker's) is read from disk only once.
+      for (const el of slot.elements ?? []) {
+        const id = artworkIdFor(locale.id, el.artwork)
+        if (images[id]) continue
+        const art = join(repoRoot, artworkPath(set, locale.id, el.artwork))
+        if (!existsSync(art))
+          throw new Error(`Artwork image missing for slot ${slot.id}, locale ${locale.id}: ${art}`)
+        images[id] = await loadImage(art)
+      }
     }
     const screens = screensFor(project, locale.id)
 
@@ -106,6 +117,12 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
             ? (images[screen.pairPrevId] ?? null)
             : at(i - 1)) as unknown as CanvasImageSource,
           artwork: (screen.artworkId ? (images[screen.artworkId] ?? null) : null) as CanvasImageSource | null,
+          elements: Object.fromEntries(
+            (screen.elements ?? []).map((el) => [
+              el.imageId,
+              (images[el.imageId] ?? null) as unknown as CanvasImageSource | null,
+            ]),
+          ),
         })
         for (let part = 0; part < span; part++) {
           const rgba = ctx.getImageData(part * size.w, 0, size.w, size.h).data

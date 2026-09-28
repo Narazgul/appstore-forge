@@ -48,6 +48,29 @@ export type Position = {
   placements: Placement[]
 }
 
+export type SceneElementLayer = 'behind' | 'front'
+
+/**
+ * A free-standing image on a slot, independent of any device frame — a sticker. Resolved from a
+ * project's `SlotElement` (see `project/types.ts`) with every optional field defaulted, so the
+ * renderer never has to ask "or else what".
+ */
+export type SceneElement = {
+  id: string
+  /** key into the image registry, alongside `imageId` / `artworkId` / `pairId` */
+  imageId: string
+  /** fraction of the composition width (tile width × span); the sticker's centre */
+  x: number
+  /** fraction of the tile height; the sticker's centre */
+  y: number
+  /** fraction of the tile width; height follows the image's own aspect ratio */
+  width: number
+  /** degrees, clockwise positive, like a placement's rotate */
+  rotate: number
+  layer: SceneElementLayer
+  shadow: boolean
+}
+
 export type LayoutId =
   | 'text-top'
   | 'text-bottom'
@@ -109,6 +132,8 @@ export type Screen = {
   lang?: string
   /** one line drawn above the headline, uppercase; absent = none. No markup — stars are literal. */
   eyebrow?: string
+  /** free-standing images (stickers) drawn behind or in front of the composition; absent = none */
+  elements?: SceneElement[]
 }
 
 /** Export size is deliberately global — every shot in a set must share one canvas size. */

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Footer } from './components/Footer'
 import { Rail } from './components/Rail'
 import { LookStep } from './components/steps/LookStep'
@@ -6,6 +6,7 @@ import { ReviewStep } from './components/steps/ReviewStep'
 import { ShotsStep } from './components/steps/ShotsStep'
 import { TargetStep } from './components/steps/TargetStep'
 import { exportAll, type ExportResult } from './lib/export'
+import { isEditableTarget, isRedoShortcut, isUndoShortcut } from './lib/keyboard'
 import { useStore } from './store'
 
 export function App() {
@@ -53,6 +54,22 @@ export function App() {
   }, [screens, settings, images, format])
 
   const browse = () => inputRef.current?.click()
+
+  // The browser's own undo applies while typing; only intercept the shortcut everywhere else.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return
+      if (isUndoShortcut(e)) {
+        e.preventDefault()
+        useStore.getState().undo()
+      } else if (isRedoShortcut(e)) {
+        e.preventDefault()
+        useStore.getState().redo()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   return (
     <div className="flex h-full">

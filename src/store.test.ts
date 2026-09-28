@@ -1,10 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  COALESCE_MS,
   DEFAULT_SETTINGS,
+  HISTORY_LIMIT,
   projectAfterNote,
   projectAfterOverride,
   projectAfterScreenPatch,
   projectAfterSlotAdd,
+  projectAfterSlotElements,
   projectAfterSlotRemoval,
   projectAfterSlotSource,
   projectAfterTargetPatch,
@@ -281,6 +284,31 @@ describe('projectAfterSlotSource', () => {
   })
 })
 
+describe('projectAfterSlotElements', () => {
+  it('writes the sticker list and drops the approval', () => {
+    const elements = [{ id: 's', artwork: 'dot', x: 0.5, y: 0.75, width: 0.3 }]
+    const next = projectAfterSlotElements(project(), 'a', elements)
+    expect(next.set.slots[0].elements).toEqual(elements)
+    expect(next.set.approval).toBeNull()
+  })
+
+  it('removes the key entirely for an empty list, rather than persisting elements: []', () => {
+    const withStickers = projectAfterSlotElements(project(), 'a', [
+      { id: 's', artwork: 'dot', x: 0.5, y: 0.75, width: 0.3 },
+    ])
+    const next = projectAfterSlotElements(withStickers, 'a', [])
+    expect(next.set.slots[0]).not.toHaveProperty('elements')
+  })
+
+  it('leaves other slots alone and does not mutate the input', () => {
+    const p = project()
+    p.set.slots.push({ id: 'b', kind: 'screen', screen: 'two', overrides: {} })
+    const next = projectAfterSlotElements(p, 'b', [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.2 }])
+    expect(next.set.slots[0]).not.toHaveProperty('elements')
+    expect(p.set.slots[1]).not.toHaveProperty('elements')
+  })
+})
+
 describe('projectAfterSlotRemoval', () => {
   const twoSlots = (): Project => {
     const p = project()
@@ -423,6 +451,8 @@ const fakeProjectStore = (p: Project, save?: () => Promise<void>): ProjectStore 
   save: save ?? (() => Promise.resolve()),
   sourceUrl: (localeId, screen) => `/sources/${localeId}/${screen}.png`,
   sourceBytes: (localeId, screen) => Promise.resolve(new TextEncoder().encode(`${localeId}/${screen}`)),
+  artworkUrl: (localeId, artwork) => `/artwork/${localeId}/${artwork}.png`,
+  artworkBytes: (localeId, artwork) => Promise.resolve(new TextEncoder().encode(`${localeId}/${artwork}`)),
 })
 
 describe('opening a project with a missing source', () => {
@@ -517,6 +547,88 @@ describe('approve', () => {
     expect(state.approvalOk).toBe(false)
     expect(state.project!.set.approval).toBeNull()
     expect(state.lastError).toMatch(/disk full/)
+  })
+})
+
+describe('setSlotElements', () => {
+  const open = (p: Project, store: ProjectStore) => {
+    useStore.setState({
+      project: p,
+      projectStore: store,
+      localeId: 'en',
+      targetId: 'appstore',
+      screens: screensFor(p, 'en'),
+      settings: settingsFor(p, 'appstore'),
+      images: {},
+      approvalOk: true,
+      selectedId: null,
+      staleApproval: null,
+      lastError: null,
+    })
+  }
+
+  /** The debounce is a timer, the save a promise: both have to be flushed (see 'the automatic save'). */
+  const flush = async () => {
+    vi.runAllTimers()
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.stubGlobal('Image', FakeImage)
+    vi.stubGlobal('document', {
+      fonts: { load: () => Promise.resolve([]), ready: Promise.resolve(), check: () => true },
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      screens: [],
+      images: {},
+      approvalOk: null,
+      staleApproval: null,
+      lastError: null,
+    })
+  })
+
+  it('writes the sticker list into the slot, drops the approval and saves the project', async () => {
+    const p = project()
+    let saved: Project | null = null
+    open(
+      p,
+      fakeProjectStore(p, async () => {
+        saved = useStore.getState().project
+      }),
+    )
+    const elements = [{ id: 's', artwork: 'dot', x: 0.5, y: 0.75, width: 0.3 }]
+    await useStore.getState().setSlotElements('a', elements)
+    const state = useStore.getState()
+    expect(state.project!.set.slots[0].elements).toEqual(elements)
+    expect(state.project!.set.approval).toBeNull()
+    expect(state.approvalOk).toBe(false)
+    await flush()
+    expect(saved!.set.slots[0].elements).toEqual(elements)
+  })
+
+  it('loads the sticker image into the registry for every locale', async () => {
+    const p = twoSlotProject()
+    open(p, fakeProjectStore(p))
+    await useStore.getState().setSlotElements('a', [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.2 }])
+    const state = useStore.getState()
+    expect(Object.keys(state.images).sort()).toEqual(['artwork/de/dot', 'artwork/en/dot'])
+  })
+
+  it('removes the key entirely once the list is emptied', async () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    await useStore.getState().setSlotElements('a', [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.2 }])
+    await useStore.getState().setSlotElements('a', [])
+    expect(useStore.getState().project!.set.slots[0]).not.toHaveProperty('elements')
   })
 })
 
@@ -698,6 +810,233 @@ describe('an outside change while this editor holds unsaved work', () => {
     expect(useStore.getState().lastError).toMatch(SAVE_FAILED)
     outsideWrite()
     expect(useStore.getState().project!.copies.en.a.headline).toBe('Meine Arbeit')
+  })
+})
+
+describe('undo / redo', () => {
+  // Each test starts its own fake clock, comfortably past the wall-clock time any earlier test
+  // (in this file, real- or fake-clocked) could have left in the module-private `lastEditAt` —
+  // otherwise a leftover coalescing window could bleed into this block's first edit.
+  let clock = 0
+  const COALESCED = 100
+  const APART = COALESCE_MS + 1
+
+  const open = (p: Project, store: ProjectStore) =>
+    useStore.setState({
+      project: p,
+      projectStore: store,
+      localeId: 'en',
+      targetId: 'appstore',
+      screens: screensFor(p, 'en'),
+      settings: settingsFor(p, 'appstore'),
+      images: {},
+      approvalOk: true,
+      selectedId: null,
+      staleApproval: null,
+      lastError: null,
+      undoStack: [],
+      redoStack: [],
+      canUndo: false,
+      canRedo: false,
+    })
+
+  const flush = async () => {
+    vi.runAllTimers()
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  beforeEach(() => {
+    clock = Math.max(clock, Date.now()) + 10 * COALESCE_MS
+    vi.useFakeTimers()
+    vi.setSystemTime(clock)
+    vi.stubGlobal('Image', FakeImage)
+    vi.stubGlobal('document', {
+      fonts: { load: () => Promise.resolve([]), ready: Promise.resolve(), check: () => true },
+    })
+  })
+
+  afterEach(() => {
+    clock = Math.max(clock, Date.now()) // captures however far a test advanced the fake clock
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      screens: [],
+      images: {},
+      approvalOk: null,
+      staleApproval: null,
+      lastError: null,
+      undoStack: [],
+      redoStack: [],
+      canUndo: false,
+      canRedo: false,
+    })
+  })
+
+  it('undo restores the previous document, redo re-applies it, and a new edit after undo clears redo', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Neu')
+    expect(useStore.getState().canUndo).toBe(true)
+    expect(useStore.getState().canRedo).toBe(false)
+
+    useStore.getState().undo()
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Hi')
+    expect(useStore.getState().canUndo).toBe(false)
+    expect(useStore.getState().canRedo).toBe(true)
+
+    useStore.getState().redo()
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Neu')
+    expect(useStore.getState().canUndo).toBe(true)
+    expect(useStore.getState().canRedo).toBe(false)
+
+    useStore.getState().undo()
+    useStore.getState().setCopy('en', 'a', { headline: 'Anders' })
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Anders')
+    expect(useStore.getState().canRedo).toBe(false)
+    useStore.getState().redo()
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Anders')
+  })
+
+  it('undo schedules a save and always leaves the approval null, even if the snapshot had one', async () => {
+    const p = project() // p.set.approval = { hash: 'h', by: 'x', at: 't' }
+    let saved: Project | null = null
+    open(
+      p,
+      fakeProjectStore(p, async () => {
+        saved = useStore.getState().project
+      }),
+    )
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    expect(useStore.getState().project!.set.approval).toBeNull()
+
+    useStore.getState().undo()
+    const state = useStore.getState()
+    expect(state.project!.copies.en.a.headline).toBe('Hi')
+    // The pre-edit snapshot's own `approval` was the original stamp — undo must not resurrect it.
+    expect(state.project!.set.approval).toBeNull()
+
+    await flush()
+    expect(saved!.copies.en.a.headline).toBe('Hi')
+    expect(saved!.set.approval).toBeNull()
+  })
+
+  it('coalesces consecutive edits of the same kind inside the window into one step', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().setCopy('en', 'a', { headline: 'A' })
+    vi.advanceTimersByTime(COALESCED)
+    useStore.getState().setCopy('en', 'a', { headline: 'AB' })
+    vi.advanceTimersByTime(COALESCED)
+    useStore.getState().setCopy('en', 'a', { headline: 'ABC' })
+    expect(useStore.getState().undoStack).toHaveLength(1)
+    useStore.getState().undo()
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Hi')
+  })
+
+  it('a different kind starts a new step even inside the window', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().setCopy('en', 'a', { headline: 'A' })
+    vi.advanceTimersByTime(COALESCED)
+    useStore.getState().setCopy('en', 'a', { subhead: 'Sub' })
+    expect(useStore.getState().undoStack).toHaveLength(2)
+  })
+
+  it('an edit after the coalescing window starts a new step', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().setCopy('en', 'a', { headline: 'A' })
+    vi.advanceTimersByTime(APART)
+    useStore.getState().setCopy('en', 'a', { headline: 'AB' })
+    expect(useStore.getState().undoStack).toHaveLength(2)
+  })
+
+  it('caps the undo stack at HISTORY_LIMIT entries', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    for (let i = 0; i < HISTORY_LIMIT + 10; i++) {
+      useStore.getState().setCopy('en', 'a', { headline: `H${i}` })
+      vi.advanceTimersByTime(APART)
+    }
+    expect(useStore.getState().undoStack).toHaveLength(HISTORY_LIMIT)
+  })
+
+  it('locale, target, selection and step changes are not recorded', () => {
+    const p = twoSlotProject()
+    open(p, fakeProjectStore(p))
+    useStore.getState().setLocale('de')
+    useStore.getState().setTarget('appstore')
+    useStore.getState().selectScreen('a')
+    useStore.getState().setStep('review')
+    expect(useStore.getState().undoStack).toHaveLength(0)
+    expect(useStore.getState().canUndo).toBe(false)
+  })
+
+  it('the approve action itself is not recorded', async () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    await useStore.getState().approve('Hofi')
+    expect(useStore.getState().undoStack).toHaveLength(0)
+  })
+
+  it('an outside change clears both stacks', async () => {
+    const p = project()
+    const outside: { fire: (() => void) | null } = { fire: null }
+    const store: ProjectStore = {
+      ...fakeProjectStore(p),
+      subscribe: (onChange) => {
+        outside.fire = onChange
+        return () => (outside.fire = null)
+      },
+    }
+    await useStore.getState().openProject(store)
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    await flush() // clears `unsaved`, or the outside change would refuse to reload
+    expect(useStore.getState().canUndo).toBe(true)
+
+    outside.fire?.()
+    // `reloadProject()` runs un-awaited from the subscription callback (store.ts fires and
+    // forgets); give its chain of awaits (load, fonts, images) enough microtask ticks to settle.
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(useStore.getState().undoStack).toHaveLength(0)
+    expect(useStore.getState().redoStack).toHaveLength(0)
+    expect(useStore.getState().canUndo).toBe(false)
+  })
+
+  it('opening a project clears both stacks', async () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    expect(useStore.getState().canUndo).toBe(true)
+
+    await useStore.getState().openProject(fakeProjectStore(project()))
+    expect(useStore.getState().undoStack).toHaveLength(0)
+    expect(useStore.getState().canUndo).toBe(false)
+  })
+
+  it('sticker edits (setSlotElements) are undoable', async () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    await useStore.getState().setSlotElements('a', [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.2 }])
+    expect(useStore.getState().project!.set.slots[0].elements).toHaveLength(1)
+
+    useStore.getState().undo()
+    expect(useStore.getState().project!.set.slots[0]).not.toHaveProperty('elements')
+  })
+
+  it('copy edits including the eyebrow are undoable', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().setCopy('en', 'a', { eyebrow: 'New' })
+    expect(useStore.getState().project!.copies.en.a.eyebrow).toBe('New')
+
+    useStore.getState().undo()
+    expect(useStore.getState().project!.copies.en.a).not.toHaveProperty('eyebrow')
   })
 })
 

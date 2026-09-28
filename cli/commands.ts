@@ -1,4 +1,4 @@
-import { createCanvas } from '@napi-rs/canvas'
+import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -50,6 +50,31 @@ function eyebrowFitsChecker(project: Project): (localeId: string, slotId: string
   return (localeId, slotId) => fits.get(`${localeId}:${slotId}`) ?? true
 }
 
+/**
+ * A sticker's real aspect ratio, per locale, when the file is on disk — the check then draws its
+ * text-band overlap warning from the actual image instead of assuming a square. A missing file is
+ * already reported by `validateProject` itself, so this stays silent about it.
+ */
+async function elementAspectChecker(
+  project: Project,
+  repoRoot: string,
+): Promise<(localeId: string, artwork: string) => number | null> {
+  const aspects = new Map<string, number>()
+  for (const locale of project.set.locales) {
+    for (const slot of project.set.slots) {
+      for (const el of slot.elements ?? []) {
+        const key = `${locale.id}:${el.artwork}`
+        if (aspects.has(key)) continue
+        const path = join(repoRoot, artworkPath(project.set, locale.id, el.artwork))
+        if (!existsSync(path)) continue
+        const img = await loadImage(path)
+        aspects.set(key, img.width / img.height)
+      }
+    }
+  }
+  return (localeId, artwork) => aspects.get(`${localeId}:${artwork}`) ?? null
+}
+
 export function formatIssue(i: Issue): string {
   const where = [i.slot && `slot ${i.slot}`, i.locale && `locale ${i.locale}`].filter(Boolean).join(', ')
   return `${i.level}: ${i.message}${where ? ` (${where})` : ''}`
@@ -82,8 +107,14 @@ async function approvalMatches(project: Project, bytes: Bytes, artBytes: Bytes) 
 }
 
 export async function checkCommand(opts: { projectDir: string; setId: string; requireApproval: boolean }) {
-  const { project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
-  const issues = validateProject(project, exists, artExists, eyebrowFitsChecker(project))
+  const { repoRoot, project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  const issues = validateProject(
+    project,
+    exists,
+    artExists,
+    eyebrowFitsChecker(project),
+    await elementAspectChecker(project, repoRoot),
+  )
   const approvalOk =
     opts.requireApproval && !issues.some((i) => i.level === 'error')
       ? await approvalMatches(project, bytes, artBytes)
@@ -99,7 +130,15 @@ export async function renderCommand(opts: {
   requireApproval: boolean
 }) {
   const { repoRoot, project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
-  assertValid(validateProject(project, exists, artExists, eyebrowFitsChecker(project)))
+  assertValid(
+    validateProject(
+      project,
+      exists,
+      artExists,
+      eyebrowFitsChecker(project),
+      await elementAspectChecker(project, repoRoot),
+    ),
+  )
   if (opts.requireApproval && !(await approvalMatches(project, bytes, artBytes))) {
     throw new CliError(
       project.set.approval
@@ -116,8 +155,16 @@ export async function approveCommand(opts: {
   setId: string
   by: string
 }): Promise<Approval> {
-  const { project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
-  assertValid(validateProject(project, exists, artExists, eyebrowFitsChecker(project)))
+  const { repoRoot, project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  assertValid(
+    validateProject(
+      project,
+      exists,
+      artExists,
+      eyebrowFitsChecker(project),
+      await elementAspectChecker(project, repoRoot),
+    ),
+  )
   const approval: Approval = {
     hash: await approvalHash(project, bytes, artBytes),
     by: opts.by,

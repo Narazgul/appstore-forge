@@ -6,7 +6,7 @@ import { artworkIdFor, imageIdFor, screensFor, settingsFor } from './project/bri
 import { approvalHash } from './project/hash'
 import { EMPTY_GALLERY } from './project/store'
 import type { Gallery, ProjectStore } from './project/store'
-import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy } from './project/types'
+import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy, SlotElement } from './project/types'
 import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
 /** The guided flow. Steps are navigation and status, never a gate — any step is one click away. */
@@ -172,6 +172,28 @@ export function projectAfterSlotSource(
 }
 
 /**
+ * Writes a slot's sticker list. An empty list drops the key entirely — the GUI must never
+ * persist `elements: []`, or a project that never had a sticker would hash differently forever.
+ */
+export function projectAfterSlotElements(project: Project, slotId: string, elements: SlotElement[]): Project {
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      slots: project.set.slots.map((slot) => {
+        if (slot.id !== slotId) return slot
+        if (!elements.length) {
+          const { elements: _dropped, ...rest } = slot
+          return rest
+        }
+        return { ...slot, elements }
+      }),
+    },
+    copies: project.copies,
+  }
+}
+
+/**
  * A slot id has to survive as a file-safe key and stay unique in the set; the screen name is
  * the obvious starting point, and a number is appended when a slot already carries it.
  */
@@ -267,11 +289,20 @@ type State = {
   setSlotNote: (slotId: string, note: string) => void
   /** put a gallery image into one frame of a slot; null clears an optional one */
   setSlotSource: (slotId: string, role: SlotRole, name: string | null) => Promise<void>
+  /** replace a slot's sticker list; an empty list removes the key */
+  setSlotElements: (slotId: string, elements: SlotElement[]) => Promise<void>
   /** append a tile, filled with the first gallery image the active language has */
   addSlot: () => Promise<void>
   updateTarget: (id: string, patch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>>) => void
   approve: (by: string) => Promise<void>
   refreshApproval: () => Promise<void>
+  /** oldest first; capped at `HISTORY_LIMIT` */
+  undoStack: HistorySnapshot[]
+  redoStack: HistorySnapshot[]
+  canUndo: boolean
+  canRedo: boolean
+  undo: () => void
+  redo: () => void
 }
 
 /** `img.decode()` never settles in a background tab, which hung the whole GUI on a reload
@@ -305,6 +336,11 @@ async function loadProjectImages(
       }
       if (s.artwork && artworkUrl)
         rows.push({ id: artworkIdFor(l.id, s.artwork), url: artworkUrl(l.id, s.artwork) })
+      // Stickers resolve through the same artwork registry as a slot's own artwork.
+      if (artworkUrl) {
+        for (const el of s.elements ?? [])
+          rows.push({ id: artworkIdFor(l.id, el.artwork), url: artworkUrl(l.id, el.artwork) })
+      }
       return rows
     }),
   )
@@ -366,6 +402,83 @@ export function mutated(state: State, project: Project, extra: Partial<State> = 
     staleApproval: project.set.approval ? null : (state.project?.set.approval ?? state.staleApproval),
     ...extra,
   }
+}
+
+/**
+ * The undo/redo document, one per mode. Project mode holds the persisted `{ set, copies }`, never
+ * the approval stamp's meaning beyond what undo/redo overwrite it with; freeform holds `screens`
+ * (ids, copy, overrides, imageId references) and `settings` — never the decoded `images` map.
+ */
+export type HistorySnapshot =
+  | { mode: 'project'; set: Project['set']; copies: Project['copies'] }
+  | { mode: 'freeform'; screens: Screen[]; settings: Settings }
+
+export const HISTORY_LIMIT = 50
+/** Consecutive edits sharing a coalescing key inside this window become one undo step. */
+export const COALESCE_MS = 600
+
+/** The key of the last recorded edit and when it landed, so a rapid follow-up (a slider drag,
+ *  typing) can merge into the same step instead of filling the stack with one entry per tick. */
+let lastEditKind: string | null = null
+let lastEditAt = 0
+
+const sortedKeys = (patch: object): string => Object.keys(patch).sort().join(',')
+
+function snapshotOf(state: State): HistorySnapshot {
+  return state.project
+    ? { mode: 'project', set: state.project.set, copies: state.project.copies }
+    : { mode: 'freeform', screens: state.screens, settings: state.settings }
+}
+
+type HistoryFields = Pick<State, 'undoStack' | 'redoStack' | 'canUndo' | 'canRedo'>
+
+/**
+ * Records the state BEFORE a user edit, keyed by "what kind of edit and on what" (a settings key,
+ * an override target, a copy field) so a burst of same-kind edits inside `COALESCE_MS` collapses
+ * into the one step that preceded the burst. Any edit — coalesced or not — clears the redo stack:
+ * a new edit invalidates whatever could have been redone.
+ */
+function pushHistory(state: State, kind: string): HistoryFields {
+  const now = Date.now()
+  const coalesced = kind === lastEditKind && now - lastEditAt < COALESCE_MS
+  lastEditKind = kind
+  lastEditAt = now
+  if (coalesced) {
+    return {
+      undoStack: state.undoStack,
+      redoStack: state.redoStack,
+      canUndo: state.canUndo,
+      canRedo: state.canRedo,
+    }
+  }
+  const undoStack = [...state.undoStack, snapshotOf(state)].slice(-HISTORY_LIMIT)
+  return { undoStack, redoStack: [], canUndo: true, canRedo: false }
+}
+
+/** Wipes both stacks and the coalescing window — the document was replaced wholesale (a project
+ *  opened, an outside change), so old snapshots would restore over material that was never edited. */
+function clearHistory(): HistoryFields {
+  lastEditKind = null
+  lastEditAt = 0
+  return { undoStack: [], redoStack: [], canUndo: false, canRedo: false }
+}
+
+/**
+ * Undo/redo apply a snapshot through the same write path an edit uses: in project mode that means
+ * `mutated()` (so the save is scheduled and derived `screens`/`settings` are recomputed) with the
+ * approval always nulled — undo is an edit, and a snapshot must never resurrect a stamp for
+ * content the user is actively changing.
+ */
+function applySnapshot(state: State, snapshot: HistorySnapshot): Partial<State> {
+  if (snapshot.mode === 'freeform') return { screens: snapshot.screens, settings: snapshot.settings }
+  if (!state.project) return {}
+  const project: Project = { set: { ...snapshot.set, approval: null }, copies: snapshot.copies }
+  return mutated(state, project, {
+    screens: screensFor(project, state.localeId),
+    settings: project.set.targets.some((t) => t.id === state.targetId)
+      ? settingsFor(project, state.targetId)
+      : state.settings,
+  })
 }
 
 let unsubscribe: (() => void) | null = null
@@ -435,7 +548,7 @@ export const useStore = create<State>((set, get) => ({
       const step = rhythmStep(rhythm, i)
       return { ...s, overrides: step ? { ...rest, ...step } : rest }
     })
-    if (!state.project) return set({ rhythmId: rhythm.id, screens })
+    if (!state.project) return set({ rhythmId: rhythm.id, screens, ...pushHistory(state, 'rhythm') })
     const project: Project = {
       set: {
         ...state.project.set,
@@ -447,7 +560,10 @@ export const useStore = create<State>((set, get) => ({
       },
       copies: state.project.copies,
     }
-    set(mutated(state, project, { rhythmId: rhythm.id, screens: screensFor(project, state.localeId) }))
+    set({
+      ...mutated(state, project, { rhythmId: rhythm.id, screens: screensFor(project, state.localeId) }),
+      ...pushHistory(state, 'rhythm'),
+    })
     scheduleSave(get)
   },
 
@@ -457,14 +573,15 @@ export const useStore = create<State>((set, get) => ({
     const rhythmId = template.rhythm ?? (template.variants?.length ? 'template' : 'uniform')
     if (state.project) {
       const project = projectAfterTemplate(state.project, template)
-      set(
-        mutated(state, project, {
+      set({
+        ...mutated(state, project, {
           templateId: template.id,
           rhythmId,
           screens: screensFor(project, state.localeId),
           settings: settingsFor(project, state.targetId),
         }),
-      )
+        ...pushHistory(state, 'template'),
+      })
       scheduleSave(get)
       return
     }
@@ -485,6 +602,7 @@ export const useStore = create<State>((set, get) => ({
       settings: templateSettings(template, state.settings),
       screens,
       selectedId: screens.some((s) => s.id === state.selectedId) ? state.selectedId : null,
+      ...pushHistory(state, 'template'),
     })
   },
 
@@ -494,6 +612,9 @@ export const useStore = create<State>((set, get) => ({
     const usable = files.filter((f) => f.type.startsWith('image/'))
     if (!usable.length) return
     const loaded = await Promise.all(usable.map(async (file) => ({ file, img: await loadImage(file) })))
+    // Read before the state updater runs, not inside it — the updater may run again with a
+    // different `state` and must stay pure (rules.md 6).
+    const history = pushHistory(get(), 'addFiles')
     set((state) => {
       const images = { ...state.images }
       const screens = [...state.screens]
@@ -518,7 +639,7 @@ export const useStore = create<State>((set, get) => ({
           })
         }
       }
-      return { images, screens }
+      return { images, screens, ...history }
     })
   },
 
@@ -526,18 +647,24 @@ export const useStore = create<State>((set, get) => ({
     if (get().project) return
     if (!file.type.startsWith('image/')) return
     const img = await loadImage(file)
+    const history = pushHistory(get(), `image:${id}`)
     set((state) => {
       const imageId = nextId()
       return {
         images: { ...state.images, [imageId]: img },
         screens: state.screens.map((s) => (s.id === id ? { ...s, imageId } : s)),
+        ...history,
       }
     })
   },
 
   clearImage: (id) => {
-    if (get().project) return
-    set((state) => ({ screens: state.screens.map((s) => (s.id === id ? { ...s, imageId: null } : s)) }))
+    const state = get()
+    if (state.project) return
+    set({
+      screens: state.screens.map((s) => (s.id === id ? { ...s, imageId: null } : s)),
+      ...pushHistory(state, `clear:${id}`),
+    })
   },
 
   updateScreen: (id, patch) => {
@@ -551,10 +678,13 @@ export const useStore = create<State>((set, get) => ({
       !state.project ||
       (copy.headline === undefined && copy.subhead === undefined && copy.eyebrow === undefined)
     ) {
-      return set({ screens })
+      return set({ screens, ...pushHistory(state, `screen:${id}:${sortedKeys(patch)}`) })
     }
     const project = projectAfterScreenPatch(state.project, state.localeId, id, copy)
-    set(mutated(state, project, { screens }))
+    set({
+      ...mutated(state, project, { screens }),
+      ...pushHistory(state, `copy:${state.localeId}:${id}:${sortedKeys(copy)}`),
+    })
     scheduleSave(get)
   },
 
@@ -562,9 +692,9 @@ export const useStore = create<State>((set, get) => ({
     const state = get()
     const screens = state.screens.filter((s) => s.id !== id)
     const selectedId = state.selectedId === id ? null : state.selectedId
-    if (!state.project) return set({ screens, selectedId })
+    if (!state.project) return set({ screens, selectedId, ...pushHistory(state, `removeScreen:${id}`) })
     const project = projectAfterSlotRemoval(state.project, id)
-    set(mutated(state, project, { screens, selectedId }))
+    set({ ...mutated(state, project, { screens, selectedId }), ...pushHistory(state, `removeScreen:${id}`) })
     scheduleSave(get)
   },
 
@@ -576,7 +706,7 @@ export const useStore = create<State>((set, get) => ({
     const screens = [...state.screens]
     const [moved] = screens.splice(from, 1)
     screens.splice(to, 0, moved)
-    if (!state.project) return set({ screens })
+    if (!state.project) return set({ screens, ...pushHistory(state, `moveScreen:${id}`) })
     const slots = [...state.project.set.slots]
     const [movedSlot] = slots.splice(from, 1)
     slots.splice(to, 0, movedSlot)
@@ -584,13 +714,14 @@ export const useStore = create<State>((set, get) => ({
       set: { ...state.project.set, approval: null, slots },
       copies: state.project.copies,
     }
-    set(mutated(state, project, { screens }))
+    set({ ...mutated(state, project, { screens }), ...pushHistory(state, `moveScreen:${id}`) })
     scheduleSave(get)
   },
 
   setSettings: (patch) => {
     const state = get()
-    if (!state.project) return set({ settings: { ...state.settings, ...patch } })
+    const kind = `settings:${sortedKeys(patch)}`
+    if (!state.project) return set({ settings: { ...state.settings, ...patch }, ...pushHistory(state, kind) })
     // Size and device belong to the target, not to the look every target shares.
     const { sizeId, deviceId, ...shared } = patch
     const targetPatch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>> = {}
@@ -603,7 +734,10 @@ export const useStore = create<State>((set, get) => ({
       set: { ...base.set, approval: null, settings: { ...base.set.settings, ...shared } },
       copies: base.copies,
     }
-    set(mutated(state, project, { settings: settingsFor(project, state.targetId) }))
+    set({
+      ...mutated(state, project, { settings: settingsFor(project, state.targetId) }),
+      ...pushHistory(state, kind),
+    })
     scheduleSave(get)
   },
 
@@ -617,9 +751,10 @@ export const useStore = create<State>((set, get) => ({
     const screens = state.screens.map((s) =>
       s.id === id ? { ...s, overrides: { ...s.overrides, ...patch } } : s,
     )
-    if (!state.project) return set({ screens })
+    const kind = `override:${id}:${sortedKeys(patch)}`
+    if (!state.project) return set({ screens, ...pushHistory(state, kind) })
     const project = projectAfterOverride(state.project, id, screens.find((s) => s.id === id)?.overrides ?? {})
-    set(mutated(state, project, { screens }))
+    set({ ...mutated(state, project, { screens }), ...pushHistory(state, kind) })
     scheduleSave(get)
   },
 
@@ -631,16 +766,17 @@ export const useStore = create<State>((set, get) => ({
       for (const key of keys) delete overrides[key]
       return { ...s, overrides }
     })
-    if (!state.project) return set({ screens })
+    const kind = `clearOverrides:${id}:${[...keys].sort().join(',')}`
+    if (!state.project) return set({ screens, ...pushHistory(state, kind) })
     const project = projectAfterOverride(state.project, id, screens.find((s) => s.id === id)?.overrides ?? {})
-    set(mutated(state, project, { screens }))
+    set({ ...mutated(state, project, { screens }), ...pushHistory(state, kind) })
     scheduleSave(get)
   },
 
   clearAllOverrides: () => {
     const state = get()
     const screens = state.screens.map((s) => ({ ...s, overrides: {} }))
-    if (!state.project) return set({ screens })
+    if (!state.project) return set({ screens, ...pushHistory(state, 'clearAllOverrides') })
     const project: Project = {
       set: {
         ...state.project.set,
@@ -649,13 +785,15 @@ export const useStore = create<State>((set, get) => ({
       },
       copies: state.project.copies,
     }
-    set(mutated(state, project, { screens }))
+    set({ ...mutated(state, project, { screens }), ...pushHistory(state, 'clearAllOverrides') })
     scheduleSave(get)
   },
 
+  // A fresh start, like opening a different project: old snapshots would restore over material
+  // nobody edited in this session.
   reset: () => {
     if (get().project) return
-    set({ screens: [], images: {}, selectedId: null })
+    set({ screens: [], images: {}, selectedId: null, ...clearHistory() })
   },
 
   project: null,
@@ -690,6 +828,7 @@ export const useStore = create<State>((set, get) => ({
       step: 'shots',
       staleApproval: null,
       lastError: null,
+      ...clearHistory(),
     })
     await get().refreshApproval()
     unsaved = false
@@ -726,6 +865,8 @@ export const useStore = create<State>((set, get) => ({
       screens: screensFor(project, localeId),
       settings: settingsFor(project, targetId),
       selectedId: project.set.slots.some((s) => s.id === state.selectedId) ? state.selectedId : null,
+      // Someone else wrote the set; old undo/redo snapshots would restore over their change.
+      ...clearHistory(),
     })
     unsaved = false
     await get().refreshApproval()
@@ -741,10 +882,15 @@ export const useStore = create<State>((set, get) => ({
     const state = get()
     if (!state.project) return
     const project = projectAfterScreenPatch(state.project, localeId, slotId, patch)
-    set(mutated(state, project, { screens: screensFor(project, state.localeId) }))
+    set({
+      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...pushHistory(state, `copy:${localeId}:${slotId}:${sortedKeys(patch)}`),
+    })
     scheduleSave(get)
   },
 
+  // Feedback for the regenerating agent, not the document — it stays out of the approval hash
+  // (see `projectAfterNote`) and, for the same reason, out of undo/redo.
   setSlotNote: (slotId, note) => {
     const state = get()
     if (!state.project) return
@@ -757,10 +903,32 @@ export const useStore = create<State>((set, get) => ({
     const store = state.projectStore
     if (!state.project || !store) return
     const project = projectAfterSlotSource(state.project, slotId, role, name)
-    set(mutated(state, project, { screens: screensFor(project, state.localeId) }))
+    set({
+      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...pushHistory(state, `slotSource:${slotId}:${role}`),
+    })
     scheduleSave(get)
     if (!name) return
     const fresh = await loadNewSources(project, store, get().images, name, role)
+    if (Object.keys(fresh).length) set({ images: { ...get().images, ...fresh } })
+  },
+
+  setSlotElements: async (slotId, elements) => {
+    const state = get()
+    const store = state.projectStore
+    if (!state.project || !store) return
+    const project = projectAfterSlotElements(state.project, slotId, elements)
+    set({
+      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...pushHistory(state, `elements:${slotId}`),
+    })
+    scheduleSave(get)
+    // Stickers share the artwork role's loading path — a newly picked artwork is fetched for
+    // every language the same way a slot's own artwork would be.
+    const names = [...new Set(elements.map((el) => el.artwork))]
+    const fresh: Record<string, HTMLImageElement> = {}
+    for (const name of names)
+      Object.assign(fresh, await loadNewSources(project, store, get().images, name, 'artwork'))
     if (Object.keys(fresh).length) set({ images: { ...get().images, ...fresh } })
   },
 
@@ -776,13 +944,14 @@ export const useStore = create<State>((set, get) => ({
       screen,
     )
     const project = projectAfterSlotAdd(state.project, id, screen)
-    set(
-      mutated(state, project, {
+    set({
+      ...mutated(state, project, {
         screens: screensFor(project, state.localeId),
         selectedId: id,
         lastError: null,
       }),
-    )
+      ...pushHistory(state, 'addSlot'),
+    })
     scheduleSave(get)
     const fresh = await loadNewSources(project, store, get().images, screen, 'screen')
     if (Object.keys(fresh).length) set({ images: { ...get().images, ...fresh } })
@@ -792,7 +961,10 @@ export const useStore = create<State>((set, get) => ({
     const state = get()
     if (!state.project) return
     const project = projectAfterTargetPatch(state.project, id, patch)
-    set(mutated(state, project, { settings: settingsFor(project, state.targetId) }))
+    set({
+      ...mutated(state, project, { settings: settingsFor(project, state.targetId) }),
+      ...pushHistory(state, `target:${id}:${sortedKeys(patch)}`),
+    })
     scheduleSave(get)
   },
 
@@ -835,6 +1007,46 @@ export const useStore = create<State>((set, get) => ({
     const ok = hash === project.set.approval.hash
     // A stamp that no longer matches the files is stale in exactly the sense an edit makes it.
     set({ approvalOk: ok, staleApproval: ok ? null : project.set.approval })
+  },
+
+  undoStack: [],
+  redoStack: [],
+  canUndo: false,
+  canRedo: false,
+
+  undo: () => {
+    const state = get()
+    const previous = state.undoStack[state.undoStack.length - 1]
+    if (!previous) return
+    const undoStack = state.undoStack.slice(0, -1)
+    const redoStack = [...state.redoStack, snapshotOf(state)].slice(-HISTORY_LIMIT)
+    // The undo itself is not an edit to coalesce with whatever comes next.
+    lastEditKind = null
+    set({
+      ...applySnapshot(state, previous),
+      undoStack,
+      redoStack,
+      canUndo: undoStack.length > 0,
+      canRedo: redoStack.length > 0,
+    })
+    if (state.project) scheduleSave(get)
+  },
+
+  redo: () => {
+    const state = get()
+    const next = state.redoStack[state.redoStack.length - 1]
+    if (!next) return
+    const redoStack = state.redoStack.slice(0, -1)
+    const undoStack = [...state.undoStack, snapshotOf(state)].slice(-HISTORY_LIMIT)
+    lastEditKind = null
+    set({
+      ...applySnapshot(state, next),
+      undoStack,
+      redoStack,
+      canUndo: undoStack.length > 0,
+      canRedo: redoStack.length > 0,
+    })
+    if (state.project) scheduleSave(get)
   },
 }))
 

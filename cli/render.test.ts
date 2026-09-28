@@ -90,6 +90,30 @@ const hasGreen = (buf: Buffer) => {
   return false
 }
 
+/** A single-slot, single-target/-locale set carrying one sticker over a full-bleed device. */
+async function stickerFixture(layer: 'behind' | 'front') {
+  const { repo, project } = await fixture()
+  await mkdir(join(repo, 'aso', 'artwork'), { recursive: true })
+  const c = createCanvas(200, 200)
+  const ctx = c.getContext('2d')
+  ctx.fillStyle = 'rgb(0, 255, 0)'
+  ctx.fillRect(0, 0, 200, 200)
+  await writeFile(join(repo, 'aso', 'artwork', 'dot.png'), c.toBuffer('image/png'))
+  project.set.targets = [project.set.targets[0]]
+  project.set.locales = [project.set.locales[0]]
+  project.set.settings = { layout: 'bleed' }
+  project.set.slots = [
+    {
+      id: 'a',
+      kind: 'screen',
+      screen: 'shot',
+      overrides: {},
+      elements: [{ id: 'dot', artwork: 'dot', x: 0.5, y: 0.5, width: 0.6, rotate: 0, layer, shadow: false }],
+    },
+  ]
+  return { repo, project }
+}
+
 // Full-size renders take seconds each; under a parallel full run the 5 s default is too tight.
 describe('renderProject', { timeout: 30_000 }, () => {
   // Registering every face reads ~60 MB; on a cold cache that alone outlasts the first test's timeout.
@@ -202,5 +226,43 @@ describe('renderProject', { timeout: 30_000 }, () => {
     await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
       /slot a.*locale en.*missing\.png/s,
     )
+  })
+
+  it('draws a front sticker on top of the device', async () => {
+    const { repo, project } = await stickerFixture('front')
+    const [file] = await renderProject({ project, repoRoot: repo })
+    expect(hasGreen(await readFile(file))).toBe(true)
+  })
+
+  it('draws a behind sticker under the device, where it never reaches the export', async () => {
+    const { repo, project } = await stickerFixture('behind')
+    const [file] = await renderProject({ project, repoRoot: repo })
+    expect(hasGreen(await readFile(file))).toBe(false)
+  })
+
+  it('fails with slot and locale when a sticker artwork file is missing', async () => {
+    const { repo, project } = await stickerFixture('front')
+    project.set.slots[0].elements![0].artwork = 'nope'
+    await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
+      /Artwork image missing for slot a, locale en.*nope\.png/s,
+    )
+  })
+
+  it('slices a sticker across a panorama seam onto the tile it actually falls on', async () => {
+    const { repo, project } = await stickerFixture('front')
+    project.set.targets = [{ ...project.set.targets[0], out: 'panorama/{storeLocale}/{n}.png' }]
+    project.set.settings = { layout: 'panorama' }
+    // Composition width is two tiles; x=0.85 puts the sticker's centre well into the second one.
+    project.set.slots[0].elements![0] = {
+      id: 'dot',
+      artwork: 'dot',
+      x: 0.85,
+      y: 0.5,
+      width: 0.3,
+      layer: 'front',
+    }
+    const [first, second] = await renderProject({ project, repoRoot: repo })
+    expect(hasGreen(await readFile(first))).toBe(false)
+    expect(hasGreen(await readFile(second))).toBe(true)
   })
 })

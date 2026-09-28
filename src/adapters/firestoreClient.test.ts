@@ -56,6 +56,41 @@ describe('parseGalleryDoc', () => {
   })
 })
 
+describe('load resolves sticker artwork like a slot`s own', () => {
+  const stickerProject = {
+    ...set,
+    locales: [{ id: 'en', store: {} }],
+    slots: [
+      {
+        id: 'a',
+        kind: 'screen' as const,
+        screen: 'shot',
+        overrides: {},
+        elements: [{ id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.3 }],
+      },
+    ],
+  }
+
+  const firebaseFor = (data: unknown) =>
+    ({
+      firestore: () => ({
+        collection: () => ({
+          doc: () => ({ get: () => Promise.resolve({ exists: true, data: () => data }) }),
+        }),
+      }),
+      storage: () => ({
+        ref: (path: string) => ({ getDownloadURL: () => Promise.resolve(`https://cdn/${path}`) }),
+      }),
+      auth: () => ({ currentUser: null }),
+    }) as unknown as CompatFirebase
+
+  it('resolves the sticker artwork url even before the gallery lists it', async () => {
+    const store = firestoreProjectStore({ setId: 'default', firebase: firebaseFor({ set: stickerProject }) })
+    await store.load()
+    expect(store.artworkUrl?.('en', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/en/dot.png')
+  })
+})
+
 describe('save across the iframe boundary', () => {
   /**
    * The compat SDK rejects an object whose prototype is not ITS OWN Object.prototype with

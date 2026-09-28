@@ -1,10 +1,10 @@
-import type { Background, Layout, PlacementSource, Screen, Settings } from '../types'
+import type { Background, Layout, PlacementSource, SceneElement, Screen, Settings } from '../types'
 import { frameAspect, getDevice, getFrameColor } from '../presets/devices'
 import { getLayout } from '../presets/layouts'
 import { getPosition } from '../presets/positions'
 import { effectiveSettings } from '../lib/settings'
 import { drawTextBlock } from './text'
-import { drawArtwork, drawDevice, type Box } from './frames'
+import { drawArtwork, drawDevice, drawSticker, type Box } from './frames'
 
 export function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, bg: Background) {
   if (bg.kind === 'solid') {
@@ -53,7 +53,10 @@ function drawBackdrop(
  * Single source of truth for what a screenshot looks like. The on-screen preview and the
  * exported PNG both call this — only `w`/`h` differ — so the preview is exact, not an approximation.
  */
-export type SceneSources = Partial<Record<PlacementSource, CanvasImageSource | null>>
+export type SceneSources = Partial<Record<PlacementSource, CanvasImageSource | null>> & {
+  /** sticker images, keyed by each `SceneElement.imageId` */
+  elements?: Record<string, CanvasImageSource | null>
+}
 
 export type DeviceBox = { box: Box; source: PlacementSource; angle: number; frameless: boolean }
 
@@ -114,6 +117,43 @@ export function textFloor(layout: Layout, h: number): number | undefined {
   return header ? h * (header.top + header.height) + h * 0.02 : undefined
 }
 
+/**
+ * Draws the elements of one layer. `x`/`width` are fractions of the composition width, `y` of the
+ * tile height (the layout convention); the drawn height follows the image's own aspect ratio, so a
+ * sticker with no known image draws nothing rather than guessing a box for it.
+ */
+function drawStickers(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  w: number,
+  h: number,
+  elements: SceneElement[] | undefined,
+  sources: SceneSources,
+  layer: SceneElement['layer'],
+) {
+  if (!elements) return
+  for (const el of elements) {
+    if (el.layer !== layer) continue
+    const img = sources.elements?.[el.imageId]
+    if (!img) continue
+    const iw = (img as HTMLImageElement).naturalWidth || (img as HTMLCanvasElement).width
+    const ih = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height
+    if (!iw || !ih) continue
+    const dw = el.width * w
+    const dh = (dw * ih) / iw
+    const box: Box = { x: el.x * W - dw / 2, y: el.y * h - dh / 2, w: dw, h: dh }
+
+    ctx.save()
+    if (el.rotate !== 0) {
+      ctx.translate(box.x + box.w / 2, box.y + box.h / 2)
+      ctx.rotate((el.rotate * Math.PI) / 180)
+      ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2))
+    }
+    drawSticker(ctx, box, img, el.shadow)
+    ctx.restore()
+  }
+}
+
 /** How many store tiles a screen's composition covers — the canvas must be `span` tiles wide. */
 export const sceneSpan = (screen: Screen, settings: Settings): 1 | 2 =>
   getLayout(effectiveSettings(screen, settings).layout).span
@@ -138,6 +178,7 @@ export function renderScene(
   drawBackground(ctx, W, h, settings.background)
 
   if (settings.backdropColor) drawBackdrop(ctx, W, w, h, layout, settings.backdropColor)
+  drawStickers(ctx, W, w, h, screen.elements, sources, 'behind')
   drawTextBlock(ctx, W, w, h, layout, screen, settings)
 
   const device = getDevice(settings.deviceId)
@@ -170,4 +211,6 @@ export function renderScene(
     else drawDevice(ctx, box, device, color, img)
     ctx.restore()
   }
+
+  drawStickers(ctx, W, w, h, screen.elements, sources, 'front')
 }

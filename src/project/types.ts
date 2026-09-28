@@ -1,8 +1,32 @@
-import type { ScreenOverrides, Settings } from '../types'
+import type { SceneElementLayer, ScreenOverrides, Settings } from '../types'
 
 export type ProjectTarget = { id: string; sizeId: string; deviceId: string; out: string }
 export type ProjectLocale = { id: string; store: Record<string, string> }
 export type SlotKind = 'screen' | 'artwork'
+
+/**
+ * A free-standing image (a sticker) on a slot — not a setting, not an override, just extra
+ * material the slot carries. Resolved through the same `artworkSources` template as a slot's
+ * own `artwork`; there is no second path mechanism. `x`/`y` are the sticker's centre, `x` a
+ * fraction of the composition width (tile width × the layout's span), `y` a fraction of the tile
+ * height — the convention every layout already uses. `width` is a fraction of the tile width;
+ * height follows the image's own aspect ratio. `rotate` is degrees, clockwise positive, like a
+ * placement's `rotate`.
+ */
+export type SlotElement = {
+  id: string
+  /** file name (no directory, no extension), resolved exactly like a slot's `artwork` */
+  artwork: string
+  x: number
+  y: number
+  width: number
+  /** default 0 */
+  rotate?: number
+  /** default 'front' */
+  layer?: SceneElementLayer
+  /** default false */
+  shadow?: boolean
+}
 export type ProjectSlot = {
   id: string
   kind: SlotKind
@@ -23,6 +47,9 @@ export type ProjectSlot = {
    * `artwork` placement draws next to the screen. Unrelated to `kind: 'artwork'`.
    */
   artwork?: string
+  /** free-standing images (stickers) drawn on this slot; absent or empty means none. The GUI
+   *  must never write an empty array — no stickers means the key is absent. */
+  elements?: SlotElement[]
   /** open feedback for whoever regenerates this screenshot; never part of the approval hash */
   note?: string
 }

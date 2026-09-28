@@ -144,6 +144,62 @@ describe('artwork and pair', () => {
   })
 })
 
+describe('elements', () => {
+  const withStickers = (): Project => ({
+    ...project,
+    set: {
+      ...project.set,
+      slots: [
+        {
+          id: 'budget-light',
+          kind: 'screen',
+          screen: 'budget_screen',
+          overrides: {},
+          elements: [
+            { id: 's1', artwork: 'dot', x: 0.5, y: 0.75, width: 0.3 },
+            {
+              id: 's2',
+              artwork: 'other',
+              x: 0.2,
+              y: 0.2,
+              width: 0.1,
+              rotate: 12,
+              layer: 'behind',
+              shadow: true,
+            },
+          ],
+        },
+      ],
+    },
+  })
+
+  it('resolves the artwork name into an image registry id, per locale', () => {
+    const [screen] = screensFor(withStickers(), 'de')
+    expect(screen.elements?.[0].imageId).toBe('artwork/de/dot')
+    expect(screen.elements?.[1].imageId).toBe('artwork/de/other')
+  })
+
+  it('carries the geometry through unchanged', () => {
+    const [screen] = screensFor(withStickers(), 'en')
+    expect(screen.elements?.[0]).toMatchObject({ id: 's1', x: 0.5, y: 0.75, width: 0.3 })
+  })
+
+  it('defaults rotate, layer and shadow when the slot leaves them out', () => {
+    const [screen] = screensFor(withStickers(), 'en')
+    expect(screen.elements?.[0]).toMatchObject({ rotate: 0, layer: 'front', shadow: false })
+  })
+
+  it('keeps an explicit rotate, layer and shadow', () => {
+    const [screen] = screensFor(withStickers(), 'en')
+    expect(screen.elements?.[1]).toMatchObject({ rotate: 12, layer: 'behind', shadow: true })
+  })
+
+  it('leaves elements absent, not an empty array, when the slot names none', () => {
+    const [, accounts] = screensFor(project, 'en')
+    expect(accounts.elements).toBeUndefined()
+  })
+})
+
 describe('settingsFor', () => {
   it('lays the set settings over the defaults and takes size and device from the target', () => {
     const s = settingsFor(project, 'play')
