@@ -1,6 +1,6 @@
 import type { Gallery, ProjectStore } from '../project/store'
 import { EMPTY_GALLERY } from '../project/store'
-import { slotScreens } from '../project/types'
+import { isSlotSticker, slotScreens } from '../project/types'
 import type { Project, ProjectCopies, ProjectSet } from '../project/types'
 
 /**
@@ -108,9 +108,11 @@ export function firestoreProjectStore({
         })),
       )
       // A sticker names its image the same way a slot's own artwork does, so it needs the same
-      // resolved-even-before-the-gallery-syncs treatment.
+      // resolved-even-before-the-gallery-syncs treatment. A shape has no image to resolve.
       const referencedArtwork = project.set.slots.flatMap((s) =>
-        [s.artwork, ...(s.elements ?? []).map((el) => el.artwork)].filter((a): a is string => !!a),
+        [s.artwork, ...(s.elements ?? []).filter(isSlotSticker).map((el) => el.artwork)].filter(
+          (a): a is string => !!a,
+        ),
       )
       const artworkKeys = project.set.locales.flatMap((l) =>
         unique([...referencedArtwork, ...(galleries[l.id]?.artwork ?? [])]).map((artwork) => ({

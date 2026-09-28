@@ -1,4 +1,4 @@
-import type { DeviceSpec, FrameColor } from '../types'
+import type { DeviceSpec, FrameColor, ShapeKind } from '../types'
 
 export type Box = { x: number; y: number; w: number; h: number }
 
@@ -51,6 +51,20 @@ export function drawSticker(
   }
   ctx.drawImage(img, box.x, box.y, box.w, box.h)
   ctx.restore()
+}
+
+/**
+ * A filled deco shape: no image, no shadow, unlike `drawSticker`. `box` is already square for a
+ * circle — the caller sized it from the element's own `width` as a diameter, not an image's
+ * aspect ratio.
+ */
+export function drawShape(ctx: CanvasRenderingContext2D, box: Box, shape: ShapeKind, color: string) {
+  ctx.fillStyle = color
+  if (shape === 'circle') {
+    ctx.beginPath()
+    ctx.ellipse(box.x + box.w / 2, box.y + box.h / 2, box.w / 2, box.h / 2, 0, 0, Math.PI * 2)
+    ctx.fill()
+  }
 }
 
 function drawNotch(ctx: CanvasRenderingContext2D, screen: Box, device: DeviceSpec, frameW: number) {

@@ -1,3 +1,4 @@
+import { isSlotShape } from './types'
 import type { Project } from './types'
 
 export function canonicalJson(value: unknown): string {
@@ -49,10 +50,13 @@ export async function approvalHash(
       }
     }
     // Stickers resolve through the same artwork template. Last, and only for slots that have
-    // one, so a set with none keeps the exact hash it had before this feature existed.
+    // one, so a set with none keeps the exact hash it had before this feature existed. A shape
+    // has no image at all — it already went into the set JSON above, and loads no bytes here.
     for (const locale of set.locales) {
       for (const slot of set.slots) {
-        for (const el of slot.elements ?? []) parts.push(await artworkBytes(locale.id, el.artwork))
+        for (const el of slot.elements ?? []) {
+          if (!isSlotShape(el)) parts.push(await artworkBytes(locale.id, el.artwork))
+        }
       }
     }
   }

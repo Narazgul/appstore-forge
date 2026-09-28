@@ -117,6 +117,42 @@ export function TypeSection({ settings, put }: SectionProps) {
           for <code>*words*</code>
         </span>
       </Row>
+      <Row label="Accent bar">
+        <input
+          type="color"
+          value={settings.accentBar ?? '#000000'}
+          onChange={(e) => put({ accentBar: e.target.value })}
+        />
+        <input
+          className="field"
+          value={settings.accentBar ?? ''}
+          placeholder="None"
+          onChange={(e) => put({ accentBar: e.target.value || null })}
+        />
+        {settings.accentBar && (
+          <button className="seg shrink-0" onClick={() => put({ accentBar: null })}>
+            None
+          </button>
+        )}
+      </Row>
+      <Row label="Subtitle style">
+        <div className="flex flex-1 gap-1 rounded-lg p-1" style={{ background: 'var(--shell)' }}>
+          <button
+            className="seg"
+            data-active={settings.subheadStyle === 'plain'}
+            onClick={() => put({ subheadStyle: 'plain' })}
+          >
+            Plain
+          </button>
+          <button
+            className="seg"
+            data-active={settings.subheadStyle === 'label'}
+            onClick={() => put({ subheadStyle: 'label' })}
+          >
+            Label
+          </button>
+        </div>
+      </Row>
     </>
   )
 }

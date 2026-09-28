@@ -1,32 +1,51 @@
-import type { SceneElementLayer, ScreenOverrides, Settings } from '../types'
+import type { SceneElementLayer, ScreenOverrides, ShapeKind, Settings } from '../types'
 
 export type ProjectTarget = { id: string; sizeId: string; deviceId: string; out: string }
 export type ProjectLocale = { id: string; store: Record<string, string> }
 export type SlotKind = 'screen' | 'artwork'
 
-/**
- * A free-standing image (a sticker) on a slot — not a setting, not an override, just extra
- * material the slot carries. Resolved through the same `artworkSources` template as a slot's
- * own `artwork`; there is no second path mechanism. `x`/`y` are the sticker's centre, `x` a
- * fraction of the composition width (tile width × the layout's span), `y` a fraction of the tile
- * height — the convention every layout already uses. `width` is a fraction of the tile width;
- * height follows the image's own aspect ratio. `rotate` is degrees, clockwise positive, like a
- * placement's `rotate`.
- */
-export type SlotElement = {
+/** Fields every free-standing slot element shares — sticker or shape — not a setting, not an
+ *  override, just extra material the slot carries. `x`/`y` are the element's centre, `x` a
+ *  fraction of the composition width (tile width × the layout's span), `y` a fraction of the
+ *  tile height — the convention every layout already uses. `width` is a fraction of the tile
+ *  width. `rotate` is degrees, clockwise positive, like a placement's `rotate`. */
+type SlotElementBase = {
   id: string
-  /** file name (no directory, no extension), resolved exactly like a slot's `artwork` */
-  artwork: string
   x: number
   y: number
   width: number
   /** default 0 */
   rotate?: number
-  /** default 'front' */
+  /** default 'front' for a sticker, 'behind' for a shape (see the GUI's `SHAPE_DEFAULTS`) */
   layer?: SceneElementLayer
+}
+
+/**
+ * A free-standing image (a sticker) on a slot. Resolved through the same `artworkSources`
+ * template as a slot's own `artwork`; there is no second path mechanism. Height follows the
+ * image's own aspect ratio.
+ */
+export type SlotSticker = SlotElementBase & {
+  /** file name (no directory, no extension), resolved exactly like a slot's `artwork` */
+  artwork: string
   /** default false */
   shadow?: boolean
 }
+
+/** A filled deco shape (e.g. a circle behind the stickers). No image, no shadow; `width` is the
+ *  shape's own extent (a circle's diameter) as a fraction of the tile width. */
+export type SlotShape = SlotElementBase & {
+  shape: ShapeKind
+  /** #rgb, #rrggbb or #rrggbbaa */
+  color: string
+}
+
+/** Exactly one of `artwork` (a sticker) or `shape` (a deco shape) — never both, never neither;
+ *  `validateProject` enforces it. */
+export type SlotElement = SlotSticker | SlotShape
+
+export const isSlotShape = (el: SlotElement): el is SlotShape => 'shape' in el
+export const isSlotSticker = (el: SlotElement): el is SlotSticker => !isSlotShape(el)
 export type ProjectSlot = {
   id: string
   kind: SlotKind

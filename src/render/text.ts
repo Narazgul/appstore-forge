@@ -1,5 +1,5 @@
 import type { Layout, Screen, Settings } from '../types'
-import { fontStackFor, isRtl } from '../presets/scripts'
+import { fontStackFor, isRtl, scriptFontFor } from '../presets/scripts'
 
 /**
  * The text engine: markup parsing, line breaking, auto-shrink, and drawing. Split out of
@@ -163,7 +163,16 @@ export type TextLayout = {
   fits: boolean
   /** false when the eyebrow, at the size the block settled on, is wider than the box */
   eyebrowFits: boolean
+  /** whether `drawTextBlock` draws the accent bar — already resolved from `settings.accentBar` */
+  hasAccentBar: boolean
+  /** already resolved from `settings.subheadStyle`: 'label' with no highlights falls back here */
+  subheadStyle: 'plain' | 'label'
 }
+
+/** Baseline below the top of a line's em box, as a fraction of the font size. The engines place
+ *  `textBaseline = 'top'` differently for a stack led by a script face, so the line is set on a
+ *  fixed baseline instead: Inter's em-box top in the browser. */
+export const BASELINE = 0.8
 
 export const HEAD_LH = 1.14
 export const SUB_LH = 1.4
@@ -173,11 +182,61 @@ export const EYEBROW_GAP = 0.6
 /** Eyebrow size as a fraction of the headline size it sits above. */
 export const EYEBROW_SCALE = 0.34
 
-function setFont(ctx: TextMeasurer, weight: 400 | 700, size: number, settings: Settings, lang?: string) {
-  ctx.font = `${weight} ${size}px ${fontStackFor(settings.fontId, lang)}`
+/** Accent bar geometry, em-relative to the headline size it sits above. */
+export const ACCENT_BAR_WIDTH = 0.75
+export const ACCENT_BAR_THICKNESS = 0.13
+/** Gap from the bar's bottom edge to the next line (the eyebrow, or the headline). */
+export const ACCENT_BAR_GAP = 0.48
+
+/** `subheadStyle: 'label'` box geometry, em-relative to the subhead size. */
+export const LABEL_PAD_X = 0.26
+export const LABEL_PAD_Y = 0.365
+export const LABEL_RADIUS = 0.22
+/** Space between the headline and the first label box, em-relative to the subhead size. */
+export const LABEL_GAP = 0.2
+/** The label box's own text row, tighter than `SUB_LH` (the plain subhead's line height, which
+ *  carries extra leading for stacked lines) — the box's padding supplies the visual air instead. */
+export const LABEL_LINE_HEIGHT = 1.0
+/** Extra gap between two stacked label boxes, beyond each box's own height. */
+export const LABEL_LINE_GAP = 0.3
+
+/** The label box's own height — text row height plus the vertical padding on both sides. Shared
+ *  between `blockHeight` (measurement) and `drawTextBlock` (drawing) so they can never disagree. */
+export const labelBoxHeight = (subSize: number) => subSize * LABEL_LINE_HEIGHT + subSize * LABEL_PAD_Y * 2
+
+type FontWeight = 400 | 600 | 700
+
+/**
+ * Baloo 2, Nunito and Poppins ship only Regular/Bold static files, everywhere. DM Sans, Space
+ * Grotesk and Playfair Display are true variable webfonts in the browser (`@fontsource-variable`)
+ * but only Regular/Bold static files in the CLI (`cli/fonts.ts` has no variable master for them).
+ * None of these six can draw a real 600 identically in both runtimes, so 600 maps to 700 for all
+ * of them — the same substitution in the GUI and the CLI — while Inter, the one face that is a
+ * true variable master in both places, draws 600 for real.
+ */
+const STATIC_WEIGHT_FAMILIES = new Set([
+  'baloo-2',
+  'nunito',
+  'dm-sans',
+  'poppins',
+  'space-grotesk',
+  'playfair',
+])
+
+function resolveWeight(weight: FontWeight, fontId: string, lang?: string): FontWeight {
+  if (weight !== 600) return weight
+  // A script language draws with its Noto face regardless of `fontId`, and every bundled Noto
+  // face is a true variable master in both the browser and Skia — a real 600 always reaches it.
+  if (scriptFontFor(lang)) return 600
+  return STATIC_WEIGHT_FAMILIES.has(fontId) ? 700 : 600
+}
+
+function setFont(ctx: TextMeasurer, weight: FontWeight, size: number, settings: Settings, lang?: string) {
+  const resolved = resolveWeight(weight, settings.fontId, lang)
+  ctx.font = `${resolved} ${size}px ${fontStackFor(settings.fontId, lang)}`
   // Skia (the CLI canvas) ignores the weight in `font` for a variable face and draws its default
   // instance; only the axis picks the weight. Browsers have no such property and need none.
-  if ('fontVariationSettings' in ctx) ctx.fontVariationSettings = `"wght" ${weight}`
+  if ('fontVariationSettings' in ctx) ctx.fontVariationSettings = `"wght" ${resolved}`
 }
 
 export function setHeadFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
@@ -196,7 +255,13 @@ export function setEyebrowFont(ctx: TextMeasurer, size: number, settings: Settin
   ctx.letterSpacing = `${size * 0.08}px`
 }
 
-/** Total height of a laid-out block: eyebrow (if any) + headline + gap + subhead. */
+/** The `subheadStyle: 'label'` subhead: weight 600, fully opaque, no tracking of its own. */
+export function setLabelSubFont(ctx: TextMeasurer, size: number, settings: Settings, lang?: string) {
+  setFont(ctx, 600, size, settings, lang)
+  ctx.letterSpacing = '0px'
+}
+
+/** Total height of a laid-out block: accent bar (if any) + eyebrow (if any) + headline + gap + subhead. */
 export const blockHeight = ({
   headLines,
   headSize,
@@ -205,10 +270,19 @@ export const blockHeight = ({
   gap,
   eyebrowLine,
   eyebrowSize,
+  hasAccentBar,
+  subheadStyle,
 }: TextLayout) =>
+  (hasAccentBar ? headSize * ACCENT_BAR_THICKNESS + headSize * ACCENT_BAR_GAP : 0) +
   (eyebrowLine ? eyebrowSize * EYEBROW_LH + eyebrowSize * EYEBROW_GAP : 0) +
   headLines.length * headSize * HEAD_LH +
-  (subLines.length ? gap + subLines.length * subSize * SUB_LH : 0)
+  (subLines.length
+    ? (subheadStyle === 'label' ? subSize * LABEL_GAP : gap) +
+      (subheadStyle === 'label'
+        ? subLines.length * labelBoxHeight(subSize) +
+          Math.max(0, subLines.length - 1) * subSize * LABEL_LINE_GAP
+        : subLines.length * subSize * SUB_LH)
+    : 0)
 
 export function layoutText(
   ctx: TextMeasurer,
@@ -227,13 +301,25 @@ export function layoutText(
   const subWords = parseMarkup(screen.subhead)
   // No markup in the eyebrow: a literal `*` is not a highlight delimiter here.
   const eyebrowText = screen.eyebrow ? screen.eyebrow.toLocaleUpperCase(screen.lang) : ''
+  const hasAccentBar = !!settings.accentBar
+  // A 'label' box is drawn in highlights[0]; with none to draw it in, it is not a look, it is a
+  // missing colour — fall back to plain rather than draw an invisible or wrongly-coloured box.
+  const subheadStyle = settings.subheadStyle === 'label' && settings.highlights.length > 0 ? 'label' : 'plain'
 
   // Shrink until it fits: overflowing into the device is worse than smaller type.
   for (let i = 0; i < 30; i++) {
     setHeadFont(ctx, headSize, settings, screen.lang)
     const headLines = wrap(ctx, headWords, maxWidth, screen.lang)
-    setSubFont(ctx, subSize, settings, screen.lang)
-    const subLines = wrap(ctx, subWords, maxWidth, screen.lang)
+    // A label line is drawn at its own weight inside a padded box, so it is measured and
+    // wrapped the same way, or the words would be spaced for the wrong weight.
+    let subLines: Line[]
+    if (subheadStyle === 'label') {
+      setLabelSubFont(ctx, subSize, settings, screen.lang)
+      subLines = wrap(ctx, subWords, maxWidth - subSize * LABEL_PAD_X * 2, screen.lang)
+    } else {
+      setSubFont(ctx, subSize, settings, screen.lang)
+      subLines = wrap(ctx, subWords, maxWidth, screen.lang)
+    }
     const eyebrowSize = headSize * EYEBROW_SCALE
     let eyebrowLine: Line | null = null
     if (eyebrowText) {
@@ -251,6 +337,8 @@ export function layoutText(
       gap,
       fits: true,
       eyebrowFits: !eyebrowLine || eyebrowLine.width <= maxWidth,
+      hasAccentBar,
+      subheadStyle,
     }
     if (blockHeight(candidate) <= maxHeight) return candidate
     if (headSize < h * 0.014) return { ...candidate, fits: false }
@@ -267,6 +355,8 @@ export function layoutText(
     gap,
     fits: false,
     eyebrowFits: true,
+    hasAccentBar,
+    subheadStyle,
   }
 }
 
@@ -318,7 +408,7 @@ function drawLine(
     }
   }
 
-  line.words.forEach((word, i) => ctx.fillText(word.text, xs[i], y))
+  line.words.forEach((word, i) => ctx.fillText(word.text, xs[i], y + size * BASELINE))
 }
 
 /** The text box: the tile minus padding by default, or wherever the layout puts it. */
@@ -369,7 +459,17 @@ export function drawTextBlock(
     h,
     layout.textScale,
   )
-  const { headSize, subSize, headLines, subLines, gap, eyebrowLine, eyebrowSize } = block
+  const {
+    headSize,
+    subSize,
+    headLines,
+    subLines,
+    gap,
+    eyebrowLine,
+    eyebrowSize,
+    hasAccentBar,
+    subheadStyle,
+  } = block
 
   let y = bandTop + (bandHeight - blockHeight(block)) / 2
   // In an RTL script the "left" alignment is the right edge of the box.
@@ -383,10 +483,22 @@ export function drawTextBlock(
 
   ctx.save()
   ctx.textAlign = 'left'
-  ctx.textBaseline = 'top'
+  ctx.textBaseline = 'alphabetic'
   // The words are placed by hand; `direction` is what makes the engine shape and order the
   // glyphs inside one word right to left.
   ctx.direction = rtl ? 'rtl' : 'ltr'
+
+  if (hasAccentBar && settings.accentBar) {
+    const barWidth = headSize * ACCENT_BAR_WIDTH
+    const barThickness = headSize * ACCENT_BAR_THICKNESS
+    ctx.save()
+    ctx.fillStyle = settings.accentBar
+    ctx.beginPath()
+    ctx.roundRect(startX(barWidth), y, barWidth, barThickness, barThickness / 2)
+    ctx.fill()
+    ctx.restore()
+    y += barThickness + headSize * ACCENT_BAR_GAP
+  }
 
   if (eyebrowLine) {
     ctx.fillStyle = settings.eyebrowColor ?? settings.textColor
@@ -402,12 +514,32 @@ export function drawTextBlock(
     y += headSize * HEAD_LH
   }
   if (subLines.length) {
-    y += gap
-    ctx.globalAlpha = 0.72
-    setSubFont(ctx, subSize, settings, screen.lang)
-    for (const line of subLines) {
-      drawLine(ctx, line, startX(line.width), y, subSize, [], rtl)
-      y += subSize * SUB_LH
+    y += subheadStyle === 'label' ? subSize * LABEL_GAP : gap
+    if (subheadStyle === 'label') {
+      const padX = subSize * LABEL_PAD_X
+      const padY = subSize * LABEL_PAD_Y
+      const boxH = labelBoxHeight(subSize)
+      setLabelSubFont(ctx, subSize, settings, screen.lang)
+      for (const line of subLines) {
+        const boxWidth = line.width + padX * 2
+        const boxX = startX(boxWidth)
+        ctx.save()
+        ctx.fillStyle = settings.highlights[0]
+        ctx.beginPath()
+        ctx.roundRect(boxX, y, boxWidth, boxH, subSize * LABEL_RADIUS)
+        ctx.fill()
+        ctx.restore()
+        ctx.fillStyle = settings.textColor
+        drawLine(ctx, line, boxX + padX, y + padY, subSize, [], rtl)
+        y += boxH + subSize * LABEL_LINE_GAP
+      }
+    } else {
+      ctx.globalAlpha = 0.72
+      setSubFont(ctx, subSize, settings, screen.lang)
+      for (const line of subLines) {
+        drawLine(ctx, line, startX(line.width), y, subSize, [], rtl)
+        y += subSize * SUB_LH
+      }
     }
   }
   ctx.restore()

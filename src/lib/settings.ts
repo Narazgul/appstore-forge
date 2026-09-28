@@ -37,6 +37,8 @@ export const SECTION_KEYS: Record<string, OverridableKey[]> = {
     'eyebrowColor',
     'textAlign',
     'highlights',
+    'accentBar',
+    'subheadStyle',
   ],
   adjust: ['tilt', 'deviceScale'],
 }

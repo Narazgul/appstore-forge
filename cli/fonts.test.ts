@@ -1,7 +1,7 @@
 import { GlobalFonts, createCanvas } from '@napi-rs/canvas'
 import { describe, expect, it } from 'vitest'
 import { FONTS } from '../src/presets/fonts'
-import { setHeadFont, setSubFont } from '../src/render/text'
+import { setHeadFont, setLabelSubFont, setSubFont } from '../src/render/text'
 import { DEFAULT_SETTINGS } from '../src/store'
 import type { Settings } from '../src/types'
 import { registerFonts } from './fonts'
@@ -66,6 +66,52 @@ describe('registerFonts', () => {
       expect(sub, `${lang}: subhead should be regular, not the thin default instance`).toBeGreaterThan(
         thin * 1.5,
       )
+    }
+  })
+
+  // Baloo 2, Nunito, DM Sans, Poppins, Space Grotesk and Playfair ship only Regular/Bold static
+  // files (see FONT_FILES above and the comment on STATIC_WEIGHT_FAMILIES in render/text.ts) —
+  // 600 is mapped to 700 for all of them, in the GUI and here, so the two runtimes agree.
+  const STATIC_WEIGHT_FAMILIES = ['baloo-2', 'nunito', 'dm-sans', 'poppins', 'space-grotesk', 'playfair']
+
+  it('draws weight 600 identically to 700 for every static-only family', () => {
+    registerFonts()
+    for (const id of STATIC_WEIGHT_FAMILIES) {
+      const settings = { ...DEFAULT_SETTINGS, fontId: id, headlineTracking: 0 }
+      const w600 = width(setLabelSubFont, settings, 'The quick brown fox')
+      const w700 = width(setHeadFont, settings, 'The quick brown fox')
+      expect(w600, `${id}: weight 600 should resolve to the same advance width as 700`).toBeCloseTo(w700, 5)
+    }
+  })
+
+  it('draws a real weight 600 for Inter, distinct from both 400 and 700', () => {
+    registerFonts()
+    const settings = { ...DEFAULT_SETTINGS, fontId: 'inter', headlineTracking: 0 }
+    const w400 = width(setSubFont, settings, 'The quick brown fox')
+    const w600 = width(setLabelSubFont, settings, 'The quick brown fox')
+    const w700 = width(setHeadFont, settings, 'The quick brown fox')
+    expect(
+      w600,
+      'weight 600 should sit strictly between 400 and 700, not collapse to either',
+    ).toBeGreaterThan(w400)
+    expect(w600).toBeLessThan(w700)
+  })
+
+  it('draws script fonts at a real weight 600, not the static-family downgrade to 700', () => {
+    registerFonts()
+    const samples: [string, string][] = [
+      ['ja', 'デジタルな袋分け家計簿'],
+      ['ar', 'ميزانية الأظرف الرقمية'],
+    ]
+    for (const [lang, text] of samples) {
+      // fontId is a static family here on purpose — a script language must still get the Noto
+      // face's own real 600, ignoring the Latin fontId's downgrade rule entirely.
+      const settings = { ...DEFAULT_SETTINGS, fontId: 'poppins' }
+      const ink400 = ink(setSubFont, settings, text, lang)
+      const ink600 = ink(setLabelSubFont, settings, text, lang)
+      const ink700 = ink(setHeadFont, settings, text, lang)
+      expect(ink600, `${lang}: 600 should carry more ink than 400`).toBeGreaterThan(ink400)
+      expect(ink600, `${lang}: 600 should not be as heavy as 700`).toBeLessThan(ink700)
     }
   })
 })

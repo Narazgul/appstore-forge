@@ -1,10 +1,11 @@
+import { isShapeElement } from '../types'
 import type { Background, Layout, PlacementSource, SceneElement, Screen, Settings } from '../types'
 import { frameAspect, getDevice, getFrameColor } from '../presets/devices'
 import { getLayout } from '../presets/layouts'
 import { getPosition } from '../presets/positions'
 import { effectiveSettings } from '../lib/settings'
 import { drawTextBlock } from './text'
-import { drawArtwork, drawDevice, drawSticker, type Box } from './frames'
+import { drawArtwork, drawDevice, drawShape, drawSticker, type Box } from './frames'
 
 export function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, bg: Background) {
   if (bg.kind === 'solid') {
@@ -118,11 +119,28 @@ export function textFloor(layout: Layout, h: number): number | undefined {
 }
 
 /**
- * Draws the elements of one layer. `x`/`width` are fractions of the composition width, `y` of the
- * tile height (the layout convention); the drawn height follows the image's own aspect ratio, so a
- * sticker with no known image draws nothing rather than guessing a box for it.
+ * A shape's box is a square sized from its own `width` (a fraction of the tile width, the
+ * diameter for a circle) — no image, so no aspect ratio to follow. A sticker's box instead
+ * follows its image's own aspect ratio; with no known image it has no box at all, so it draws
+ * nothing rather than guessing one.
  */
-function drawStickers(
+function elementBox(el: SceneElement, W: number, w: number, h: number, sources: SceneSources): Box | null {
+  const dw = el.width * w
+  if (isShapeElement(el)) return { x: el.x * W - dw / 2, y: el.y * h - dw / 2, w: dw, h: dw }
+  const img = sources.elements?.[el.imageId]
+  if (!img) return null
+  const iw = (img as HTMLImageElement).naturalWidth || (img as HTMLCanvasElement).width
+  const ih = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height
+  if (!iw || !ih) return null
+  const dh = (dw * ih) / iw
+  return { x: el.x * W - dw / 2, y: el.y * h - dh / 2, w: dw, h: dh }
+}
+
+/**
+ * Draws the elements of one layer — stickers and shapes alike. `x`/`width` are fractions of the
+ * composition width, `y` of the tile height (the layout convention).
+ */
+function drawElements(
   ctx: CanvasRenderingContext2D,
   W: number,
   w: number,
@@ -134,14 +152,8 @@ function drawStickers(
   if (!elements) return
   for (const el of elements) {
     if (el.layer !== layer) continue
-    const img = sources.elements?.[el.imageId]
-    if (!img) continue
-    const iw = (img as HTMLImageElement).naturalWidth || (img as HTMLCanvasElement).width
-    const ih = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height
-    if (!iw || !ih) continue
-    const dw = el.width * w
-    const dh = (dw * ih) / iw
-    const box: Box = { x: el.x * W - dw / 2, y: el.y * h - dh / 2, w: dw, h: dh }
+    const box = elementBox(el, W, w, h, sources)
+    if (!box) continue
 
     ctx.save()
     if (el.rotate !== 0) {
@@ -149,7 +161,8 @@ function drawStickers(
       ctx.rotate((el.rotate * Math.PI) / 180)
       ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2))
     }
-    drawSticker(ctx, box, img, el.shadow)
+    if (isShapeElement(el)) drawShape(ctx, box, el.shape, el.color)
+    else drawSticker(ctx, box, sources.elements![el.imageId]!, el.shadow)
     ctx.restore()
   }
 }
@@ -178,7 +191,7 @@ export function renderScene(
   drawBackground(ctx, W, h, settings.background)
 
   if (settings.backdropColor) drawBackdrop(ctx, W, w, h, layout, settings.backdropColor)
-  drawStickers(ctx, W, w, h, screen.elements, sources, 'behind')
+  drawElements(ctx, W, w, h, screen.elements, sources, 'behind')
   drawTextBlock(ctx, W, w, h, layout, screen, settings)
 
   const device = getDevice(settings.deviceId)
@@ -216,5 +229,5 @@ export function renderScene(
     ctx.restore()
   }
 
-  drawStickers(ctx, W, w, h, screen.elements, sources, 'front')
+  drawElements(ctx, W, w, h, screen.elements, sources, 'front')
 }

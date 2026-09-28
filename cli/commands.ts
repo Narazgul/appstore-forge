@@ -7,6 +7,7 @@ import { getLayout } from '../src/presets/layouts'
 import { getSize } from '../src/presets/sizes'
 import { artworkPath, screensFor, settingsFor, sourcePath } from '../src/project/bridge'
 import { approvalHash } from '../src/project/hash'
+import { isSlotSticker } from '../src/project/types'
 import type { Approval, Project } from '../src/project/types'
 import { validateProject, type Issue } from '../src/project/validate'
 import { sceneSpan } from '../src/render/scene'
@@ -62,7 +63,7 @@ async function elementAspectChecker(
   const aspects = new Map<string, number>()
   for (const locale of project.set.locales) {
     for (const slot of project.set.slots) {
-      for (const el of slot.elements ?? []) {
+      for (const el of (slot.elements ?? []).filter(isSlotSticker)) {
         const key = `${locale.id}:${el.artwork}`
         if (aspects.has(key)) continue
         const path = join(repoRoot, artworkPath(project.set, locale.id, el.artwork))

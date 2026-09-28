@@ -26,6 +26,12 @@ a real bug.
    which also sets the `wght` axis. `cli/fonts.test.ts` guards it: width for
    Latin (Skia's fake bold keeps advance widths), ink for CJK.
 
+   Never set text with `textBaseline = 'top'`. Skia puts "top" at the bounding
+   box of the stack's first face, Chrome at its em box, so an Arabic line landed
+   0.6 em lower in the CLI than in the preview. `drawLine` sets every line on the
+   alphabetic baseline `BASELINE` below the top of its em box; `text.test.ts`
+   guards it.
+
 4. **Text must never overlap the device.** The text block auto-shrinks to fit the
    gap down to the device band. When adding a size control, measure against that
    real gap, not the nominal band, or the control will fight the shrink and feel

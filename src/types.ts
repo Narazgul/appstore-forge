@@ -50,26 +50,43 @@ export type Position = {
 
 export type SceneElementLayer = 'behind' | 'front'
 
-/**
- * A free-standing image on a slot, independent of any device frame — a sticker. Resolved from a
- * project's `SlotElement` (see `project/types.ts`) with every optional field defaulted, so the
- * renderer never has to ask "or else what".
- */
-export type SceneElement = {
+/** A shape element's silhouette. One kind today; the union leaves room for more. */
+export type ShapeKind = 'circle'
+
+/** Fields every free-standing slot element shares — sticker or shape — independent of any
+ *  device frame. Resolved from a project's `SlotElement` (see `project/types.ts`) with every
+ *  optional field defaulted, so the renderer never has to ask "or else what". */
+export type SceneElementBase = {
   id: string
-  /** key into the image registry, alongside `imageId` / `artworkId` / `pairId` */
-  imageId: string
-  /** fraction of the composition width (tile width × span); the sticker's centre */
+  /** fraction of the composition width (tile width × span); the element's centre */
   x: number
-  /** fraction of the tile height; the sticker's centre */
+  /** fraction of the tile height; the element's centre */
   y: number
-  /** fraction of the tile width; height follows the image's own aspect ratio */
+  /** fraction of the tile width; height follows the image's own aspect ratio for a sticker, or
+   *  equals width for a shape (a circle's diameter) */
   width: number
   /** degrees, clockwise positive, like a placement's rotate */
   rotate: number
   layer: SceneElementLayer
+}
+
+/** A free-standing image — the original sticker. */
+export type StickerElement = SceneElementBase & {
+  /** key into the image registry, alongside `imageId` / `artworkId` / `pairId` */
+  imageId: string
   shadow: boolean
 }
+
+/** A filled deco shape — no image, no shadow. */
+export type ShapeElement = SceneElementBase & {
+  shape: ShapeKind
+  color: string
+}
+
+export type SceneElement = StickerElement | ShapeElement
+
+export const isShapeElement = (el: SceneElement): el is ShapeElement => 'shape' in el
+export const isStickerElement = (el: SceneElement): el is StickerElement => !isShapeElement(el)
 
 export type LayoutId =
   | 'text-top'
@@ -195,6 +212,11 @@ export type Settings = {
   subheadScale: number
   /** headline letter-spacing as a fraction of the font size (em) */
   headlineTracking: number
+  /** short, fully rounded bar drawn above the block (above the eyebrow, if any); null = none */
+  accentBar: string | null
+  /** 'label' draws each subhead line on a rounded box in `highlights[0]`, weight 600, fully
+   *  opaque; falls back to 'plain' (today's look) when there are no highlights to draw it in */
+  subheadStyle: 'plain' | 'label'
   sizeId: string
   /** the picked palette's second pair, for the "contrast tile" toggle; null = none picked */
   altColors: PaletteColors | null

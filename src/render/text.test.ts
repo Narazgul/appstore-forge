@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   drawTextBlock,
+  BASELINE,
   HEAD_LH,
+  LABEL_PAD_X,
   availableTextHeight,
   blockHeight,
   layoutText,
@@ -326,30 +328,45 @@ describe('wrap with a language', () => {
   })
 })
 
-describe('drawTextBlock geometry', () => {
-  /** A canvas stand-in: 10 units per character, and it writes down where things landed. */
-  const recorder = () => {
-    const texts: { text: string; x: number; color: string }[] = []
-    const bands: { left: number; right: number }[] = []
-    const ctx = {
-      font: '',
-      letterSpacing: '0px',
-      textAlign: 'left',
-      textBaseline: 'top',
-      direction: 'ltr',
-      fillStyle: '',
-      globalAlpha: 1,
-      measureText: (text: string) => ({ width: text.length * 10 }),
-      save: () => {},
-      restore: () => {},
-      beginPath: () => {},
-      fill: () => {},
-      roundRect: (x: number, _y: number, w: number) => bands.push({ left: x, right: x + w }),
-      fillText: (text: string, x: number) => texts.push({ text, x, color: ctx.fillStyle }),
-    }
-    return { ctx: ctx as unknown as CanvasRenderingContext2D, texts, bands, state: ctx }
+/** A canvas stand-in: 10 units per character, and it writes down where things landed. Shared by
+ *  every `drawTextBlock` describe block below. */
+const recorder = () => {
+  const texts: { text: string; x: number; y: number; color: string; font: string; alpha: number }[] = []
+  const bands: { left: number; right: number; top: number; height: number; color: string }[] = []
+  const ctx = {
+    font: '',
+    letterSpacing: '0px',
+    textAlign: 'left',
+    textBaseline: 'top',
+    direction: 'ltr',
+    fillStyle: '',
+    globalAlpha: 1,
+    measureText: (text: string) => ({ width: text.length * 10 }),
+    save: () => {},
+    restore: () => {},
+    beginPath: () => {},
+    fill: () => {},
+    roundRect: (x: number, y: number, w: number, h: number) =>
+      bands.push({ left: x, right: x + w, top: y, height: h, color: ctx.fillStyle }),
+    fillText: (text: string, x: number, y: number) =>
+      texts.push({ text, x, y, color: ctx.fillStyle, font: ctx.font, alpha: ctx.globalAlpha }),
   }
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, texts, bands, state: ctx }
+}
 
+describe('drawTextBlock baseline', () => {
+  it('sets a line on the fixed baseline below the top of its em box, not on the engine\'s "top"', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, 500, 250, 1000, getLayout('panorama'), screen('*Head*'), DEFAULT_SETTINGS)
+    expect(rec.state.textBaseline).toBe('alphabetic')
+    const band = rec.bands[0]
+    const size = band.height / 0.98
+    const emTop = band.top - size * 0.1
+    expect(rec.texts[0].y).toBeCloseTo(emTop + size * BASELINE, 6)
+  })
+})
+
+describe('drawTextBlock geometry', () => {
   // 'panorama' pins the text box explicitly, so boxLeft and maxWidth are exact.
   const layout = getLayout('panorama')
   const W = 500
@@ -415,5 +432,200 @@ describe('drawTextBlock geometry', () => {
     const fallback = recorder()
     drawTextBlock(fallback.ctx, W, 250, 1000, layout, s, left)
     expect(fallback.texts[0].color).toBe(left.textColor)
+  })
+})
+
+describe('accent bar', () => {
+  const H = 2868
+
+  it('adds nothing to the measurement when accentBar is null — identical to before the feature', () => {
+    const block = layoutText(measurer(), screen('Short'), DEFAULT_SETTINGS, 10_000, H, H)
+    expect(block.hasAccentBar).toBe(false)
+    expect(blockHeight(block)).toBeCloseTo(block.headLines.length * block.headSize * HEAD_LH, 5)
+  })
+
+  it('adds its height above the block when set, growing blockHeight', () => {
+    const withBar = { ...DEFAULT_SETTINGS, accentBar: '#5d47e8' }
+    const with_ = layoutText(measurer(), screen('Short'), withBar, 10_000, H, H)
+    const without = layoutText(measurer(), screen('Short'), DEFAULT_SETTINGS, 10_000, H, H)
+    expect(with_.hasAccentBar).toBe(true)
+    expect(blockHeight(with_)).toBeGreaterThan(blockHeight(without))
+  })
+
+  it('scales with the headline size, like the rest of the block', () => {
+    const withBar = { ...DEFAULT_SETTINGS, accentBar: '#5d47e8' }
+    const a = layoutText(measurer(), screen('Short'), withBar, 10_000, H, H)
+    const big = layoutText(measurer(), screen('Short'), { ...withBar, headlineScale: 1.5 }, 10_000, H, H)
+    const aExtra = blockHeight(a) - a.headLines.length * a.headSize * HEAD_LH
+    const bigExtra = blockHeight(big) - big.headLines.length * big.headSize * HEAD_LH
+    expect(bigExtra).toBeCloseTo(aExtra * 1.5, 5)
+  })
+})
+
+describe('drawTextBlock accent bar', () => {
+  // 'panorama' pins the text box explicitly, so boxLeft and maxWidth are exact.
+  const layout = getLayout('panorama')
+  const W = 500
+  const boxLeft = W * layout.text!.left!
+  const maxWidth = W * layout.text!.width!
+  const settings = { ...DEFAULT_SETTINGS, textAlign: 'left' as const, accentBar: '#5d47e8' }
+
+  it('draws exactly one rounded bar, in accentBar colour, above the headline', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head'), settings)
+    expect(rec.bands).toHaveLength(1)
+    expect(rec.bands[0].color).toBe('#5d47e8')
+    expect(rec.bands[0].top).toBeLessThan(rec.texts[0].y)
+  })
+
+  it('sits flush with the start of the text column for a left-aligned LTR screen', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head'), settings)
+    expect(rec.bands[0].left).toBeCloseTo(boxLeft, 6)
+  })
+
+  it('sits flush with the right edge of the column for a left-aligned RTL screen', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, { ...screen('Head'), lang: 'ar' }, settings)
+    expect(rec.bands[0].right).toBeCloseTo(boxLeft + maxWidth, 6)
+  })
+
+  it('centers the bar in the column when textAlign is center', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head'), { ...settings, textAlign: 'center' })
+    const barCenter = rec.bands[0].left + (rec.bands[0].right - rec.bands[0].left) / 2
+    expect(barCenter).toBeCloseTo(boxLeft + maxWidth / 2, 3)
+  })
+
+  it('draws above the eyebrow, when there is one, not just the headline', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, { ...screen('Head'), eyebrow: 'new' }, settings)
+    expect(rec.bands[0].top).toBeLessThan(rec.texts[0].y)
+    expect(rec.texts[0].text).toBe('NEW')
+  })
+
+  it('draws nothing when accentBar is null, exactly as before the feature', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head'), { ...settings, accentBar: null })
+    expect(rec.bands).toHaveLength(0)
+  })
+})
+
+describe('subheadStyle "label"', () => {
+  const H = 2868
+
+  it('resolves to "label" only when there are highlights to draw the box in', () => {
+    const s = screen('Head', 'Sub')
+    const labelSettings = { ...DEFAULT_SETTINGS, subheadStyle: 'label' as const }
+    const block = layoutText(measurer(), s, labelSettings, 10_000, H, H)
+    expect(block.subheadStyle).toBe('label')
+  })
+
+  it('falls back to "plain" when highlights is empty', () => {
+    const s = screen('Head', 'Sub')
+    const noHighlights = { ...DEFAULT_SETTINGS, subheadStyle: 'label' as const, highlights: [] }
+    const block = layoutText(measurer(), s, noHighlights, 10_000, H, H)
+    expect(block.subheadStyle).toBe('plain')
+  })
+
+  it('measures a different block height than the plain style (its own box geometry, not SUB_LH)', () => {
+    const s = screen('Head', 'Sub')
+    const plain = layoutText(measurer(), s, DEFAULT_SETTINGS, 10_000, H, H)
+    const label = layoutText(
+      measurer(),
+      s,
+      { ...DEFAULT_SETTINGS, subheadStyle: 'label' as const },
+      10_000,
+      H,
+      H,
+    )
+    expect(blockHeight(label)).not.toBeCloseTo(blockHeight(plain), 0)
+  })
+
+  const weightAware = (): TextMeasurer => {
+    const m: TextMeasurer = {
+      font: '',
+      letterSpacing: '0px',
+      measureText: (text: string) => ({ width: text.length * (m.font.startsWith('600 ') ? 12 : 10) }),
+    }
+    return m
+  }
+
+  it('measures label lines at the weight they are drawn in', () => {
+    const block = layoutText(
+      weightAware(),
+      screen('Head', 'Sub line'),
+      { ...DEFAULT_SETTINGS, subheadStyle: 'label' as const },
+      10_000,
+      H,
+      H,
+    )
+    expect(block.subLines[0].widths).toEqual([36, 48])
+  })
+
+  it('wraps a label line inside the box padding, not the bare text width', () => {
+    const settings = { ...DEFAULT_SETTINGS, subheadStyle: 'label' as const }
+    const probe = layoutText(weightAware(), screen('H', 'aaaa bbbb'), settings, 10_000, H, H)
+    const oneLine = probe.subLines[0].width
+    const padding = probe.subSize * LABEL_PAD_X * 2
+    const tight = layoutText(weightAware(), screen('H', 'aaaa bbbb'), settings, oneLine + padding / 2, H, H)
+    expect(tight.subLines).toHaveLength(2)
+  })
+})
+
+describe('drawTextBlock subheadStyle "label"', () => {
+  const layout = getLayout('panorama')
+  const W = 500
+  const boxLeft = W * layout.text!.left!
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    textAlign: 'left' as const,
+    subheadStyle: 'label' as const,
+    highlights: ['#ffe27a'],
+    textColor: '#111114',
+  }
+
+  it('draws the subhead line on a rounded box filled with highlights[0]', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head', 'Sub'), settings)
+    const subBand = rec.bands.find((b) => b.color === '#ffe27a')
+    expect(subBand).toBeDefined()
+  })
+
+  it('draws the subhead text at weight 600, fully opaque, in textColor', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head', 'Sub'), settings)
+    const subText = rec.texts.find((t) => t.text === 'Sub')
+    expect(subText).toBeDefined()
+    expect(subText!.font).toContain('600')
+    expect(subText!.alpha).toBe(1)
+    expect(subText!.color).toBe('#111114')
+  })
+
+  it('places the box flush with the text column, like the accent bar', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head', 'Sub'), settings)
+    const subBand = rec.bands.find((b) => b.color === '#ffe27a')!
+    expect(subBand.left).toBeCloseTo(boxLeft, 6)
+  })
+
+  it('keeps the plain style translucent at alpha 0.72 and weight 400, unchanged from before the feature', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head', 'Sub'), {
+      ...settings,
+      subheadStyle: 'plain',
+    })
+    const subText = rec.texts.find((t) => t.text === 'Sub')!
+    expect(subText.alpha).toBe(0.72)
+    expect(subText.font).toContain('400')
+    expect(rec.bands.some((b) => b.color === '#ffe27a')).toBe(false)
+  })
+
+  it('falls back to the plain look when there are no highlights', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, W, 250, 1000, layout, screen('Head', 'Sub'), { ...settings, highlights: [] })
+    const subText = rec.texts.find((t) => t.text === 'Sub')!
+    expect(subText.alpha).toBe(0.72)
+    expect(rec.bands).toHaveLength(0)
   })
 })

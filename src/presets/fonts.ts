@@ -86,7 +86,10 @@ export async function preloadFonts(): Promise<void> {
   const jobs: Promise<unknown>[] = []
   for (const font of FONTS) {
     if (!font.family) continue
-    for (const weight of [400, 700]) {
+    // 600 is a real weight for the label subhead (`setLabelSubFont` in `render/text.ts`) on
+    // every family that has one to load — a static Regular/Bold face just resolves 600→700
+    // there and this load is a harmless no-op for it.
+    for (const weight of [400, 600, 700]) {
       jobs.push(document.fonts.load(`${weight} 64px "${font.family}"`).catch(() => undefined))
     }
   }
@@ -99,7 +102,9 @@ export async function preloadScriptFonts(langs: string[]): Promise<void> {
   const families = new Set(langs.map((l) => scriptFontFor(l)?.family).filter((f): f is string => !!f))
   await Promise.all(
     [...families].flatMap((family) =>
-      [400, 700].map((weight) => document.fonts.load(`${weight} 64px "${family}"`).catch(() => undefined)),
+      [400, 600, 700].map((weight) =>
+        document.fonts.load(`${weight} 64px "${family}"`).catch(() => undefined),
+      ),
     ),
   )
   await document.fonts.ready

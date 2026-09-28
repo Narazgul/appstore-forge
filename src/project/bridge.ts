@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS } from '../store'
-import type { Screen, Settings } from '../types'
+import type { Screen, SceneElement, Settings } from '../types'
+import { isSlotShape } from './types'
 import type { Project, ProjectSet, ProjectTarget } from './types'
 
 export const imageIdFor = (localeId: string, screen: string) => `${localeId}/${screen}`
@@ -24,16 +25,29 @@ export function screensFor(project: Project, localeId: string): Screen[] {
     lang: localeId,
     eyebrow: copy[slot.id]?.eyebrow || undefined,
     elements: slot.elements?.length
-      ? slot.elements.map((el) => ({
-          id: el.id,
-          imageId: artworkIdFor(localeId, el.artwork),
-          x: el.x,
-          y: el.y,
-          width: el.width,
-          rotate: el.rotate ?? 0,
-          layer: el.layer ?? 'front',
-          shadow: el.shadow ?? false,
-        }))
+      ? slot.elements.map((el): SceneElement =>
+          isSlotShape(el)
+            ? {
+                id: el.id,
+                shape: el.shape,
+                color: el.color,
+                x: el.x,
+                y: el.y,
+                width: el.width,
+                rotate: el.rotate ?? 0,
+                layer: el.layer ?? 'front',
+              }
+            : {
+                id: el.id,
+                imageId: artworkIdFor(localeId, el.artwork),
+                x: el.x,
+                y: el.y,
+                width: el.width,
+                rotate: el.rotate ?? 0,
+                layer: el.layer ?? 'front',
+                shadow: el.shadow ?? false,
+              },
+        )
       : undefined,
   }))
 }

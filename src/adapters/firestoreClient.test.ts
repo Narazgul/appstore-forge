@@ -89,6 +89,44 @@ describe('load resolves sticker artwork like a slot`s own', () => {
     await store.load()
     expect(store.artworkUrl?.('en', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/en/dot.png')
   })
+
+  it('never asks Storage to resolve a shape, which has no image at all', async () => {
+    const shapeProject = {
+      ...set,
+      locales: [{ id: 'en', store: {} }],
+      slots: [
+        {
+          id: 'a',
+          kind: 'screen' as const,
+          screen: 'shot',
+          overrides: {},
+          elements: [
+            { id: 's', artwork: 'dot', x: 0.5, y: 0.5, width: 0.3 },
+            { id: 'kreis', shape: 'circle' as const, color: '#eaf2ff', x: 0.193, y: 0.2, width: 0.666 },
+          ],
+        },
+      ],
+    }
+    const requested: string[] = []
+    const firebase = {
+      firestore: () => ({
+        collection: () => ({
+          doc: () => ({ get: () => Promise.resolve({ exists: true, data: () => ({ set: shapeProject }) }) }),
+        }),
+      }),
+      storage: () => ({
+        ref: (path: string) => {
+          requested.push(path)
+          return { getDownloadURL: () => Promise.resolve(`https://cdn/${path}`) }
+        },
+      }),
+      auth: () => ({ currentUser: null }),
+    } as unknown as CompatFirebase
+    const store = firestoreProjectStore({ setId: 'default', firebase })
+    await store.load()
+    expect(requested.some((p) => p.includes('kreis'))).toBe(false)
+    expect(store.artworkUrl?.('en', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/en/dot.png')
+  })
 })
 
 describe('save across the iframe boundary', () => {

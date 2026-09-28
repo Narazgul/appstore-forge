@@ -395,3 +395,130 @@ describe('renderScene with stickers', () => {
     expect(call.args[1]).toBeCloseTo(0.75 * W - dw / 2, 5)
   })
 })
+
+describe('renderScene with shapes', () => {
+  const settings = { ...DEFAULT_SETTINGS, layout: 'text-top' as const, positionId: 'center' }
+  const shapeEl = (patch: Partial<SceneElement> = {}): SceneElement => ({
+    id: 'kreis',
+    shape: 'circle',
+    color: '#eaf2ff',
+    x: 0.193,
+    y: 0.2,
+    width: 0.666,
+    rotate: 0,
+    layer: 'behind',
+    ...patch,
+  })
+
+  it('draws a filled circle with no source image at all', () => {
+    const { ctx, calls } = recorder()
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), elements: [shapeEl()] }, settings, {})
+    expect(calls.some((c) => c.fn === 'ellipse')).toBe(true)
+    expect(calls.some((c) => c.fn === 'fill')).toBe(true)
+  })
+
+  it('sets fillStyle to the shape color before filling it', () => {
+    const { ctx, calls } = recorder()
+    // layer 'front' so nothing drawn afterwards (the device, the notch) overwrites fillStyle
+    // before this assertion reads it back.
+    renderScene(
+      ctx,
+      TILE.w,
+      TILE.h,
+      { ...screen(), elements: [shapeEl({ color: '#ff00aa', layer: 'front' })] },
+      settings,
+      {},
+    )
+    expect(ctx.fillStyle).toBe('#ff00aa')
+    expect(calls.some((c) => c.fn === 'ellipse')).toBe(true)
+  })
+
+  it('sizes the circle as a square from its own width, not any image aspect ratio', () => {
+    const { ctx, calls } = recorder()
+    renderScene(
+      ctx,
+      TILE.w,
+      TILE.h,
+      { ...screen(), elements: [shapeEl({ x: 0.5, y: 0.5, width: 0.4 })] },
+      settings,
+      {},
+    )
+    const [call] = calls.filter((c) => c.fn === 'ellipse')
+    const r = (0.4 * TILE.w) / 2
+    expect(call.args).toEqual([0.5 * TILE.w, 0.5 * TILE.h, r, r, 0, 0, Math.PI * 2])
+  })
+
+  it('draws a behind shape before the device and a front shape after it', () => {
+    const device = fakeImage(400, 800)
+
+    const behind = recorder()
+    renderScene(
+      behind.ctx,
+      TILE.w,
+      TILE.h,
+      { ...screen(), elements: [shapeEl({ layer: 'behind' })] },
+      settings,
+      {
+        self: device,
+      },
+    )
+    const behindEllipseAt = behind.calls.findIndex((c) => c.fn === 'ellipse')
+    const behindDeviceAt = behind.calls.findIndex((c) => c.fn === 'drawImage')
+    expect(behindEllipseAt).toBeGreaterThanOrEqual(0)
+    expect(behindEllipseAt).toBeLessThan(behindDeviceAt)
+
+    const front = recorder()
+    renderScene(
+      front.ctx,
+      TILE.w,
+      TILE.h,
+      { ...screen(), elements: [shapeEl({ layer: 'front' })] },
+      settings,
+      {
+        self: device,
+      },
+    )
+    const frontEllipseAt = front.calls.findIndex((c) => c.fn === 'ellipse')
+    const frontDeviceAt = front.calls.findIndex((c) => c.fn === 'drawImage')
+    expect(frontEllipseAt).toBeGreaterThan(frontDeviceAt)
+  })
+
+  it('draws a shape and a sticker in the array order within the same layer', () => {
+    const sticker = fakeImage(100, 100)
+    const { ctx, calls } = recorder()
+    const els: SceneElement[] = [
+      shapeEl({ id: 'kreis', layer: 'front' }),
+      {
+        id: 'sticker',
+        imageId: 'sticker',
+        x: 0.5,
+        y: 0.5,
+        width: 0.3,
+        rotate: 0,
+        layer: 'front',
+        shadow: false,
+      },
+    ]
+    renderScene(ctx, TILE.w, TILE.h, { ...screen(), elements: els }, settings, { elements: { sticker } })
+    const ellipseAt = calls.findIndex((c) => c.fn === 'ellipse')
+    const stickerAt = calls.findIndex((c) => c.fn === 'drawImage' && c.args[0] === sticker)
+    expect(ellipseAt).toBeLessThan(stickerAt)
+  })
+
+  it('positions a shape against the full composition width, so it can sit across a panorama seam', () => {
+    const layout = getLayout('panorama')
+    const panorama = { ...DEFAULT_SETTINGS, layout: 'panorama' as const, positionId: 'lean' }
+    const { ctx, calls } = recorder()
+    renderScene(
+      ctx,
+      TILE.w,
+      TILE.h,
+      { ...screen(), elements: [shapeEl({ x: 0.75, width: 0.2 })] },
+      panorama,
+      {},
+    )
+    const [call] = calls.filter((c) => c.fn === 'ellipse')
+    const W = TILE.w * layout.span
+    expect(call.args[0]).toBeCloseTo(0.75 * W, 5)
+  })
+})

@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type { SceneSources } from '../render/scene'
 import { placeholderScreenshot } from '../render/placeholder'
 import { useStore } from '../store'
+import { isStickerElement } from '../types'
 import type { Screen } from '../types'
 
 /**
@@ -36,13 +37,16 @@ export function useSceneSources(screen: Screen, screens?: Screen[]): SceneSource
   // A dedicated selector: an array is what `useShallow` can compare entry by entry, so the
   // sticker images stay a stable reference across store updates that touch neither of them —
   // building the keyed record straight in the selector would hand back a fresh object every
-  // time and trip the same "fresh object" loop `useShallow` exists to avoid (rules.md #7).
+  // time and trip the same "fresh object" loop `useShallow` exists to avoid (rules.md #7). A
+  // shape carries no image at all, so it never reaches this registry.
   const elementImages = useStore(
-    useShallow((s) => (screen.elements ?? []).map((el) => s.images[el.imageId] ?? null)),
+    useShallow((s) =>
+      (screen.elements ?? []).filter(isStickerElement).map((el) => s.images[el.imageId] ?? null),
+    ),
   )
-  const elements = useMemo(
-    () => Object.fromEntries((screen.elements ?? []).map((el, i) => [el.imageId, elementImages[i]])),
-    [screen.elements, elementImages],
-  )
+  const elements = useMemo(() => {
+    const stickers = (screen.elements ?? []).filter(isStickerElement)
+    return Object.fromEntries(stickers.map((el, i) => [el.imageId, elementImages[i]]))
+  }, [screen.elements, elementImages])
   return useMemo(() => ({ ...base, elements }), [base, elements])
 }

@@ -12,9 +12,10 @@ import {
   settingsFor,
   sourcePath,
 } from '../src/project/bridge'
-import { slotScreens } from '../src/project/types'
+import { isSlotSticker, slotScreens } from '../src/project/types'
 import type { Project } from '../src/project/types'
 import { renderScene, sceneSpan } from '../src/render/scene'
+import { isStickerElement } from '../src/types'
 import { measureTextBlock, type TextMeasurer } from '../src/render/text'
 import { effectiveSettings } from '../src/lib/settings'
 import { getLayout } from '../src/presets/layouts'
@@ -86,8 +87,9 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
         images[artworkIdFor(locale.id, slot.artwork)] = await loadImage(art)
       }
       // Stickers share the artwork registry, keyed by the same id — a sticker reusing a slot's
-      // own artwork file (or another sticker's) is read from disk only once.
-      for (const el of slot.elements ?? []) {
+      // own artwork file (or another sticker's) is read from disk only once. A shape has no
+      // image to load.
+      for (const el of (slot.elements ?? []).filter(isSlotSticker)) {
         const id = artworkIdFor(locale.id, el.artwork)
         if (images[id]) continue
         const art = join(repoRoot, artworkPath(set, locale.id, el.artwork))
@@ -134,10 +136,9 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
             : at(i - 1)) as unknown as CanvasImageSource,
           artwork: (screen.artworkId ? (images[screen.artworkId] ?? null) : null) as CanvasImageSource | null,
           elements: Object.fromEntries(
-            (screen.elements ?? []).map((el) => [
-              el.imageId,
-              (images[el.imageId] ?? null) as unknown as CanvasImageSource | null,
-            ]),
+            (screen.elements ?? [])
+              .filter(isStickerElement)
+              .map((el) => [el.imageId, (images[el.imageId] ?? null) as unknown as CanvasImageSource | null]),
           ),
         })
         for (let part = 0; part < span; part++) {

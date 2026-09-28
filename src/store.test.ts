@@ -392,6 +392,25 @@ describe('the store in project mode', () => {
     expect(state.settings.deviceId).toBe(state.project!.set.targets[0].deviceId)
   })
 
+  // Compatibility: an old set's file never carried `accentBar`/`subheadStyle`. Editing an
+  // unrelated key must not write them in either — only touching those controls should, exactly
+  // like every other setting (see rules.md, rule 8: undefined-means-inherit).
+  it('editing an unrelated setting on an old project never writes accentBar or subheadStyle', () => {
+    open(project())
+    useStore.getState().setSettings({ tilt: 3 })
+    const settings = useStore.getState().project!.set.settings
+    expect(settings).toEqual({ tilt: 3 })
+    expect(settings).not.toHaveProperty('accentBar')
+    expect(settings).not.toHaveProperty('subheadStyle')
+  })
+
+  it('an old project with neither key resolves to the pre-feature defaults (accentBar off, subheadStyle plain)', () => {
+    open(project())
+    const state = useStore.getState()
+    expect(state.settings.accentBar).toBeNull()
+    expect(state.settings.subheadStyle).toBe('plain')
+  })
+
   it('removeScreen drops the slot and its copy in every locale', () => {
     const p = project()
     p.copies.de = { a: { headline: 'Eins', subhead: '' } }

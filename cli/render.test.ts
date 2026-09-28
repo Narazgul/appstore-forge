@@ -6,7 +6,7 @@ import { PNG } from 'pngjs'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { registerFonts } from './fonts'
 import { outFilePattern, renderProject } from './render'
-import type { Project } from '../src/project/types'
+import type { Project, SlotSticker } from '../src/project/types'
 
 async function fixture() {
   const repo = await mkdtemp(join(tmpdir(), 'forge-render-'))
@@ -88,6 +88,38 @@ const hasGreen = (buf: Buffer) => {
     if (data[i] < 40 && data[i + 1] > 90 && data[i + 2] < 40) return true
   }
   return false
+}
+
+const pixelAt = (buf: Buffer, x: number, y: number) => {
+  const { data, width } = PNG.sync.read(buf)
+  const i = (y * width + x) * 4
+  return { r: data[i], g: data[i + 1], b: data[i + 2] }
+}
+
+const hasBlue = (buf: Buffer) => {
+  const { data } = PNG.sync.read(buf)
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] < 40 && data[i + 1] < 40 && data[i + 2] > 200) return true
+  }
+  return false
+}
+
+/** A single-slot, single-target/-locale set carrying one shape over a full-bleed device. */
+async function shapeFixture(layer: 'behind' | 'front') {
+  const { repo, project } = await fixture()
+  project.set.targets = [project.set.targets[0]]
+  project.set.locales = [project.set.locales[0]]
+  project.set.settings = { layout: 'bleed' }
+  project.set.slots = [
+    {
+      id: 'a',
+      kind: 'screen',
+      screen: 'shot',
+      overrides: {},
+      elements: [{ id: 'kreis', shape: 'circle', color: '#0000ff', x: 0.5, y: 0.5, width: 0.6, layer }],
+    },
+  ]
+  return { repo, project }
 }
 
 /** A single-slot, single-target/-locale set carrying one sticker over a full-bleed device. */
@@ -290,7 +322,7 @@ describe('renderProject', { timeout: 30_000 }, () => {
 
   it('fails with slot and locale when a sticker artwork file is missing', async () => {
     const { repo, project } = await stickerFixture('front')
-    project.set.slots[0].elements![0].artwork = 'nope'
+    ;(project.set.slots[0].elements![0] as SlotSticker).artwork = 'nope'
     await expect(renderProject({ project, repoRoot: repo })).rejects.toThrow(
       /Artwork image missing for slot a, locale en.*nope\.png/s,
     )
@@ -318,6 +350,39 @@ describe('renderProject', { timeout: 30_000 }, () => {
     await renderProject({ project, repoRoot: repo })
     const { readdir } = await import('node:fs/promises')
     expect(await readdir(join(repo, 'feature/en-US'))).toEqual(['featureGraphic.png'])
+  })
+
+  it('draws a front shape as a filled circle whose exact centre pixel is the shape color', async () => {
+    const { repo, project } = await shapeFixture('front')
+    const [file] = await renderProject({ project, repoRoot: repo })
+    const png = await readFile(file)
+    expect(pixelAt(png, 660, 1434)).toEqual({ r: 0, g: 0, b: 255 })
+  })
+
+  it('draws a behind shape under the device, where its centre never reaches the export', async () => {
+    const { repo, project } = await shapeFixture('behind')
+    const [file] = await renderProject({ project, repoRoot: repo })
+    const png = await readFile(file)
+    expect(pixelAt(png, 660, 1434)).not.toEqual({ r: 0, g: 0, b: 255 })
+  })
+
+  it('slices a shape across a panorama seam onto the tile it actually falls on', async () => {
+    const { repo, project } = await shapeFixture('front')
+    project.set.targets = [{ ...project.set.targets[0], out: 'panorama/{storeLocale}/{n}.png' }]
+    project.set.settings = { layout: 'panorama' }
+    // Composition width is two tiles; x=0.85 puts the shape's centre well into the second one.
+    project.set.slots[0].elements![0] = {
+      id: 'kreis',
+      shape: 'circle',
+      color: '#0000ff',
+      x: 0.85,
+      y: 0.5,
+      width: 0.3,
+      layer: 'front',
+    }
+    const [first, second] = await renderProject({ project, repoRoot: repo })
+    expect(hasBlue(await readFile(first))).toBe(false)
+    expect(hasBlue(await readFile(second))).toBe(true)
   })
 
   it('slices a sticker across a panorama seam onto the tile it actually falls on', async () => {

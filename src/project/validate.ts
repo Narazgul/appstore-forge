@@ -1,4 +1,10 @@
-import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastAgainstBackground, contrastRatio } from '../lib/contrast'
+import {
+  AA_LARGE_TEXT,
+  AA_NORMAL_TEXT,
+  contrastAgainstBackground,
+  contrastRatio,
+  parseHexColor,
+} from '../lib/contrast'
 import { effectiveSettings } from '../lib/settings'
 import { DEVICES } from '../presets/devices'
 import { getFont } from '../presets/fonts'
@@ -10,8 +16,11 @@ import { parseMarkup } from '../render/text'
 import { DEFAULT_SETTINGS } from '../store'
 import type { Layout, Screen, Settings } from '../types'
 import { DEFAULT_ARTWORK_SOURCES, artworkPath, sourcePath } from './bridge'
-import { slotScreens } from './types'
-import type { Project, ProjectSet, ProjectSlot, SlotElement } from './types'
+import { isSlotShape, slotScreens } from './types'
+import type { Project, ProjectSet, ProjectSlot, SlotSticker } from './types'
+
+/** #rgb, #rrggbb or #rrggbbaa — the same reach as any CSS hex color the renderer's `fillStyle` accepts. */
+const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
 
 export type Issue = { level: 'error' | 'warn'; message: string; slot?: string; locale?: string }
 
@@ -45,7 +54,7 @@ const positionOf = (set: ProjectSet, slot: ProjectSlot) =>
  * the sticker as a square — good enough for a warning, not for a pixel claim.
  */
 /** `tileAspect` is tile width / height: `width` counts in tile widths, the box height in tile heights. */
-function stickerBox(el: SlotElement, span: number, aspect: number | null, tileAspect: number) {
+function stickerBox(el: SlotSticker, span: number, aspect: number | null, tileAspect: number) {
   const halfWidthOfW = el.width / (2 * span)
   const heightFraction = (aspect ? el.width / aspect : el.width) * tileAspect
   return {
@@ -110,10 +119,28 @@ export function validateProject(
     }
   }
 
+  const validHexColor = (color: string) => {
+    try {
+      parseHexColor(color)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const validSubheadStyle = (style: unknown): boolean => style === 'plain' || style === 'label'
+  if (set.settings.accentBar != null && !validHexColor(set.settings.accentBar))
+    error(`accentBar is not a hex colour: ${set.settings.accentBar}`)
+  if (set.settings.subheadStyle !== undefined && !validSubheadStyle(set.settings.subheadStyle))
+    error(`Unknown subheadStyle "${set.settings.subheadStyle}"`)
+
   const seen = new Set<string>()
   for (const slot of set.slots) {
     if (seen.has(slot.id)) error(`Duplicate slot id ${slot.id}`, { slot: slot.id })
     seen.add(slot.id)
+    if (slot.overrides.accentBar != null && !validHexColor(slot.overrides.accentBar))
+      error(`accentBar is not a hex colour: ${slot.overrides.accentBar}`, { slot: slot.id })
+    if (slot.overrides.subheadStyle !== undefined && !validSubheadStyle(slot.overrides.subheadStyle))
+      error(`Unknown subheadStyle "${slot.overrides.subheadStyle}"`, { slot: slot.id })
     if (slot.kind === 'artwork') {
       if (slot.screen) error('Artwork slot must not name a screen', { slot: slot.id })
       if (slot.pair) error('Artwork slot must not name a pair', { slot: slot.id })
@@ -127,11 +154,24 @@ export function validateProject(
 
     const elementIds = new Set<string>()
     for (const el of slot.elements ?? []) {
-      if (elementIds.has(el.id)) error(`Duplicate sticker id ${el.id}`, { slot: slot.id })
+      const kind = isSlotShape(el) ? 'shape' : 'sticker'
+      if (elementIds.has(el.id)) error(`Duplicate ${kind} id ${el.id}`, { slot: slot.id })
       elementIds.add(el.id)
+      const hasArtwork = 'artwork' in el && el.artwork !== undefined
+      const hasShape = 'shape' in el && el.shape !== undefined
+      if (hasArtwork === hasShape)
+        error(`Element ${el.id} must be exactly one of artwork or shape`, { slot: slot.id })
       if (![el.x, el.y, el.width, el.rotate ?? 0].every(Number.isFinite))
-        error(`Sticker ${el.id} has a non-finite position, size or rotation`, { slot: slot.id })
-      else if (el.width <= 0) error(`Sticker ${el.id} has width <= 0`, { slot: slot.id })
+        error(
+          `${kind === 'shape' ? 'Shape' : 'Sticker'} ${el.id} has a non-finite position, size or rotation`,
+          {
+            slot: slot.id,
+          },
+        )
+      else if (el.width <= 0)
+        error(`${kind === 'shape' ? 'Shape' : 'Sticker'} ${el.id} has width <= 0`, { slot: slot.id })
+      if (isSlotShape(el) && !HEX_COLOR.test(el.color))
+        error(`Shape ${el.id} has an invalid color "${el.color}"`, { slot: slot.id })
     }
   }
 
@@ -159,8 +199,9 @@ export function validateProject(
         }
       }
       // A sticker's artwork is resolved and reported exactly like the slot's own — same template,
-      // same wording — so two stickers sharing one file never repeat the message either.
-      for (const el of slot.elements ?? []) {
+      // same wording — so two stickers sharing one file never repeat the message either. A shape
+      // has no image at all: it never reaches this check.
+      for (const el of (slot.elements ?? []).filter((e): e is SlotSticker => !isSlotShape(e))) {
         const path = artworkPath(set, locale.id, el.artwork)
         if (!artworkReported.has(path)) {
           artworkReported.add(path)
@@ -235,7 +276,9 @@ export function validateProject(
 
     // A 'behind' sticker sits under the text block and can never cover it; a 'front' one is drawn
     // last, over everything. The box is only ever approximate: `elementAspect` gives the real
-    // aspect ratio when the check has loaded the image, otherwise the sticker is treated as a square.
+    // aspect ratio when the check has loaded the image, otherwise the sticker is treated as a
+    // square. A shape is deco, not content — it may sit under the headline on purpose (the big
+    // background circle behind the feature graphic's stickers is exactly this), so it never warns.
     const layout = getLayout(effective.layout)
     if (layout.text) {
       const band = textBand(layout)
@@ -243,7 +286,7 @@ export function validateProject(
         const size = EXPORT_SIZES.find((s) => s.id === t.sizeId) ?? EXPORT_SIZES[0]
         return size.w / size.h
       })
-      for (const el of slot.elements ?? []) {
+      for (const el of (slot.elements ?? []).filter((e): e is SlotSticker => !isSlotShape(e))) {
         if ((el.layer ?? 'front') !== 'front') continue
         const aspect = elementAspect(set.locales[0]?.id ?? '', el.artwork)
         if (
@@ -267,10 +310,26 @@ export function validateProject(
       ),
     )
 
+    // 'label' falls back to 'plain' with no highlights to draw the box in — same rule the
+    // renderer applies (`layoutText` in `render/text.ts`), so `forge check` and the export agree.
+    const labelStyle = effective.subheadStyle === 'label' && effective.highlights.length > 0
+    if (effective.subheadStyle === 'label' && effective.highlights.length === 0)
+      issues.push({
+        level: 'warn',
+        message: `subheadStyle "label" has no highlights to draw the box in; falls back to "plain"`,
+        slot: slot.id,
+      })
+
     const hasSubhead = set.locales.some((l) => copies[l.id]?.[slot.id]?.subhead?.trim())
     if (hasSubhead) {
-      const ratio = contrastAgainstBackground(effective.textColor, effective.background, SUBHEAD_ALPHA)
-      push(contrastIssue('Subhead', ratio, 'background'))
+      if (labelStyle) {
+        // The label subhead is drawn fully opaque in textColor on the label box, not against
+        // the background.
+        push(contrastIssue('Subhead', contrastRatio(effective.textColor, effective.highlights[0]), 'label'))
+      } else {
+        const ratio = contrastAgainstBackground(effective.textColor, effective.background, SUBHEAD_ALPHA)
+        push(contrastIssue('Subhead', ratio, 'background'))
+      }
     }
 
     const hasEyebrow = set.locales.some((l) => copies[l.id]?.[slot.id]?.eyebrow?.trim())

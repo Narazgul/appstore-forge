@@ -272,6 +272,37 @@ In the GUI, stickers live in the tune panel's "Stickers" section, shown only
 when exactly one screen is selected (a sticker belongs to a slot, not to the
 shared settings).
 
+### A slot's shapes
+
+`elements` also takes a second kind of entry: a filled deco shape, no image
+involved at all.
+
+```json
+{
+  "id": "kreis",
+  "shape": "circle",
+  "color": "#eaf2ff",
+  "x": 0.193,
+  "y": 0.2,
+  "width": 0.666,
+  "layer": "behind"
+}
+```
+
+An entry is a sticker or a shape — exactly one of `artwork` or `shape`,
+`forge check` rejects both or neither. `x`, `y`, `width`, `rotate` and `layer`
+mean exactly what they do for a sticker (`width` is a circle's diameter, a
+fraction of the tile width; height always equals width, so it stays a circle
+however wide or short the tile is). `color` is `#rgb`, `#rrggbb` or
+`#rrggbbaa`. A shape never casts the sticker drop shadow and is never flagged
+by the "may cover the headline" warning — it is deco, not content, and is
+allowed to sit under or over the copy on purpose. A shape adds no bytes to the
+approval hash beyond its own JSON (there is no image to read), so a set with
+no shapes hashes exactly as it did before this feature existed.
+
+In the GUI, "Add circle" sits next to "Add sticker" in the same "Stickers"
+section.
+
 ### Feature graphic
 
 Google Play's feature graphic (1024 × 500, one image per locale, no device frame) is a second
@@ -296,15 +327,29 @@ your usual `aso/default.json`, its own copy folder, one slot, one target.
   "sources": "screenshots/{locale}/{screen}.png",
   "settings": {
     "layout": "banner-right",
-    "background": { "kind": "solid", "color": "#eaf2ff" },
-    "highlights": ["#ffe27a"]
+    "textAlign": "left",
+    "background": { "kind": "solid", "color": "#f7f4ff" },
+    "highlights": ["#ffe27a"],
+    "accentBar": "#5d47e8",
+    "subheadStyle": "label"
   },
   "slots": [
     {
       "id": "feature",
       "kind": "artwork",
       "overrides": {},
-      "elements": [{ "id": "mascot", "artwork": "mascot", "x": 0.26, "y": 0.55, "width": 0.42 }]
+      "elements": [
+        {
+          "id": "circle",
+          "shape": "circle",
+          "color": "#eaf2ff",
+          "x": 0.19,
+          "y": 0.2,
+          "width": 0.67,
+          "layer": "behind"
+        },
+        { "id": "mascot", "artwork": "mascot", "x": 0.26, "y": 0.55, "width": 0.42 }
+      ]
     }
   ],
   "approval": null
@@ -325,6 +370,11 @@ your usual `aso/default.json`, its own copy folder, one slot, one target.
 `textScale` bold enough to read as a headline on a short, wide tile — both are ordinary layouts,
 usable by a regular `screen` slot too. `forge check` and `forge render` work exactly as for a
 screenshot set; `--set feature` selects this one.
+
+Two settings shape the copy of a banner (both work on any slot, both are off by default):
+`accentBar` draws a short rounded bar in that colour above the text block, aligned like the text;
+`subheadStyle: "label"` sets each subtitle line in weight 600, fully opaque, on a rounded box in
+the first highlight colour (the contrast check then measures the subtitle against that box).
 
 ### Custom product pages: more sets
 

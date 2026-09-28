@@ -10,6 +10,7 @@ import {
   sourcePath,
 } from './bridge'
 import type { Project } from './types'
+import { isStickerElement } from '../types'
 
 const project: Project = {
   set: {
@@ -144,6 +145,10 @@ describe('artwork and pair', () => {
   })
 })
 
+/** The fixtures below only ever put stickers in `elements`; this narrows the union for assertions. */
+const imageIdOf = (el: NonNullable<ReturnType<typeof screensFor>[number]['elements']>[number]) =>
+  isStickerElement(el) ? el.imageId : undefined
+
 describe('elements', () => {
   const withStickers = (): Project => ({
     ...project,
@@ -175,8 +180,8 @@ describe('elements', () => {
 
   it('resolves the artwork name into an image registry id, per locale', () => {
     const [screen] = screensFor(withStickers(), 'de')
-    expect(screen.elements?.[0].imageId).toBe('artwork/de/dot')
-    expect(screen.elements?.[1].imageId).toBe('artwork/de/other')
+    expect(imageIdOf(screen.elements![0])).toBe('artwork/de/dot')
+    expect(imageIdOf(screen.elements![1])).toBe('artwork/de/other')
   })
 
   it('carries the geometry through unchanged', () => {
@@ -230,7 +235,51 @@ describe('an artwork-kind slot', () => {
 
   it('still resolves its stickers like any other slot', () => {
     const [screen] = screensFor(withArtworkSlot(), 'en')
-    expect(screen.elements?.[0].imageId).toBe('artwork/en/mascot')
+    expect(imageIdOf(screen.elements![0])).toBe('artwork/en/mascot')
+  })
+})
+
+describe('shapes', () => {
+  const withShape = (): Project => ({
+    ...project,
+    set: {
+      ...project.set,
+      slots: [
+        {
+          id: 'budget-light',
+          kind: 'screen',
+          screen: 'budget_screen',
+          overrides: {},
+          elements: [
+            {
+              id: 'kreis',
+              shape: 'circle',
+              color: '#eaf2ff',
+              x: 0.193,
+              y: 0.2,
+              width: 0.666,
+              layer: 'behind',
+            },
+          ],
+        },
+      ],
+    },
+  })
+
+  it('carries shape and color through instead of resolving an imageId', () => {
+    const [screen] = screensFor(withShape(), 'en')
+    expect(screen.elements?.[0]).toMatchObject({
+      id: 'kreis',
+      shape: 'circle',
+      color: '#eaf2ff',
+      x: 0.193,
+      y: 0.2,
+      width: 0.666,
+      layer: 'behind',
+      rotate: 0,
+    })
+    expect(screen.elements?.[0]).not.toHaveProperty('imageId')
+    expect(screen.elements?.[0]).not.toHaveProperty('shadow')
   })
 })
 

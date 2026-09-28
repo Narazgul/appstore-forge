@@ -34,8 +34,11 @@ option.
 | **Approval**               | A stamp — hash, who, when — over the set, all copy and the bytes of every source image. Any edit to any of the three makes it stale. `--require-approval` turns it into a gate on rendering.                                                                                                                                                                                                                                                                                                                                                                             |
 | **Highlight**              | A marker band drawn behind `*starred*` words in a headline. Spans cycle through `settings.highlights`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **Backdrop**               | A rounded card drawn behind the device band, between background and text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Accent bar**             | `settings.accentBar` (hex or `null`, default `null`): a short, fully rounded bar drawn above the block — above the eyebrow if there is one, else above the headline. Em-relative to the headline size; counted into `blockHeight` and the auto-shrink like everything else in the block. Purely decorative — not contrast-checked.                                                                                                                                                                                                                                       |
+| **Subhead style**          | `settings.subheadStyle` (`'plain' \| 'label'`, default `'plain'`): `'label'` draws each subhead line on a rounded box in `highlights[0]`, weight 600, fully opaque, instead of the default translucent line. Falls back to `'plain'` when `highlights` is empty (`forge check` warns).                                                                                                                                                                                                                                                                                   |
 | **Export size**            | Target canvas in pixels. Global — a set cannot mix sizes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **Sticker**                | A free-standing image on a slot, independent of any device frame — a `SlotElement` in `set.slots[i].elements`, resolved to a `SceneElement` for the renderer. Positioned like a layout (`x`/`width` fractions of the composition width, `y` a fraction of the tile height), drawn `behind` or `front` of the rest of the composition, optionally with a soft drop shadow. Resolves its own image through the same `artworkSources` template as a slot's `artwork`.                                                                                                       |
+| **Shape**                  | A filled deco shape on a slot — the other kind of `SlotElement`/`SceneElement` alongside a sticker, same `elements` array, same `x`/`y`/`width`/`rotate`/`layer` positioning, but a `shape` (`'circle'` today) and a `color` instead of an image, and never a shadow. No image bytes, so it costs nothing in the approval hash beyond its own JSON, and it is exempt from the "may cover the headline" warning — a shape is deco, not content, and may sit under the copy on purpose.                                                                                    |
 
 ## Data model
 
@@ -43,9 +46,11 @@ option.
 Screen   = { id, headline, subhead, imageId, overrides: Partial<Settings>, lang?, elements?: SceneElement[] }
 Settings = { background, backdropColor, deviceId, frameColorId, positionId, layout,
              tilt, deviceScale, textColor, textAlign, highlights, fontId,
-             headlineScale, subheadScale, headlineTracking, sizeId }
+             headlineScale, subheadScale, headlineTracking, accentBar, subheadStyle, sizeId }
 Template = { id, label, settings: Partial<Settings>, variants?: ScreenOverrides[], sample }
-SceneElement = { id, imageId, x, y, width, rotate, layer: 'behind' | 'front', shadow }
+SceneElement = StickerElement | ShapeElement   // both share { id, x, y, width, rotate, layer }
+StickerElement = { ...base, imageId, shadow }
+ShapeElement   = { ...base, shape: 'circle', color }
 ```
 
 `lang` is the copy's BCP-47 language. It picks the script font stack and the text
@@ -85,23 +90,35 @@ by a placement with `source: 'artwork'` — contain-fitted, no frame, no fallbac
 the screenshot. Both feed the approval hash, appended after the sources and only
 for the slots that name them, so a set using neither hashes exactly as before.
 
-A slot's `elements` are its stickers: free-standing images, independent of any
-device frame, each resolving its own image through the same `artworkSources`
-template as `artwork` — there is no second path mechanism. `screensFor` in
-`project/bridge.ts` maps a `SlotElement` to a `SceneElement`, defaulting `rotate`
-to `0`, `layer` to `'front'` and `shadow` to `false`, so the renderer never has
-to ask "or else what". `renderScene` draws in this order: background → backdrop
-→ `behind` stickers → text block → devices → `front` stickers — a `behind`
-sticker sits under the copy and the device frame, a `front` one sits over
+A slot's `elements` are free-standing material, independent of any device
+frame: a sticker or a shape, one `SlotElement` union with two members
+(`project/types.ts`). A sticker names `artwork` and resolves its image through
+the same `artworkSources` template as a slot's own `artwork` — there is no
+second path mechanism. A shape names `shape` (`'circle'` today, typed as a
+`ShapeKind` union so more can join later) and a `color` instead — no image at
+all. `validateProject` requires exactly one of `artwork`/`shape` per element.
+`screensFor` in `project/bridge.ts` maps each `SlotElement` to a `SceneElement`
+(same union, mirrored in `types.ts`), defaulting `rotate` to `0`, `layer` to
+`'front'` (a sticker) and `shadow` to `false` (a sticker only — a shape never
+has one), so the renderer never has to ask "or else what". `renderScene` draws
+in this order: background → backdrop → `behind` elements → text block →
+devices → `front` elements — within one layer, array order — a `behind`
+element sits under the copy and the device frame, a `front` one sits over
 everything. `x`/`width` are fractions of the composition width and tile width
-respectively (the same convention every layout uses), `y` a fraction of the tile
-height; the drawn height always follows the image's own aspect ratio, so a
-sticker never has a second, independent height to keep in sync. Like a slot's
-artwork, a sticker's bytes are appended to the approval hash — last, and only
-for the slots that have one — so a set with no stickers hashes exactly as it did
-before this feature existed; `validateProject` reports a missing sticker image
-the same way it reports a missing slot artwork, and warns (never blocks) when a
-`front` sticker's approximate box overlaps the layout's text band.
+respectively (the same convention every layout uses), `y` a fraction of the
+tile height; a sticker's drawn height follows its image's own aspect ratio, a
+shape's always equals its width (a circle's diameter), so neither ever has a
+second, independent height to keep in sync. Like a slot's artwork, a sticker's
+bytes are appended to the approval hash — last, and only for the slots that
+have one — so a set with no stickers hashes exactly as it did before this
+feature existed; a shape adds nothing here, since it has no image, but its
+fields are already part of the set JSON hashed above. `validateProject` reports
+a missing sticker image the same way it reports a missing slot artwork
+(a shape names no file, so it can never be missing one), and warns (never
+blocks) when a `front` sticker's approximate box overlaps the layout's text
+band — a shape is deco, not content, and is exempt: it may sit under the
+headline on purpose, which is exactly what the feature graphic's background
+circle does.
 
 Headlines carry light markup: `*word*` highlights the word. `parseMarkup` in
 `render/scene.ts` is the only parser; `stripMarkup` feeds filenames.

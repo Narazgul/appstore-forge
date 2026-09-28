@@ -6,6 +6,7 @@ import { artworkIdFor, imageIdFor, screensFor, settingsFor } from './project/bri
 import { approvalHash } from './project/hash'
 import { EMPTY_GALLERY } from './project/store'
 import type { Gallery, ProjectStore } from './project/store'
+import { isSlotSticker } from './project/types'
 import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy, SlotElement } from './project/types'
 import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
@@ -36,6 +37,8 @@ export const DEFAULT_SETTINGS: Settings = {
   headlineScale: 1,
   subheadScale: 1,
   headlineTracking: -0.01,
+  accentBar: null,
+  subheadStyle: 'plain',
   sizeId: 'iphone-6-9',
   altColors: null,
   inverted: false,
@@ -336,9 +339,10 @@ async function loadProjectImages(
       }
       if (s.artwork && artworkUrl)
         rows.push({ id: artworkIdFor(l.id, s.artwork), url: artworkUrl(l.id, s.artwork) })
-      // Stickers resolve through the same artwork registry as a slot's own artwork.
+      // Stickers resolve through the same artwork registry as a slot's own artwork. A shape has
+      // no image to load.
       if (artworkUrl) {
-        for (const el of s.elements ?? [])
+        for (const el of (s.elements ?? []).filter(isSlotSticker))
           rows.push({ id: artworkIdFor(l.id, el.artwork), url: artworkUrl(l.id, el.artwork) })
       }
       return rows
@@ -924,8 +928,8 @@ export const useStore = create<State>((set, get) => ({
     })
     scheduleSave(get)
     // Stickers share the artwork role's loading path — a newly picked artwork is fetched for
-    // every language the same way a slot's own artwork would be.
-    const names = [...new Set(elements.map((el) => el.artwork))]
+    // every language the same way a slot's own artwork would be. A shape names no artwork.
+    const names = [...new Set(elements.filter(isSlotSticker).map((el) => el.artwork))]
     const fresh: Record<string, HTMLImageElement> = {}
     for (const name of names)
       Object.assign(fresh, await loadNewSources(project, store, get().images, name, 'artwork'))

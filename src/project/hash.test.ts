@@ -119,6 +119,46 @@ describe('approvalHash', () => {
     )
   })
 
+  it('is unchanged for a set that names no shape — the exact hash a set had before shapes existed', async () => {
+    expect(await approvalHash(project(), bytes('img'), bytes('art'))).toBe(
+      await approvalHash(project(), bytes('img')),
+    )
+  })
+
+  it('changes when a slot gains a shape, through the set JSON alone, with no reader passed at all', async () => {
+    const p = project()
+    p.set.slots[0].elements = [
+      { id: 'kreis', shape: 'circle', color: '#eaf2ff', x: 0.193, y: 0.2, width: 0.666 },
+    ]
+    expect(await approvalHash(p, bytes('img'))).not.toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('never asks for artwork bytes of a shape, which has no image to hash', async () => {
+    const p = project()
+    p.set.slots[0].elements = [
+      { id: 'kreis', shape: 'circle', color: '#eaf2ff', x: 0.193, y: 0.2, width: 0.666 },
+    ]
+    const throwing = async () => {
+      throw new Error('should not be called for a shape')
+    }
+    await expect(approvalHash(p, bytes('img'), throwing)).resolves.toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('still asks for a sticker sharing the slot with a shape, but not for the shape', async () => {
+    const p = project()
+    p.set.slots[0].elements = [
+      { id: 'dot', artwork: 'dot', x: 0.5, y: 0.5, width: 0.3 },
+      { id: 'kreis', shape: 'circle', color: '#eaf2ff', x: 0.193, y: 0.2, width: 0.666 },
+    ]
+    const seen: string[] = []
+    const artBytes = async (_l: string, artwork: string) => {
+      seen.push(artwork)
+      return new TextEncoder().encode(artwork)
+    }
+    await approvalHash(p, bytes('img'), artBytes)
+    expect(seen).toEqual(['dot'])
+  })
+
   it('never asks for source bytes of an artwork-kind slot, which has no screen to hash', async () => {
     const p = project()
     p.set.slots = [{ id: 'a', kind: 'artwork', overrides: {} }]

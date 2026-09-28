@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastAgainstBackground, contrastRatio } from '../lib/contrast'
 import { validateProject } from './validate'
-import type { Project, ProjectLocale, SlotCopy, SlotElement } from './types'
+import type { Project, ProjectLocale, SlotCopy, SlotElement, SlotShape } from './types'
 
 /** Mirrors the message/level branching in validate.ts, for fixtures built to land in one branch. */
 const expectedContrastMessage = (label: string, ratio: number, surface: string) =>
@@ -480,6 +480,99 @@ describe('stickers', () => {
   })
 })
 
+describe('shapes', () => {
+  const shape = (patch: Partial<SlotShape> = {}): SlotElement => ({
+    id: 'kreis',
+    shape: 'circle',
+    color: '#eaf2ff',
+    x: 0.193,
+    y: 0.2,
+    width: 0.666,
+    ...patch,
+  })
+
+  it('accepts a well-formed shape and asks for no artwork file at all', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape()]
+    expect(validateProject(p, always, () => false)).toEqual([])
+  })
+
+  it.each(['#eaf2ff', '#eaf', '#eaf2ffcc'])('accepts hex color %s', (color) => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ color })]
+    expect(validateProject(p, always, always)).toEqual([])
+  })
+
+  it.each(['eaf2ff', '#gggggg', '#ea', 'rgb(1,2,3)', ''])('rejects an invalid hex color %s', (color) => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ color })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: `Shape kreis has an invalid color "${color}"`,
+      slot: 'a',
+    })
+  })
+
+  it('flags a shape with width <= 0', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ width: 0 })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Shape kreis has width <= 0',
+      slot: 'a',
+    })
+  })
+
+  it('flags a shape with a non-finite position, size or rotation', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ x: NaN })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Shape kreis has a non-finite position, size or rotation',
+      slot: 'a',
+    })
+  })
+
+  it('flags duplicate shape ids within a slot', () => {
+    const p = base()
+    p.set.slots[0].elements = [shape({ id: 'dupe' }), shape({ id: 'dupe' })]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Duplicate shape id dupe',
+      slot: 'a',
+    })
+  })
+
+  it('never warns about a shape overlapping the text band, even as a front layer covering it fully', () => {
+    const p = base()
+    // text-top's band: top 0.065, height 0.165 — well inside it either way.
+    p.set.slots[0].elements = [shape({ y: 0.1, width: 0.5, layer: 'front' })]
+    expect(validateProject(p, always, always).some((i) => i.message.includes('may cover'))).toBe(false)
+  })
+
+  it('rejects an element naming neither artwork nor shape', () => {
+    const p = base()
+    p.set.slots[0].elements = [{ id: 'x', x: 0.5, y: 0.5, width: 0.3 } as SlotElement]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Element x must be exactly one of artwork or shape',
+      slot: 'a',
+    })
+  })
+
+  it('rejects an element naming both artwork and shape', () => {
+    const p = base()
+    p.set.slots[0].elements = [
+      { id: 'x', artwork: 'dot', shape: 'circle', color: '#fff', x: 0.5, y: 0.5, width: 0.3 } as SlotElement,
+    ]
+    expect(validateProject(p, always, always)).toContainEqual({
+      level: 'error',
+      message: 'Element x must be exactly one of artwork or shape',
+      slot: 'a',
+    })
+  })
+})
+
 describe('contrast', () => {
   it('is silent for the real production colours (background #eaf2ff, textColor #111114, highlights [#ffe27a])', () => {
     const p = base()
@@ -664,6 +757,121 @@ describe('contrast', () => {
       level: 'error',
       message: expectedContrastMessage('Headline', ratio, 'background'),
       slot: 'a',
+    })
+  })
+
+  describe('accentBar', () => {
+    it('accepts a hex colour on the global settings', () => {
+      const p = base()
+      p.set.settings = { accentBar: '#5d47e8' }
+      expect(validateProject(p, always).some((i) => i.message.includes('accentBar'))).toBe(false)
+    })
+
+    it('flags a global accentBar that is not a hex colour', () => {
+      const p = base()
+      p.set.settings = { accentBar: 'purple' }
+      expect(validateProject(p, always)).toContainEqual({
+        level: 'error',
+        message: 'accentBar is not a hex colour: purple',
+      })
+    })
+
+    it('flags a slot override accentBar that is not a hex colour, with the slot id', () => {
+      const p = base()
+      p.set.slots[0].overrides = { accentBar: 'not-a-colour' }
+      expect(validateProject(p, always)).toContainEqual({
+        level: 'error',
+        message: 'accentBar is not a hex colour: not-a-colour',
+        slot: 'a',
+      })
+    })
+
+    it('never flags accentBar left absent (null default)', () => {
+      const p = base()
+      expect(validateProject(p, always).some((i) => i.message.includes('accentBar'))).toBe(false)
+    })
+  })
+
+  describe('subheadStyle', () => {
+    it('accepts "plain" and "label"', () => {
+      const p = base()
+      p.set.settings = { subheadStyle: 'label', highlights: ['#ffe27a'] }
+      expect(validateProject(p, always).some((i) => i.message.includes('subheadStyle'))).toBe(false)
+    })
+
+    it('flags an unknown subheadStyle on the global settings', () => {
+      const p = base()
+      // @ts-expect-error deliberately invalid, as a hand-edited project file could carry
+      p.set.settings = { subheadStyle: 'boxed' }
+      expect(validateProject(p, always)).toContainEqual({
+        level: 'error',
+        message: 'Unknown subheadStyle "boxed"',
+      })
+    })
+
+    it('flags an unknown subheadStyle on a slot override, with the slot id', () => {
+      const p = base()
+      // @ts-expect-error deliberately invalid
+      p.set.slots[0].overrides = { subheadStyle: 'boxed' }
+      expect(validateProject(p, always)).toContainEqual({
+        level: 'error',
+        message: 'Unknown subheadStyle "boxed"',
+        slot: 'a',
+      })
+    })
+
+    it('warns when "label" has no highlights to draw the box in — the renderer falls back to plain', () => {
+      const p = base()
+      p.set.settings = { subheadStyle: 'label', highlights: [] }
+      expect(validateProject(p, always)).toContainEqual({
+        level: 'warn',
+        message: 'subheadStyle "label" has no highlights to draw the box in; falls back to "plain"',
+        slot: 'a',
+      })
+    })
+
+    it('checks the label subhead against the label colour (highlights[0]), not the background', () => {
+      const p = base()
+      p.set.settings = {
+        background: { kind: 'solid', color: '#ffffff' },
+        textColor: '#767676', // ~4.54:1 opaque on white — passes background outright
+        subheadStyle: 'label',
+        highlights: ['#7a7a7a'], // close to textColor — should fail against the label, not the background
+      }
+      p.copies.en.a.subhead = 'Every euro gets a job.'
+      const labelRatio = contrastRatio('#767676', '#7a7a7a')
+      expect(labelRatio).toBeLessThan(AA_NORMAL_TEXT)
+      expect(validateProject(p, always)).toContainEqual({
+        level: expectedContrastLevel(labelRatio),
+        message: expectedContrastMessage('Subhead', labelRatio, 'label'),
+        slot: 'a',
+      })
+    })
+
+    it('checks the label subhead fully opaque, not blended at the plain 0.72 alpha', () => {
+      const p = base()
+      const background = { kind: 'solid' as const, color: '#ffffff' }
+      const textColor = '#767676'
+      const highlightColor = '#7f7f7f'
+      p.set.settings = { background, textColor, subheadStyle: 'label', highlights: [highlightColor] }
+      p.copies.en.a.subhead = 'Every euro gets a job.'
+      const opaque = contrastRatio(textColor, highlightColor)
+      const issue = validateProject(p, always).find((i) => i.message.startsWith('Subhead contrast'))!
+      expect(issue.message).toBe(expectedContrastMessage('Subhead', opaque, 'label'))
+    })
+
+    it('falls back to the plain background check when highlights is empty, even with subheadStyle "label"', () => {
+      const p = base()
+      const background = { kind: 'solid' as const, color: '#ffffff' }
+      const textColor = '#767676'
+      p.set.settings = { background, textColor, subheadStyle: 'label', highlights: [] }
+      p.copies.en.a.subhead = 'Every euro gets a job.'
+      const blended = contrastAgainstBackground(textColor, background, 0.72)
+      expect(validateProject(p, always)).toContainEqual({
+        level: expectedContrastLevel(blended),
+        message: expectedContrastMessage('Subhead', blended, 'background'),
+        slot: 'a',
+      })
     })
   })
 })
