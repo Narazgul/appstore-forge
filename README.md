@@ -447,6 +447,27 @@ existed.
 In the GUI, a slot whose effective layout is `mosaic` shows a "Mosaic cells"
 list above the usual per-frame picker, with add/remove and reorder controls.
 
+### A slot's role and copy ideas
+
+A slot may name its place in the deck:
+
+```json
+{ "id": "budget-light", "kind": "screen", "screen": "budget_screen", "overrides": {}, "role": "hero" }
+```
+
+`role` is one of `"hero"`, `"difference"`, `"feature"`, `"proof"` or
+`"closer"` — which job that slide's headline has to do, nothing more. It
+draws no pixel and never appears anywhere in the render, so it adds no bytes
+to the approval hash and picking one never makes a stamp stale, the same way
+a slot's `note` does not. Absent means no role picked.
+
+In the GUI it drives the "Ideas" menu next to the headline field: pick a
+role, get that role's headline formulas with a filled-in example, and click
+one to drop it into the headline of the language you are editing — one
+undoable edit, brackets and all, for you to replace with the app's own words.
+An unfilled slot is offered a suggestion (the first tile `hero`, the last
+`closer`), but nothing is written until you actually pick one.
+
 ### Feature graphic
 
 Google Play's feature graphic (1024 × 500, one image per locale, no device frame) is a second
@@ -548,6 +569,74 @@ size — the largest that keeps each row inside the band and every row stacked i
 big) — and `*word*` markup, RTL and `textAlign` all follow the headline's own rules. `list` on any
 other layout is ignored and `forge check` warns about it; an absent or empty `list` changes nothing
 in the approval hash.
+
+### Moving things on the canvas
+
+In the Screenshots step every tile preview is also a canvas editor. Click a
+sticker, shape or chip, the device arrangement or the copy to select it, then:
+
+- **drag** to move it — an element's `x`/`y`, or a new offset for the device
+  and the copy (below);
+- pull the **square corner handle** to scale it — an element's `width` (a
+  chip's font `size` with it, so the pill keeps its shape), or the device's
+  `deviceScale`;
+- turn the **round handle** above it — an element's `rotate`, or the device's
+  `tilt`. Shift rests on multiples of 15°.
+
+The copy only moves. A circle or a ring has no turn handle (it looks the same at
+every angle), and the mosaic grid has no scale handle (`deviceScale` does not
+size it). Tiles without a device (`text-only`, `feature-wall`, an artwork slot)
+offer no device to grab. A centre dragged within 1 % of the tile's middle line
+(x or y — on a panorama also the seam) snaps onto it, and so does the place the
+part started from, so dragging away and back changes nothing; a thin pink line
+shows the snap, Alt switches it off. The arrow keys move the selection by 0.5 %
+of the tile, Shift by 5 %, whenever no text field has the focus.
+
+The canvas stops where the tune panel's sliders stop, so a slider can always
+show what a gesture wrote: an element's `x`/`y` at −0.2 to 1.2, its `width` at
+0.02 to 2 tile widths, a chip's `size` at 0.01 to 0.2 of the tile height, and
+its `rotate` anywhere on the circle (−180° to 180°, a Rotate slider for every
+element that has a turn handle, blobs included). `forge check` stays looser:
+a hand-written value outside these ranges is still valid.
+
+One gesture is one undo step and one save: the preview redraws on every pointer
+move without touching the store, and letting go writes once (after the usual
+300 ms debounce). Escape — or ⌘Z — mid-drag puts the part back where the
+gesture found it. The frame, the handles and the guides are HTML on top of the
+canvas; `renderScene` never draws them, so no export can contain them.
+
+Two optional settings carry the moves the layout has no key for, overridable
+per slot like `tilt`:
+
+```json
+"overrides": {
+  "layout": "hero",
+  "deviceOffset": { "dx": 0.06, "dy": 0.04 },
+  "textOffset": { "dx": -0.03, "dy": 0.02 }
+}
+```
+
+- **`deviceOffset`** moves the whole arrangement — every placement together,
+  the frameless artwork too, the mosaic grid as one unit.
+- **`textOffset`** moves the copy — accent bar, eyebrow, headline, subhead,
+  and `feature-wall`'s list with it.
+
+`dx` is a fraction of the composition width (tile width × span, the unit a
+placement's own `dx` and a sticker's `x` use), `dy` of the tile height. Each
+is a pure move applied after the layout: the device lift and the text
+auto-shrink never see it, so the part lands exactly that far from where the
+layout alone puts it — which also means a moved headline can overlap the
+device; that is the point of moving it. Nothing is mirrored for an RTL
+language, same as a sticker. `forge check` rejects anything but an object with
+finite `dx`/`dy` within ±1 and warns when a slot's offset targets a part the
+tile does not draw, or when `textOffset` pushes the headline partly or
+entirely off the tile. The "may cover the headline" warning judges the
+headline where it really lands — moved, and for `feature-wall` centred with
+its list — measured with the renderer's own text layout. Absent means no
+move: the GUI never writes `{ "dx": 0, "dy": 0 }` — a drag back to the
+start, or the tune panel's **Reset** next to the offset row (Adjust for the
+device, Type for the copy), removes the key — so a set that never used
+either keeps its exact approval hash.
 
 ### Custom product pages: more sets
 

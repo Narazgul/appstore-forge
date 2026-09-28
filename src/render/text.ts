@@ -530,19 +530,39 @@ export function measureTextBlock(
   return layoutText(ctx, screen, settings, maxWidth, availableTextHeight(layout, h), h, layout.textScale)
 }
 
-export function drawTextBlock(
-  ctx: CanvasRenderingContext2D,
+/** A move of a whole block in pixels — `Settings.textOffset` already multiplied out. Absent = none. */
+export type Shift = { x: number; y: number }
+
+/** Where a line of `lineWidth` starts in its box: the one definition of `textAlign`, shared by the
+ *  text block, the list and their measured bounds. In an RTL script "left" is the box's right edge. */
+const alignedStart =
+  (align: Settings['textAlign'], rtl: boolean, boxLeft: number, maxWidth: number) => (lineWidth: number) =>
+    align === 'left' ? (rtl ? boxLeft + maxWidth - lineWidth : boxLeft) : boxLeft + (maxWidth - lineWidth) / 2
+
+type PlacedTextBlock = {
+  block: TextLayout
+  /** top of the block's first row (the accent bar, the eyebrow or the headline) */
+  top: number
+  rtl: boolean
+  startX: (lineWidth: number) => number
+}
+
+/** The text block laid out and placed in its band, shifted by `shift` — what `drawTextBlock`
+ *  draws and `textBlockBox` measures, so the editor's selection frame can never drift from it. */
+function placeTextBlock(
+  ctx: TextMeasurer,
   W: number,
   tileW: number,
   h: number,
   layout: Layout,
   screen: Screen,
   settings: Settings,
-) {
-  if (!layout.text || (!screen.headline && !screen.subhead && !screen.eyebrow)) return
-
-  const { left: boxLeft, maxWidth } = textBox(layout, W, tileW)
-  const bandTop = layout.text.top * h
+  shift?: Shift,
+): PlacedTextBlock | null {
+  if (!layout.text || (!screen.headline && !screen.subhead && !screen.eyebrow)) return null
+  const { left, maxWidth } = textBox(layout, W, tileW)
+  const boxLeft = shift ? left + shift.x : left
+  const bandTop = shift ? layout.text.top * h + shift.y : layout.text.top * h
   const bandHeight = layout.text.height * h
   const block = layoutText(
     ctx,
@@ -553,6 +573,72 @@ export function drawTextBlock(
     h,
     layout.textScale,
   )
+  const rtl = isRtl(screen.lang)
+  return {
+    block,
+    top: bandTop + (bandHeight - blockHeight(block)) / 2,
+    rtl,
+    startX: alignedStart(settings.textAlign, rtl, boxLeft, maxWidth),
+  }
+}
+
+/** Axis-aligned bounds of everything `drawTextBlock` inks, in canvas pixels; null when it draws nothing. */
+export type BlockBox = { x: number; y: number; w: number; h: number }
+
+const spanBox = (
+  placed: { startX: (w: number) => number },
+  widths: number[],
+  top: number,
+  height: number,
+) => {
+  const lefts = widths.map((width) => placed.startX(width))
+  const left = Math.min(...lefts)
+  const right = Math.max(...lefts.map((l, i) => l + widths[i]))
+  return { x: left, y: top, w: right - left, h: height }
+}
+
+/**
+ * The text block's box: from the top of its first row to the bottom of its last, across the
+ * widest row (the accent bar, the eyebrow, each headline line, each subhead line or label box).
+ * Never used for drawing — only by the editor to hit-test and frame the copy.
+ */
+export function textBlockBox(
+  ctx: TextMeasurer,
+  W: number,
+  tileW: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+  shift?: Shift,
+): BlockBox | null {
+  const placed = placeTextBlock(ctx, W, tileW, h, layout, screen, settings, shift)
+  if (!placed) return null
+  const { block } = placed
+  const labelPad = block.subSize * LABEL_PAD_X * 2
+  const widths = [
+    ...(block.hasAccentBar ? [block.headSize * ACCENT_BAR_WIDTH] : []),
+    ...(block.eyebrowLine ? [block.eyebrowLine.width] : []),
+    ...block.headLines.map((l) => l.width),
+    ...block.subLines.map((l) => (block.subheadStyle === 'label' ? l.width + labelPad : l.width)),
+  ]
+  if (!widths.length) return null
+  return spanBox(placed, widths, placed.top, blockHeight(block))
+}
+
+export function drawTextBlock(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  tileW: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+  shift?: Shift,
+) {
+  const placed = placeTextBlock(ctx, W, tileW, h, layout, screen, settings, shift)
+  if (!placed) return
+  const { block, rtl, startX } = placed
   const {
     headSize,
     subSize,
@@ -565,15 +651,7 @@ export function drawTextBlock(
     subheadStyle,
   } = block
 
-  let y = bandTop + (bandHeight - blockHeight(block)) / 2
-  // In an RTL script the "left" alignment is the right edge of the box.
-  const rtl = isRtl(screen.lang)
-  const startX = (lineWidth: number) =>
-    settings.textAlign === 'left'
-      ? rtl
-        ? boxLeft + maxWidth - lineWidth
-        : boxLeft
-      : boxLeft + (maxWidth - lineWidth) / 2
+  let y = placed.top
 
   ctx.save()
   ctx.textAlign = 'left'
@@ -705,8 +783,18 @@ export function measureListBlock(
  *  own band. Weight, markup and RTL/alignment all follow the headline's own rules — reusing
  *  `parseMarkup`/`wrap`/`drawLine` is what keeps them identical rather than a second definition
  *  of what a marker band or an RTL line looks like. */
-export function drawListBlock(
-  ctx: CanvasRenderingContext2D,
+type PlacedList = {
+  size: number
+  lines: Line[]
+  top: number
+  rtl: boolean
+  startX: (lineWidth: number) => number
+}
+
+/** The list laid out and placed in its band, shifted by `shift` — `drawListBlock` and
+ *  `listBlockBox` share it, exactly like `placeTextBlock`. */
+function placeListBlock(
+  ctx: TextMeasurer,
   W: number,
   tileW: number,
   h: number,
@@ -714,11 +802,12 @@ export function drawListBlock(
   screen: Screen,
   settings: Settings,
   capSize: number,
-) {
-  if (!layout.list || !screen.list?.length) return
-
-  const { left: boxLeft, maxWidth } = listBox(layout, W, tileW)
-  const bandTop = layout.list.top * h
+  shift?: Shift,
+): PlacedList | null {
+  if (!layout.list || !screen.list?.length) return null
+  const { left, maxWidth } = listBox(layout, W, tileW)
+  const boxLeft = shift ? left + shift.x : left
+  const bandTop = shift ? layout.list.top * h + shift.y : layout.list.top * h
   const bandHeight = layout.list.height * h
   const { size, lines } = layoutList(
     ctx,
@@ -730,15 +819,50 @@ export function drawListBlock(
     capSize,
     screen.lang,
   )
-
-  let y = bandTop + (bandHeight - lines.length * size * LIST_LH) / 2
   const rtl = isRtl(screen.lang)
-  const startX = (lineWidth: number) =>
-    settings.textAlign === 'left'
-      ? rtl
-        ? boxLeft + maxWidth - lineWidth
-        : boxLeft
-      : boxLeft + (maxWidth - lineWidth) / 2
+  return {
+    size,
+    lines,
+    top: bandTop + (bandHeight - lines.length * size * LIST_LH) / 2,
+    rtl,
+    startX: alignedStart(settings.textAlign, rtl, boxLeft, maxWidth),
+  }
+}
+
+/** The list's box, same idea as `textBlockBox`; null when the composition draws no list. */
+export function listBlockBox(
+  ctx: TextMeasurer,
+  W: number,
+  tileW: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+  capSize: number,
+  shift?: Shift,
+): BlockBox | null {
+  const placed = placeListBlock(ctx, W, tileW, h, layout, screen, settings, capSize, shift)
+  if (!placed || !placed.lines.length) return null
+  const widths = placed.lines.map((l) => l.width)
+  return spanBox(placed, widths, placed.top, placed.lines.length * placed.size * LIST_LH)
+}
+
+export function drawListBlock(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  tileW: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+  capSize: number,
+  shift?: Shift,
+) {
+  const placed = placeListBlock(ctx, W, tileW, h, layout, screen, settings, capSize, shift)
+  if (!placed) return
+  const { size, lines, rtl, startX } = placed
+
+  let y = placed.top
 
   ctx.save()
   ctx.textAlign = 'left'

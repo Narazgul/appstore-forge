@@ -1,14 +1,24 @@
 import { create } from 'zustand'
+import { changedElementFields } from './lib/canvasEdit'
+import type { CanvasEdit, CanvasOverrides } from './lib/canvasEdit'
 import { preloadScriptFonts } from './presets/fonts'
 import { getRhythm, rhythmStep } from './presets/rhythms'
 import { getTemplateSpec } from './presets/templates'
 import { artworkIdFor, imageIdFor, screensFor, settingsFor } from './project/bridge'
-import { approvalHash } from './project/hash'
+import { approvalContent, approvalHash } from './project/hash'
 import { EMPTY_GALLERY } from './project/store'
 import type { Gallery, ProjectStore } from './project/store'
 import { isSlotChip, isSlotSticker } from './project/types'
-import type { Approval, Project, ProjectCopies, ProjectTarget, SlotCopy, SlotElement } from './project/types'
-import type { Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
+import type {
+  Approval,
+  Project,
+  ProjectCopies,
+  ProjectTarget,
+  SlotCopy,
+  SlotElement,
+  TileRole,
+} from './project/types'
+import type { OptionalSettingKey, Screen, ScreenOverrides, Settings, TemplateSpec } from './types'
 
 /** The guided flow. Steps are navigation and status, never a gate — any step is one click away. */
 export type StepId = 'target' | 'look' | 'shots' | 'review'
@@ -121,6 +131,51 @@ export function projectAfterOverride(project: Project, slotId: string, overrides
   }
 }
 
+/**
+ * The overrides after a canvas gesture: a field present with a value is written, one present as
+ * `undefined` is dropped (the tile inherits again, see `resolveOverrides`). Null when nothing
+ * changes — a click, or a drag that came back to where it started, must not become an undo step
+ * or a save.
+ */
+export function overridesAfterCanvasEdit(
+  overrides: ScreenOverrides,
+  fields: CanvasOverrides,
+): ScreenOverrides | null {
+  const next: ScreenOverrides = { ...overrides }
+  for (const key of Object.keys(fields) as (keyof CanvasOverrides)[]) {
+    const value = fields[key]
+    if (value === undefined) delete next[key]
+    else (next as Record<string, unknown>)[key] = value
+  }
+  return JSON.stringify(next) === JSON.stringify(overrides) ? null : next
+}
+
+/** One finished canvas gesture applied to a project slot — its overrides or one of its elements.
+ *  Null when the gesture changed nothing. */
+export function projectAfterCanvasEdit(project: Project, slotId: string, edit: CanvasEdit): Project | null {
+  const slot = project.set.slots.find((s) => s.id === slotId)
+  if (!slot) return null
+  if (edit.kind === 'settings') {
+    const overrides = overridesAfterCanvasEdit(slot.overrides, edit.fields)
+    return overrides ? projectAfterOverride(project, slotId, overrides) : null
+  }
+  const elements = slot.elements ?? []
+  const current = elements.find((el) => el.id === edit.id)
+  if (!current) return null
+  const changed = changedElementFields(current, edit.fields)
+  if (!changed) return null
+  const next = { ...current } as Record<string, unknown>
+  for (const [key, value] of Object.entries(changed)) {
+    if (value === undefined) delete next[key]
+    else next[key] = value
+  }
+  return projectAfterSlotElements(
+    project,
+    slotId,
+    elements.map((el) => (el.id === edit.id ? (next as SlotElement) : el)),
+  )
+}
+
 /** A template in project mode is a look, not a set: it never adds or drops slots. */
 export function projectAfterTemplate(project: Project, template: TemplateSpec): Project {
   const { sizeId: _size, deviceId: _device, ...base } = DEFAULT_SETTINGS
@@ -162,6 +217,25 @@ export function projectAfterNote(project: Project, slotId: string, note: string)
         if (slot.id !== slotId) return slot
         const { note: _dropped, ...rest } = slot
         return note.trim() ? { ...rest, note } : rest
+      }),
+    },
+    copies: project.copies,
+  }
+}
+
+/**
+ * A slot's place in the deck. Unlike a note, this is ordinary document content — just content that
+ * draws no pixel, so it must stay out of the approval hash (`project/hash.ts`) the same way a note
+ * does, while still being an edit that travels through undo/redo like any other.
+ */
+export function projectAfterRole(project: Project, slotId: string, role: TileRole | undefined): Project {
+  return {
+    set: {
+      ...project.set,
+      slots: project.set.slots.map((slot) => {
+        if (slot.id !== slotId) return slot
+        const { role: _dropped, ...rest } = slot
+        return role ? { ...rest, role } : rest
       }),
     },
     copies: project.copies,
@@ -333,6 +407,15 @@ type State = {
   selectScreen: (id: string | null) => void
   setOverride: (id: string, patch: ScreenOverrides) => void
   clearOverrides: (id: string, keys: (keyof ScreenOverrides)[]) => void
+  /** drop set-wide values that have no default (`deviceOffset`, `textOffset`) — the global scope's
+   *  counterpart of `clearOverrides` */
+  clearSettings: (keys: OptionalSettingKey[]) => void
+  /**
+   * One finished canvas gesture (a drag, a corner pull, a turn) as exactly one undo step and one
+   * scheduled save. `historyKind` is unique per gesture so two quick drags never merge; arrow-key
+   * nudges pass a stable one so a held key coalesces like a slider. A no-op edit writes nothing.
+   */
+  applyCanvasEdit: (slotId: string, edit: CanvasEdit, historyKind: string) => void
   clearAllOverrides: () => void
   reset: () => void
   /** null in freeform mode: no project on disk, everything lives in this store */
@@ -359,6 +442,9 @@ type State = {
   setChipText: (localeId: string, slotId: string, chipId: string, text: string) => void
   /** feedback for the agent; it is not part of the set, so the approval survives it */
   setSlotNote: (slotId: string, note: string) => void
+  /** this slot's place in the deck; undefined clears it. Draws no pixel, so the approval survives
+   *  it too, but unlike a note it is an ordinary edit and goes through undo/redo. */
+  setSlotRole: (slotId: string, role: TileRole | undefined) => void
   /** put a gallery image into one frame of a slot; null clears an optional one */
   setSlotSource: (slotId: string, role: SlotRole, name: string | null) => Promise<void>
   /** replace a slot's sticker list; an empty list removes the key */
@@ -541,19 +627,29 @@ function clearHistory(): HistoryFields {
 /**
  * Undo/redo apply a snapshot through the same write path an edit uses: in project mode that means
  * `mutated()` (so the save is scheduled and derived `screens`/`settings` are recomputed) with the
- * approval always nulled — undo is an edit, and a snapshot must never resurrect a stamp for
- * content the user is actively changing.
+ * approval nulled — undo is an edit, and a snapshot must never resurrect a stamp for content the
+ * user is actively changing. A step that differs only in what the stamp never covered (a `role`,
+ * see `approvalContent`) keeps the current stamp and its verdict instead, exactly as the edit it
+ * reverses or repeats did; a stamp that is already gone stays gone either way.
  */
 function applySnapshot(state: State, snapshot: HistorySnapshot): Partial<State> {
   if (snapshot.mode === 'freeform') return { screens: snapshot.screens, settings: snapshot.settings }
   if (!state.project) return {}
-  const project: Project = { set: { ...snapshot.set, approval: null }, copies: snapshot.copies }
-  return mutated(state, project, {
+  const derived = (project: Project): Partial<State> => ({
     screens: screensFor(project, state.localeId),
     settings: project.set.targets.some((t) => t.id === state.targetId)
       ? settingsFor(project, state.targetId)
       : state.settings,
   })
+  if (approvalContent(snapshot) === approvalContent(state.project)) {
+    const project: Project = {
+      set: { ...snapshot.set, approval: state.project.set.approval },
+      copies: snapshot.copies,
+    }
+    return { project, ...derived(project) }
+  }
+  const project: Project = { set: { ...snapshot.set, approval: null }, copies: snapshot.copies }
+  return mutated(state, project, derived(project))
 }
 
 let unsubscribe: (() => void) | null = null
@@ -846,6 +942,48 @@ export const useStore = create<State>((set, get) => ({
     scheduleSave(get)
   },
 
+  clearSettings: (keys) => {
+    const state = get()
+    const kind = `clearSettings:${[...keys].sort().join(',')}`
+    if (!state.project) {
+      const settings = { ...state.settings }
+      for (const key of keys) delete settings[key]
+      return set({ settings, ...pushHistory(state, kind) })
+    }
+    const shared = { ...state.project.set.settings }
+    for (const key of keys) delete shared[key]
+    const project: Project = {
+      set: { ...state.project.set, approval: null, settings: shared },
+      copies: state.project.copies,
+    }
+    set({
+      ...mutated(state, project, { settings: settingsFor(project, state.targetId) }),
+      ...pushHistory(state, kind),
+    })
+    scheduleSave(get)
+  },
+
+  applyCanvasEdit: (slotId, edit, historyKind) => {
+    const state = get()
+    if (!state.project) {
+      if (edit.kind !== 'settings') return
+      const screen = state.screens.find((s) => s.id === slotId)
+      const overrides = screen && overridesAfterCanvasEdit(screen.overrides, edit.fields)
+      if (!overrides) return
+      return set({
+        screens: state.screens.map((s) => (s.id === slotId ? { ...s, overrides } : s)),
+        ...pushHistory(state, historyKind),
+      })
+    }
+    const project = projectAfterCanvasEdit(state.project, slotId, edit)
+    if (!project) return
+    set({
+      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...pushHistory(state, historyKind),
+    })
+    scheduleSave(get)
+  },
+
   clearAllOverrides: () => {
     const state = get()
     const screens = state.screens.map((s) => ({ ...s, overrides: {} }))
@@ -979,6 +1117,14 @@ export const useStore = create<State>((set, get) => ({
     const state = get()
     if (!state.project) return
     set({ project: projectAfterNote(state.project, slotId, note) })
+    scheduleSave(get)
+  },
+
+  setSlotRole: (slotId, role) => {
+    const state = get()
+    if (!state.project) return
+    const project = projectAfterRole(state.project, slotId, role)
+    set({ project, ...pushHistory(state, `role:${slotId}`) })
     scheduleSave(get)
   },
 

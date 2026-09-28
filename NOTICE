@@ -14,6 +14,21 @@ computed here from the ported accent and background colours, tinted until the
 palette's own text colour reaches WCAG 2 AA contrast against the band (see
 below).
 
+## Copy ideas (src/presets/copyIdeas.ts)
+
+The headline formulas and their editor guidance are ported from the same
+project's headline-pattern library:
+
+  ParthJadhav/app-store-screenshots
+  https://github.com/ParthJadhav/app-store-screenshots
+  skills/app-store-screenshots/copy-ideas.md and
+  skills/app-store-screenshots/template/src/lib/copy-ideas.ts, commit 7faf7fc
+  MIT License, Copyright (c) Parth Jadhav
+
+The English formulas are taken over largely as-is; the German column is an
+idiomatic rewrite, not a translation, and every example is written fresh for
+GetALife.
+
 ## Contrast formula (src/lib/contrast.ts)
 
 `relativeLuminance` and `contrastRatio` implement the public WCAG 2.1 relative

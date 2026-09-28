@@ -18,7 +18,7 @@ export function rewriteTargetOut(out: string, newId: string, targetId: string): 
 /**
  * Builds the project for a new set duplicated from `project`: a full deep copy (mutating the
  * result must never touch the original), a fresh id, no inherited approval stamp, and every
- * target's `out` moved out of the store folders. Slot notes and copy travel unchanged.
+ * target's `out` moved out of the store folders. Slot notes, roles and copy travel unchanged.
  */
 export function duplicateProject(project: Project, newId: string): Project {
   const duplicate = structuredClone(project)

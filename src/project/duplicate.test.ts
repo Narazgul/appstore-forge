@@ -36,6 +36,7 @@ const twoTargetProject = (): Project => ({
         overrides: { layout: 'text-top' },
         elements: [{ id: 'dot', artwork: 'dot', x: 0.5, y: 0.5, width: 0.2 }],
         note: 'reshoot this one',
+        role: 'hero',
       },
       { id: 'b', kind: 'screen', screen: 'shot-b', overrides: {} },
     ],
@@ -130,10 +131,11 @@ describe('duplicateProject', () => {
     expect(result.copies.en.b).toEqual({ headline: 'Second', subhead: '' })
   })
 
-  it('keeps stickers and slot notes', () => {
+  it('keeps stickers, slot notes and a slot role', () => {
     const result = duplicateProject(twoTargetProject(), 'promo')
     expect(result.set.slots[0].elements).toEqual([{ id: 'dot', artwork: 'dot', x: 0.5, y: 0.5, width: 0.2 }])
     expect(result.set.slots[0].note).toBe('reshoot this one')
+    expect(result.set.slots[0].role).toBe('hero')
   })
 
   it('deep copies: mutating the duplicate never touches the original', () => {

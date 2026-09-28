@@ -1,6 +1,6 @@
 import { SECTION_KEYS, effectiveSettings } from '../lib/settings'
 import { useStore } from '../store'
-import type { OverridableKey, ScreenOverrides, Settings } from '../types'
+import type { OptionalSettingKey, OverridableKey, ScreenOverrides, Settings } from '../types'
 import { AdjustSection } from './tune/AdjustSection'
 import { BackgroundSection } from './tune/BackgroundSection'
 import { Section } from './tune/Controls'
@@ -24,6 +24,7 @@ export function TunePanel() {
   const setOverride = useStore((s) => s.setOverride)
   const clearOverrides = useStore((s) => s.clearOverrides)
   const clearAllOverrides = useStore((s) => s.clearAllOverrides)
+  const clearSettings = useStore((s) => s.clearSettings)
 
   const selected = screens.find((s) => s.id === selectedId) ?? null
   const selectedIndex = screens.findIndex((s) => s.id === selectedId)
@@ -32,6 +33,10 @@ export function TunePanel() {
   // Controls read the resolved value and write to whichever scope is active.
   const settings: Settings = selected ? effectiveSettings(selected, global) : global
   const put = (patch: ScreenOverrides) => (selected ? setOverride(selected.id, patch) : setSettings(patch))
+  const owns = (key: OptionalSettingKey) =>
+    selected ? selected.overrides[key] !== undefined : global[key] !== undefined
+  const clear = (key: OptionalSettingKey) =>
+    selected ? clearOverrides(selected.id, [key]) : clearSettings([key])
   const sectionOverridden = (key: string) =>
     !!selected && SECTION_KEYS[key]?.some((k) => selected.overrides[k] !== undefined)
   const resetSection = (key: string) =>
@@ -86,11 +91,11 @@ export function TunePanel() {
       </Section>
 
       <Section id="type" title="Type" defaultOpen={false} {...scope('type')}>
-        <TypeSection settings={settings} put={put} />
+        <TypeSection settings={settings} put={put} owns={owns} clear={clear} />
       </Section>
 
       <Section id="adjust" title="Adjust" defaultOpen={false} {...scope('adjust')}>
-        <AdjustSection settings={settings} put={put} />
+        <AdjustSection settings={settings} put={put} owns={owns} clear={clear} />
       </Section>
 
       {project && selected && (

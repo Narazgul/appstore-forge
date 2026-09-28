@@ -3,6 +3,7 @@ import type {
   Background,
   ChipElement,
   Layout,
+  Offset,
   PlacementSource,
   SceneElement,
   Screen,
@@ -23,8 +24,13 @@ import {
   drawTextBlock,
   fitChipText,
   headlineBaseSize,
+  listBlockBox,
+  textBlockBox,
+  type ChipFit,
+  type TextMeasurer,
   LIST_CAP_MULT,
   type Line,
+  type Shift,
 } from './text'
 import { drawArtwork, drawDevice, drawMosaicCell, drawPill, drawShape, drawSticker, type Box } from './frames'
 
@@ -88,7 +94,9 @@ export type DeviceBox = { box: Box; source: PlacementSource; angle: number; fram
  * Where every device frame of a composition sits, back to front. `w`/`h` are one store tile.
  * The single source of device geometry: the renderer draws these boxes and the rhythm glyphs
  * sketch them. The glyphs pass no `minTop`, so a lifted device (hero, panorama) sits a little
- * higher in the glyph than in the export.
+ * higher in the glyph than in the export. `offset` (`Settings.deviceOffset`) moves every box by
+ * the same amount after the lift — the lift never sees it, so the arrangement lands exactly that
+ * far from where the layout alone puts it.
  */
 export function composeDevices(
   layout: Layout,
@@ -99,6 +107,7 @@ export function composeDevices(
   deviceScale: number,
   tilt: number,
   minTop?: number,
+  offset?: Offset,
 ): DeviceBox[] {
   // No device (and no artwork placement) is ever drawn for a deviceless layout, whatever the
   // arrangement asks for — the composition is copy alone.
@@ -120,13 +129,15 @@ export function composeDevices(
   // Push the whole composition down rather than shrink it — the width is the layout's point.
   const baseH = baseW / aspect
   const lift = minTop !== undefined ? Math.max(0, minTop - (cy - baseH / 2)) : 0
-  const cyClamped = cy + lift
+  const cyLifted = cy + lift
+  const cxMoved = offset ? cx + offset.dx * W : cx
+  const cyClamped = offset ? cyLifted + offset.dy * h : cyLifted
 
   return getPosition(positionId).placements.map((placement) => {
     const fw = baseW * placement.scale
     const fh = fw / aspect
     return {
-      box: { x: cx + placement.dx * W - fw / 2, y: cyClamped + placement.dy * h - fh / 2, w: fw, h: fh },
+      box: { x: cxMoved + placement.dx * W - fw / 2, y: cyClamped + placement.dy * h - fh / 2, w: fw, h: fh },
       source: placement.source,
       angle: placement.rotate + tilt,
       frameless: placement.frameless === true,
@@ -225,10 +236,36 @@ export function mosaicCells(layout: Layout, w: number, h: number, cellAspect: nu
   }))
 }
 
+/** The mosaic's cells as `drawMosaicGrid` draws them, moved by `offset` as one unit, with the
+ *  bounds and the pivot the whole grid tilts about. Null when there is no cell at all. */
+export function mosaicGrid(
+  layout: Layout,
+  w: number,
+  h: number,
+  cellAspect: number,
+  count: number,
+  offset?: Offset,
+): { boxes: Box[]; bounds: Box; pivotX: number; pivotY: number } | null {
+  const cells = mosaicCells(layout, w, h, cellAspect, count)
+  if (!cells.length) return null
+  const W = w * layout.span
+  const boxes = offset ? cells.map((b) => ({ ...b, x: b.x + offset.dx * W, y: b.y + offset.dy * h })) : cells
+  const left = Math.min(...boxes.map((b) => b.x))
+  const right = Math.max(...boxes.map((b) => b.x + b.w))
+  const top = Math.min(...boxes.map((b) => b.y))
+  const bottom = Math.max(...boxes.map((b) => b.y + b.h))
+  return {
+    boxes,
+    bounds: { x: left, y: top, w: right - left, h: bottom - top },
+    pivotX: (left + right) / 2,
+    pivotY: (top + bottom) / 2,
+  }
+}
+
 /**
  * Draws the mosaic grid, tilted as one unit around its own centre by `settings.tilt` — the same
  * field a device band uses for its own angle, reused here since a mosaic tile has no device to
- * carry it. Cell `0` draws `sources.self`; an image that never loaded (or a cell past the last
+ * carry it, and moved as one unit by `settings.deviceOffset`. Cell `0` draws `sources.self`; an image that never loaded (or a cell past the last
  * named `extra`) still gets its white card, same as a device with no screenshot. Each card casts
  * `settings.deviceShadow` exactly like a device frame would (`drawDevice`) — a mosaic cell is a
  * frameless device in every way that matters to the shadow.
@@ -244,14 +281,9 @@ function drawMosaicGrid(
   sources: SceneSources,
 ) {
   const count = 1 + (screen.extraIds?.length ?? 0)
-  const boxes = mosaicCells(layout, w, h, cellAspect, count)
-  if (!boxes.length) return
-  const left = Math.min(...boxes.map((b) => b.x))
-  const right = Math.max(...boxes.map((b) => b.x + b.w))
-  const top = Math.min(...boxes.map((b) => b.y))
-  const bottom = Math.max(...boxes.map((b) => b.y + b.h))
-  const pivotX = (left + right) / 2
-  const pivotY = (top + bottom) / 2
+  const grid = mosaicGrid(layout, w, h, cellAspect, count, settings.deviceOffset)
+  if (!grid) return
+  const { boxes, pivotX, pivotY } = grid
 
   ctx.save()
   if (settings.tilt !== 0) {
@@ -273,7 +305,7 @@ function drawMosaicGrid(
  * nothing rather than guessing one. Never called for a chip — its box depends on measured text,
  * which needs the drawing context, so `drawChipElement` computes its own.
  */
-function elementBox(
+export function elementBox(
   el: StickerElement | ShapeElement,
   W: number,
   w: number,
@@ -295,7 +327,26 @@ function elementBox(
  * A chip's box is not known up front: the pill hugs the (possibly auto-shrunk) text, so its width
  * and height only exist once the text is measured against `ctx`. `el.width` is the ceiling on the
  * pill's width (a fraction of the tile width, like every other element), never its actual size.
+ * Leaves `ctx.font` at the fitted size — `drawChipElement` draws the text in exactly that font.
  */
+export function chipGeometry(
+  ctx: TextMeasurer,
+  W: number,
+  w: number,
+  h: number,
+  el: ChipElement,
+  settings: Settings,
+  lang: string | undefined,
+): { fit: ChipFit; box: Box; padX: number } {
+  const fit = fitChipText(ctx, el.text, settings, el.width * w, el.size * h, lang)
+  const pillH = fit.size * CHIP_HEIGHT
+  const padX = fit.size * CHIP_PAD_X
+  const pillW = fit.textWidth + padX * 2
+  const cx = el.x * W
+  const cy = el.y * h
+  return { fit, box: { x: cx - pillW / 2, y: cy - pillH / 2, w: pillW, h: pillH }, padX }
+}
+
 function drawChipElement(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -306,13 +357,9 @@ function drawChipElement(
   lang: string | undefined,
 ) {
   if (!el.text) return
-  const fit = fitChipText(ctx, el.text, settings, el.width * w, el.size * h, lang)
-  const pillH = fit.size * CHIP_HEIGHT
-  const padX = fit.size * CHIP_PAD_X
-  const pillW = fit.textWidth + padX * 2
+  const { fit, box, padX } = chipGeometry(ctx, W, w, h, el, settings, lang)
   const cx = el.x * W
   const cy = el.y * h
-  const box: Box = { x: cx - pillW / 2, y: cy - pillH / 2, w: pillW, h: pillH }
 
   ctx.save()
   if (el.rotate !== 0) {
@@ -371,6 +418,43 @@ function drawElements(
   }
 }
 
+/** An `Offset` in pixels of a composition `W` wide and `h` high; absent stays absent. */
+export const shiftFor = (offset: Offset | undefined, W: number, h: number): Shift | undefined =>
+  offset ? { x: offset.dx * W, y: offset.dy * h } : undefined
+
+/** Space between `feature-wall`'s headline block and its list, as a fraction of the tile height. */
+export const LIST_GAP = 0.04
+
+export const listCapSize = (h: number, settings: Settings, layout: Layout) =>
+  headlineBaseSize(h, settings, layout.textScale) * LIST_CAP_MULT
+
+/**
+ * Where the text block and the list land. A layout with a list stacks both as one group centred
+ * in the tile, `LIST_GAP` apart: the bands only size them, or a short list would leave a hole
+ * under it. `textOffset` then moves the group as a whole.
+ */
+export function textShifts(
+  ctx: TextMeasurer,
+  W: number,
+  w: number,
+  h: number,
+  layout: Layout,
+  screen: Screen,
+  settings: Settings,
+): { text?: Shift; list?: Shift } {
+  const user = shiftFor(settings.textOffset, W, h)
+  if (!layout.list) return { text: user, list: user }
+  const text = textBlockBox(ctx, W, w, h, layout, screen, settings)
+  const list = listBlockBox(ctx, W, w, h, layout, screen, settings, listCapSize(h, settings, layout))
+  const gap = text && list ? LIST_GAP * h : 0
+  const top = (h - (text?.h ?? 0) - gap - (list?.h ?? 0)) / 2
+  const moved = (dy: number): Shift => ({ x: user?.x ?? 0, y: (user?.y ?? 0) + dy })
+  return {
+    text: text ? moved(top - text.y) : user,
+    list: list ? moved(top + (text ? text.h + gap : 0) - list.y) : user,
+  }
+}
+
 /** How many store tiles a screen's composition covers — the canvas must be `span` tiles wide. */
 export const sceneSpan = (screen: Screen, settings: Settings): 1 | 2 =>
   getLayout(effectiveSettings(screen, settings).layout).span
@@ -397,11 +481,10 @@ export function renderScene(
   // A backdrop is a card behind the device band; a deviceless layout has none to sit behind.
   if (settings.backdropColor && !layout.deviceless) drawBackdrop(ctx, W, w, h, layout, settings.backdropColor)
   drawElements(ctx, W, w, h, screen.elements, sources, 'behind', settings, screen.lang)
-  drawTextBlock(ctx, W, w, h, layout, screen, settings)
-  if (layout.list) {
-    const capSize = headlineBaseSize(h, settings, layout.textScale) * LIST_CAP_MULT
-    drawListBlock(ctx, W, w, h, layout, screen, settings, capSize)
-  }
+  const shifts = textShifts(ctx, W, w, h, layout, screen, settings)
+  drawTextBlock(ctx, W, w, h, layout, screen, settings, shifts.text)
+  if (layout.list)
+    drawListBlock(ctx, W, w, h, layout, screen, settings, listCapSize(h, settings, layout), shifts.list)
 
   const device = getDevice(settings.deviceId)
 
@@ -418,6 +501,7 @@ export function renderScene(
       settings.deviceScale,
       settings.tilt,
       textFloor(layout, h),
+      settings.deviceOffset,
     )
 
     // An artwork screen has no source screenshot at all — self/next/prev would draw an empty

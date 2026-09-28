@@ -1,4 +1,4 @@
-import type { Background, ScreenOverrides, Settings } from '../../types'
+import type { Background, OptionalSettingKey, ScreenOverrides, Settings } from '../../types'
 
 /**
  * Every tune section reads the *resolved* settings for the active scope and writes back
@@ -8,6 +8,10 @@ import type { Background, ScreenOverrides, Settings } from '../../types'
 export type SectionProps = {
   settings: Settings
   put: (patch: ScreenOverrides) => void
+  /** whether the active scope itself sets `key` (rather than inheriting or leaving it absent) */
+  owns?: (key: OptionalSettingKey) => boolean
+  /** drops `key` from the active scope — the screen's override, or the set-wide value */
+  clear?: (key: OptionalSettingKey) => void
 }
 
 export const gradientCss = (g: Extract<Background, { kind: 'gradient' }>) =>

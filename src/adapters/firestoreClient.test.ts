@@ -363,4 +363,97 @@ describe('save keeps sourcesFrom (update never touches fields outside its payloa
     expect(after.gallery).toEqual({ en: { screens: [], artwork: [] } })
     expect((after.copies as Record<string, unknown>).en).toEqual({ a: { headline: 'Edited', subhead: '' } })
   })
+
+  it('a slot role survives a load/save round trip, generically, like any other slot field', async () => {
+    const withRole = { ...projectWith('promo'), slots: [{ ...projectWith('promo').slots[0], role: 'hero' }] }
+    const { firebase, docs } = fakeFirestore({ promo: { set: withRole, copies: {} } })
+    const store = firestoreProjectStore({ setId: 'promo', firebase, hostJson: hostRealm2 })
+    const project = await store.load()
+    expect(project.set.slots[0].role).toBe('hero')
+
+    await store.save(project)
+    const after = docs.get('promo') as { set: { slots: { role?: string }[] } }
+    expect(after.set.slots[0].role).toBe('hero')
+  })
+})
+
+describe('the canvas offsets through Firestore', () => {
+  /** Counts every `set()` so the test can prove a save only ever `update`s (see `save`). */
+  const counting = (initial: Record<string, Record<string, unknown>>) => {
+    const fake = fakeFirestore(initial)
+    let setCalls = 0
+    const collection = fake.firebase.firestore().collection('')
+    const firebase = {
+      ...fake.firebase,
+      firestore: () => ({
+        collection: () => ({
+          ...collection,
+          doc: (id: string) => {
+            const doc = collection.doc(id)
+            return {
+              ...doc,
+              set: (data: unknown) => {
+                setCalls++
+                return doc.set(data)
+              },
+            }
+          },
+        }),
+      }),
+    } as unknown as CompatFirebase
+    return { firebase, docs: fake.docs, setCalls: () => setCalls }
+  }
+
+  const withOffsets = (): Project => ({
+    set: {
+      ...projectWith('default'),
+      settings: { textOffset: { dx: 0, dy: 0.02 } },
+      slots: [
+        {
+          id: 'a',
+          kind: 'screen',
+          screen: 'shot',
+          overrides: {
+            layout: 'hero',
+            deviceOffset: { dx: 0.0762, dy: -0.0351 },
+            textOffset: { dx: -0.03, dy: 0 },
+          },
+        },
+      ],
+    },
+    copies: {},
+  })
+
+  it('writes both offsets with update, never set, and reads them back unchanged', async () => {
+    const { firebase, docs, setCalls } = counting({
+      default: {
+        set: projectWith('default'),
+        copies: {},
+        gallery: { en: { screens: ['shot'], artwork: [] } },
+      },
+    })
+    const store = firestoreProjectStore({ setId: 'default', firebase, hostJson: hostRealm2 })
+    await store.load()
+    await store.save(withOffsets())
+    expect(setCalls()).toBe(0)
+    const back = await firestoreProjectStore({ setId: 'default', firebase }).load()
+    expect(back.set.slots[0].overrides).toEqual(withOffsets().set.slots[0].overrides)
+    expect(back.set.settings.textOffset).toEqual({ dx: 0, dy: 0.02 })
+    // The gallery belongs to the sync; the GUI's save must leave it where it was.
+    expect(docs.get('default')!.gallery).toEqual({ en: { screens: ['shot'], artwork: [] } })
+  })
+
+  it('drops an offset the GUI removed — the set field is replaced whole, not merged', async () => {
+    const { firebase } = counting({ default: { set: withOffsets().set, copies: {} } })
+    const store = firestoreProjectStore({ setId: 'default', firebase, hostJson: hostRealm2 })
+    const project = await store.load()
+    const { deviceOffset: _gone, ...rest } = project.set.slots[0].overrides
+    await store.save({
+      ...project,
+      set: { ...project.set, settings: {}, slots: [{ ...project.set.slots[0], overrides: rest }] },
+    })
+    const back = await firestoreProjectStore({ setId: 'default', firebase }).load()
+    expect(back.set.slots[0].overrides).toEqual({ layout: 'hero', textOffset: { dx: -0.03, dy: 0 } })
+    expect(back.set.settings).toEqual({})
+  })
 })

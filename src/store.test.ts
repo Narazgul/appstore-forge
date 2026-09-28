@@ -3,8 +3,10 @@ import {
   COALESCE_MS,
   DEFAULT_SETTINGS,
   HISTORY_LIMIT,
+  projectAfterCanvasEdit,
   projectAfterNote,
   projectAfterOverride,
+  projectAfterRole,
   projectAfterScreenPatch,
   projectAfterSlotAdd,
   projectAfterSlotElements,
@@ -23,10 +25,12 @@ import {
   SAVE_FAILED,
 } from './store'
 import { screensFor, settingsFor } from './project/bridge'
+import { approvalHash } from './project/hash'
 import { TEMPLATES, getTemplateSpec } from './presets/templates'
 import type { ProjectStore } from './project/store'
 import type { Project } from './project/types'
 import type { TemplateSpec } from './types'
+import { GestureSession } from './lib/canvasEdit'
 
 const withVariants = TEMPLATES.find((t) => t.variants?.length)!
 const freeform: TemplateSpec = { ...withVariants, variants: undefined }
@@ -220,6 +224,27 @@ describe('projectAfterNote', () => {
     const next = projectAfterNote(p, 'b', 'Swap the shot')
     expect(next.set.slots[0]).not.toHaveProperty('note')
     expect(p.set.slots[1]).not.toHaveProperty('note')
+  })
+})
+
+describe('projectAfterRole', () => {
+  it('writes the role and keeps the approval, which does not cover roles', () => {
+    const next = projectAfterRole(project(), 'a', 'hero')
+    expect(next.set.slots[0].role).toBe('hero')
+    expect(next.set.approval).toEqual(project().set.approval)
+  })
+
+  it('removes the key again for undefined', () => {
+    const next = projectAfterRole(projectAfterRole(project(), 'a', 'hero'), 'a', undefined)
+    expect(next.set.slots[0]).not.toHaveProperty('role')
+  })
+
+  it('leaves other slots alone and does not mutate the input', () => {
+    const p = project()
+    p.set.slots.push({ id: 'b', kind: 'screen', screen: 'two', overrides: {} })
+    const next = projectAfterRole(p, 'b', 'closer')
+    expect(next.set.slots[0]).not.toHaveProperty('role')
+    expect(p.set.slots[1]).not.toHaveProperty('role')
   })
 })
 
@@ -495,6 +520,18 @@ describe('the store in project mode', () => {
     useStore.getState().setSlotNote('a', 'Headline too long')
     const state = useStore.getState()
     expect(state.project!.set.slots[0].note).toBe('Headline too long')
+    expect(state.project!.set.approval).toEqual(p.set.approval)
+    expect(state.approvalOk).toBe(true)
+    expect(state.staleApproval).toBeNull()
+  })
+
+  it('setSlotRole writes the role without touching the approval', () => {
+    const p = project()
+    open(p)
+    useStore.setState({ approvalOk: true, staleApproval: null })
+    useStore.getState().setSlotRole('a', 'hero')
+    const state = useStore.getState()
+    expect(state.project!.set.slots[0].role).toBe('hero')
     expect(state.project!.set.approval).toEqual(p.set.approval)
     expect(state.approvalOk).toBe(true)
     expect(state.staleApproval).toBeNull()
@@ -1159,6 +1196,96 @@ describe('undo / redo', () => {
     expect(useStore.getState().project!.copies.en.a).not.toHaveProperty('eyebrow')
   })
 
+  /** A store that remembers every project it was asked to save. */
+  const recordingStore = (p: Project) => {
+    const saved: Project[] = []
+    const store: ProjectStore = {
+      ...fakeProjectStore(p),
+      save: (next) => {
+        saved.push(next)
+        return Promise.resolve()
+      },
+    }
+    return { store, saved }
+  }
+
+  it('setSlotRole is undoable, and undo/redo keep a stamp the role was never part of', async () => {
+    const p = project()
+    p.set.approval = null
+    const { store, saved } = recordingStore(p)
+    open(p, store)
+    await useStore.getState().approve('Hofi')
+    const stamp = useStore.getState().project!.set.approval!
+    expect(stamp).not.toBeNull()
+
+    useStore.getState().setSlotRole('a', 'hero')
+    expect(useStore.getState().project!.set.slots[0].role).toBe('hero')
+    expect(useStore.getState().project!.set.approval).toEqual(stamp)
+
+    useStore.getState().undo()
+    const undone = useStore.getState()
+    expect(undone.project!.set.slots[0]).not.toHaveProperty('role')
+    expect(undone.project!.set.approval).toEqual(stamp)
+    expect(undone.approvalOk).toBe(true)
+    expect(undone.staleApproval).toBeNull()
+    // The stamp is still true of what is on screen, and it is what reaches the file.
+    expect(await approvalHash(undone.project!, store.sourceBytes, store.artworkBytes)).toBe(stamp.hash)
+    await flush()
+    expect(saved[saved.length - 1].set.approval).toEqual(stamp)
+
+    useStore.getState().redo()
+    expect(useStore.getState().project!.set.slots[0].role).toBe('hero')
+    expect(useStore.getState().project!.set.approval).toEqual(stamp)
+    expect(useStore.getState().approvalOk).toBe(true)
+  })
+
+  it('undoing a real edit still drops the stamp, and no step ever brings it back', async () => {
+    const p = project()
+    p.set.approval = null
+    const { store, saved } = recordingStore(p)
+    open(p, store)
+    useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
+    await useStore.getState().approve('Hofi')
+    const stamp = useStore.getState().project!.set.approval!
+    vi.advanceTimersByTime(APART)
+    useStore.getState().setSlotRole('a', 'hero')
+
+    useStore.getState().undo()
+    expect(useStore.getState().project!.set.approval).toEqual(stamp)
+
+    useStore.getState().undo()
+    const undone = useStore.getState()
+    expect(undone.project!.copies.en.a.headline).toBe('Hi')
+    expect(undone.project!.set.approval).toBeNull()
+    expect(undone.approvalOk).toBe(false)
+    expect(undone.staleApproval).toEqual(stamp)
+    await flush()
+    expect(saved[saved.length - 1].set.approval).toBeNull()
+
+    // Back to exactly the approved content, but a snapshot never resurrects a stamp.
+    useStore.getState().redo()
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Neu')
+    expect(useStore.getState().project!.set.approval).toBeNull()
+    useStore.getState().redo()
+    expect(useStore.getState().project!.set.slots[0].role).toBe('hero')
+    expect(useStore.getState().project!.set.approval).toBeNull()
+  })
+
+  it('picking a copy-idea formula (updateScreen writes the headline) is a single undoable step', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().updateScreen('a', { headline: 'Your money,\nfinally clear.' })
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Your money,\nfinally clear.')
+    expect(useStore.getState().undoStack).toHaveLength(1)
+
+    useStore.getState().undo()
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Hi')
+    expect(useStore.getState().canRedo).toBe(true)
+
+    useStore.getState().redo()
+    expect(useStore.getState().project!.copies.en.a.headline).toBe('Your money,\nfinally clear.')
+  })
+
   it('a list edit through updateScreen is undoable', () => {
     const p = project()
     open(p, fakeProjectStore(p))
@@ -1182,5 +1309,274 @@ describe('describeError', () => {
   it('falls back to the plain message when there is no code', () => {
     expect(describeError(new Error('offline'))).toBe('offline')
     expect(describeError('something')).toBe('something')
+  })
+})
+
+describe('projectAfterCanvasEdit', () => {
+  const withSticker = (): Project => {
+    const p = project()
+    p.set.slots[0].elements = [{ id: 'k', artwork: 'kevin', x: 0.5, y: 0.5, width: 0.3, rotate: 8 }]
+    return p
+  }
+
+  it('writes a gesture’s overrides and drops the approval', () => {
+    const next = projectAfterCanvasEdit(project(), 'a', {
+      kind: 'settings',
+      fields: { deviceOffset: { dx: 0.1, dy: 0 }, tilt: 5 },
+    })!
+    expect(next.set.slots[0].overrides).toEqual({ deviceOffset: { dx: 0.1, dy: 0 }, tilt: 5 })
+    expect(next.set.approval).toBeNull()
+  })
+
+  it('removes an override the gesture resolved to "inherit", so no 0/0 ever lands in the file', () => {
+    const p = project()
+    p.set.slots[0].overrides = { layout: 'hero', textOffset: { dx: 0.02, dy: 0 } }
+    const next = projectAfterCanvasEdit(p, 'a', { kind: 'settings', fields: { textOffset: undefined } })!
+    expect(next.set.slots[0].overrides).toEqual({ layout: 'hero' })
+    expect(JSON.stringify(next.set)).not.toContain('textOffset')
+  })
+
+  it('is null for an edit that changes nothing — no undo step, no save', () => {
+    const p = project()
+    p.set.slots[0].overrides = { tilt: 5 }
+    expect(projectAfterCanvasEdit(p, 'a', { kind: 'settings', fields: { tilt: 5 } })).toBeNull()
+    expect(
+      projectAfterCanvasEdit(p, 'a', { kind: 'settings', fields: { deviceOffset: undefined } }),
+    ).toBeNull()
+    expect(
+      projectAfterCanvasEdit(withSticker(), 'a', { kind: 'element', id: 'k', fields: { x: 0.5 } }),
+    ).toBeNull()
+    expect(projectAfterCanvasEdit(p, 'nope', { kind: 'settings', fields: { tilt: 1 } })).toBeNull()
+  })
+
+  it('patches only the grabbed element and drops rotate back to its default', () => {
+    const next = projectAfterCanvasEdit(withSticker(), 'a', {
+      kind: 'element',
+      id: 'k',
+      fields: { x: 0.6, rotate: 0 },
+    })!
+    expect(next.set.slots[0].elements).toEqual([{ id: 'k', artwork: 'kevin', x: 0.6, y: 0.5, width: 0.3 }])
+  })
+})
+
+describe('applyCanvasEdit', () => {
+  // Same clock discipline as 'undo / redo': the coalescing window lives in module state.
+  let clock = 0
+  const APART = COALESCE_MS + 1
+
+  const open = (p: Project, store: ProjectStore) =>
+    useStore.setState({
+      project: p,
+      projectStore: store,
+      localeId: 'en',
+      targetId: 'appstore',
+      screens: screensFor(p, 'en'),
+      settings: settingsFor(p, 'appstore'),
+      images: {},
+      approvalOk: true,
+      selectedId: null,
+      staleApproval: null,
+      lastError: null,
+      undoStack: [],
+      redoStack: [],
+      canUndo: false,
+      canRedo: false,
+    })
+
+  const flush = async () => {
+    vi.runAllTimers()
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  const move = (dx: number) => ({ kind: 'settings' as const, fields: { deviceOffset: { dx, dy: 0 } } })
+
+  beforeEach(() => {
+    clock = Math.max(clock, Date.now()) + 10 * COALESCE_MS
+    vi.useFakeTimers()
+    vi.setSystemTime(clock)
+  })
+
+  afterEach(() => {
+    clock = Math.max(clock, Date.now())
+    vi.useRealTimers()
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      screens: [],
+      settings: DEFAULT_SETTINGS,
+      approvalOk: null,
+      undoStack: [],
+      redoStack: [],
+      canUndo: false,
+      canRedo: false,
+    })
+  })
+
+  it('makes one gesture one undo step and one save, however it is split into moves', async () => {
+    let saves = 0
+    const p = project()
+    open(
+      p,
+      fakeProjectStore(p, async () => {
+        saves++
+      }),
+    )
+    useStore.getState().applyCanvasEdit('a', move(0.1), 'gesture:1')
+    expect(useStore.getState().undoStack).toHaveLength(1)
+    await flush()
+    expect(saves).toBe(1)
+    expect(useStore.getState().project!.set.slots[0].overrides).toEqual({ deviceOffset: { dx: 0.1, dy: 0 } })
+
+    useStore.getState().undo()
+    expect(useStore.getState().project!.set.slots[0].overrides).toEqual({})
+  })
+
+  it('keeps two quick gestures apart — each ⌘Z takes back exactly one', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    useStore.getState().applyCanvasEdit('a', move(0.1), 'gesture:1')
+    vi.advanceTimersByTime(50)
+    useStore.getState().applyCanvasEdit('a', move(0.2), 'gesture:2')
+    expect(useStore.getState().undoStack).toHaveLength(2)
+    useStore.getState().undo()
+    expect(useStore.getState().project!.set.slots[0].overrides).toEqual({ deviceOffset: { dx: 0.1, dy: 0 } })
+  })
+
+  it('merges a held arrow key into one step, like a slider', () => {
+    const p = project()
+    open(p, fakeProjectStore(p))
+    for (let i = 1; i <= 5; i++) {
+      useStore.getState().applyCanvasEdit('a', move(i * 0.005), 'nudge:a:device')
+      vi.advanceTimersByTime(30)
+    }
+    expect(useStore.getState().undoStack).toHaveLength(1)
+    vi.advanceTimersByTime(APART)
+    useStore.getState().applyCanvasEdit('a', move(0.5), 'nudge:a:device')
+    expect(useStore.getState().undoStack).toHaveLength(2)
+  })
+
+  it('writes, records and saves nothing for an edit that changes nothing', async () => {
+    let saves = 0
+    const p = project()
+    open(
+      p,
+      fakeProjectStore(p, async () => {
+        saves++
+      }),
+    )
+    useStore
+      .getState()
+      .applyCanvasEdit('a', { kind: 'settings', fields: { deviceOffset: undefined } }, 'gesture:9')
+    await flush()
+    expect(saves).toBe(0)
+    expect(useStore.getState().undoStack).toHaveLength(0)
+    expect(useStore.getState().approvalOk).toBe(true)
+  })
+
+  it('an Escaped gesture reaches the store as nothing at all', async () => {
+    let saves = 0
+    const p = project()
+    open(
+      p,
+      fakeProjectStore(p, async () => {
+        saves++
+      }),
+    )
+    const before = useStore.getState().project
+    const frame = { cx: 100, cy: 100, w: 50, h: 100, angle: 0 }
+    const session = new GestureSession(
+      {
+        mode: 'move',
+        target: { kind: 'device', frame, parts: [frame], scalable: true },
+        origin: { x: 100, y: 100 },
+        effective: useStore.getState().settings,
+      },
+      1,
+      { x: 0, y: 0 },
+    )
+    session.move({ x: 40, y: 0 }, { x: 140, y: 100 }, {}, { w: 210, h: 456, span: 1 })
+    session.cancel()
+    const edit = session.end(useStore.getState().settings)
+    if (edit) useStore.getState().applyCanvasEdit('a', edit, 'gesture:10')
+    await flush()
+    expect(edit).toBeNull()
+    expect(useStore.getState().project).toBe(before)
+    expect(saves).toBe(0)
+  })
+
+  it('a turn back to where it began keeps a pin that repeats the global, and the stamp', async () => {
+    let saves = 0
+    const p = project()
+    p.set.slots[0].overrides = { tilt: 0 }
+    open(
+      p,
+      fakeProjectStore(p, async () => {
+        saves++
+      }),
+    )
+    const before = useStore.getState().project
+    const state = useStore.getState()
+    const frame = { cx: 100, cy: 100, w: 50, h: 100, angle: 0 }
+    const session = new GestureSession(
+      {
+        mode: 'rotate',
+        target: { kind: 'device', frame, parts: [frame], scalable: true },
+        origin: { x: 100, y: 0 },
+        effective: { ...state.settings, ...state.screens[0].overrides },
+      },
+      1,
+      { x: 0, y: 0 },
+    )
+    const r = (5 * Math.PI) / 180
+    const dims = { w: 210, h: 456, span: 1 }
+    session.move({ x: 20, y: 0 }, { x: 100 + 100 * Math.sin(r), y: 100 - 100 * Math.cos(r) }, {}, dims)
+    session.move({ x: 4, y: 0 }, { x: 100.3, y: 0 }, {}, dims)
+    const edit = session.end(state.settings)
+    if (edit) useStore.getState().applyCanvasEdit('a', edit, 'gesture:11')
+    await flush()
+    expect(edit).toBeNull()
+    expect(useStore.getState().project).toBe(before)
+    expect(useStore.getState().project!.set.approval).toEqual(p.set.approval)
+    expect(useStore.getState().undoStack).toHaveLength(0)
+    expect(saves).toBe(0)
+  })
+
+  it('writes a freeform screen’s overrides the same way, one step per gesture', () => {
+    useStore.setState({
+      project: null,
+      projectStore: null,
+      screens: [{ id: 's1', headline: 'Hi', subhead: '', imageId: null, overrides: {} }],
+      settings: DEFAULT_SETTINGS,
+      undoStack: [],
+      redoStack: [],
+    })
+    useStore
+      .getState()
+      .applyCanvasEdit('s1', { kind: 'settings', fields: { textOffset: { dx: 0, dy: 0.1 } } }, 'g:1')
+    expect(useStore.getState().screens[0].overrides).toEqual({ textOffset: { dx: 0, dy: 0.1 } })
+    expect(useStore.getState().undoStack).toHaveLength(1)
+    useStore.getState().undo()
+    expect(useStore.getState().screens[0].overrides).toEqual({})
+  })
+
+  it('clearSettings drops a set-wide offset from the file instead of zeroing it', () => {
+    const p = project()
+    p.set.settings = { tilt: 3, deviceOffset: { dx: 0.1, dy: 0 } }
+    open(p, fakeProjectStore(p))
+    expect(useStore.getState().settings.deviceOffset).toEqual({ dx: 0.1, dy: 0 })
+    useStore.getState().clearSettings(['deviceOffset'])
+    expect(useStore.getState().project!.set.settings).toEqual({ tilt: 3 })
+    expect(useStore.getState().settings.deviceOffset).toBeUndefined()
+    expect(useStore.getState().undoStack).toHaveLength(1)
+  })
+})
+
+describe('DEFAULT_SETTINGS and the optional keys', () => {
+  it('carries no offset, so a template reset never writes one', () => {
+    expect(DEFAULT_SETTINGS).not.toHaveProperty('deviceOffset')
+    expect(DEFAULT_SETTINGS).not.toHaveProperty('textOffset')
+    const next = projectAfterTemplate(project(), withVariants)
+    expect(JSON.stringify(next.set)).not.toMatch(/Offset/)
   })
 })

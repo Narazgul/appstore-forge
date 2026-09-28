@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { approvalHash, canonicalJson } from './hash'
+import { approvalContent, approvalHash, canonicalJson } from './hash'
 import type { Project } from './types'
 
 const project = (): Project => ({
@@ -49,6 +49,23 @@ describe('approvalHash', () => {
     const p = project()
     p.set.slots[0].note = 'Headline too long'
     expect(await approvalHash(p, bytes('img'))).toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('ignores a slot role, so picking one never makes an approval stale', async () => {
+    const p = project()
+    p.set.slots[0].role = 'hero'
+    expect(await approvalHash(p, bytes('img'))).toBe(await approvalHash(project(), bytes('img')))
+  })
+
+  it('hashes exactly its text part first: what approvalContent leaves out cannot stale a stamp', () => {
+    const p = project()
+    p.set.approval = null
+    p.set.slots[0].note = 'Headline too long'
+    p.set.slots[0].role = 'closer'
+    expect(approvalContent(p)).toBe(approvalContent(project()))
+    const edited = project()
+    edited.set.slots[0].overrides = { tilt: 3 }
+    expect(approvalContent(edited)).not.toBe(approvalContent(project()))
   })
 
   it('changes when a source image changes', async () => {
@@ -258,5 +275,48 @@ describe('approvalHash', () => {
     const other = async (_l: string, screen: string) =>
       new TextEncoder().encode(screen === 'other' ? 'moved' : 'img-shot')
     expect(await approvalHash(p, paired)).not.toBe(await approvalHash(p, other))
+  })
+})
+
+describe('approvalHash and the canvas offsets', () => {
+  /** A set that never used `deviceOffset`/`textOffset`. The literal is what forge v2.10.0, before
+   *  either field existed, computes for exactly this project — a set without them must keep it. */
+  const plain = (): Project => ({
+    set: {
+      version: 1,
+      id: 'default',
+      targets: [
+        { id: 'appstore', sizeId: 'iphone-6-9', deviceId: 'iphone-17-pro', out: 'o/{storeLocale}/{n}.png' },
+      ],
+      locales: [{ id: 'en', store: { appstore: 'en-US' } }],
+      sources: 's/{locale}/{screen}.png',
+      settings: { tilt: 4 },
+      slots: [{ id: 'a', kind: 'screen', screen: 'shot', overrides: { layout: 'hero' } }],
+      approval: { hash: 'old', by: 'x', at: 'y' },
+    },
+    copies: { en: { a: { headline: 'Hi', subhead: '' } } },
+  })
+  const V2_10_0 = '24eb21337bdfc8c5d5df0f5df2bd2325f523d25e4fda4dff03f09ae33aa7af0f'
+
+  it('keeps the exact v2.10.0 hash for a set without them', async () => {
+    expect(await approvalHash(plain(), bytes('img'))).toBe(V2_10_0)
+  })
+
+  it('treats a key present as undefined like an absent one', async () => {
+    const p = plain()
+    p.set.slots[0].overrides.deviceOffset = undefined
+    p.set.settings.textOffset = undefined
+    expect(await approvalHash(p, bytes('img'))).toBe(V2_10_0)
+  })
+
+  it('changes once a tile carries one, set-wide or per slot', async () => {
+    const slot = plain()
+    slot.set.slots[0].overrides.textOffset = { dx: 0.01, dy: 0 }
+    const set = plain()
+    set.set.settings.deviceOffset = { dx: 0, dy: 0.02 }
+    const hashes = await Promise.all([slot, set].map((p) => approvalHash(p, bytes('img'))))
+    expect(hashes[0]).not.toBe(V2_10_0)
+    expect(hashes[1]).not.toBe(V2_10_0)
+    expect(hashes[0]).not.toBe(hashes[1])
   })
 })

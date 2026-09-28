@@ -287,6 +287,35 @@ input[type='color'] {
   pointer-events: none;
 }
 
+/* The canvas editor's surface over a tile preview: selection frame, handles, snap guides. UI chrome
+   only — renderScene never draws any of it, so the export cannot contain it. */
+.canvas-edit {
+  position: absolute;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+.canvas-edit svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.canvas-edit-readout {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(22, 22, 26, 0.86);
+  color: #fff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* Mock App Store product page around the strip. */
 .store {
   max-width: 1120px;
@@ -751,4 +780,82 @@ span[data-required='true']::after {
 }
 .checklist li[data-ok='false'] {
   border-color: rgba(180, 83, 9, 0.35);
+}
+
+/* "Ideas" popover next to the headline field: the role picker, then that role's formulas. */
+.ideas-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 300px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.14);
+}
+.role-btn {
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+}
+.role-btn[data-active='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(30, 111, 245, 0.08);
+}
+.idea-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.idea-item:hover {
+  border-color: var(--line);
+  background: var(--shell);
+}
+.idea-formula {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: pre-line;
+}
+.idea-example {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-line;
+}
+
+/* Thumbnail test (StorePreview): the leading tiles the App Store search result actually shows. */
+.thumb-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1.5px dashed var(--accent);
+  background: rgba(30, 111, 245, 0.05);
+}
+.thumb-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+/* The part of a fenced panorama past the boundary: in the fence, but not in the search result. */
+.thumb-group [data-cut] {
+  opacity: 0.35;
 }

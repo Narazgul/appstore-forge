@@ -12,11 +12,13 @@ import { getLayout } from '../presets/layouts'
 import { getPosition } from '../presets/positions'
 import { resolveFontId } from '../presets/scripts'
 import { EXPORT_SIZES } from '../presets/sizes'
+import { LIST_GAP } from '../render/scene'
 import { parseMarkup } from '../render/text'
 import { DEFAULT_SETTINGS } from '../store'
-import type { Layout, Screen, Settings, ShapeKind } from '../types'
+import { OFFSET_LIMIT } from '../types'
+import type { Layout, Offset, Screen, Settings, ShapeKind } from '../types'
 import { DEFAULT_ARTWORK_SOURCES, artworkPath, sourcePath } from './bridge'
-import { isSlotChip, isSlotShape, isSlotSticker, slotScreens } from './types'
+import { TILE_ROLES, isSlotChip, isSlotShape, isSlotSticker, slotScreens } from './types'
 import type { Project, ProjectSet, ProjectSlot, SlotElement, SlotSticker } from './types'
 
 /** #rgb, #rrggbb or #rrggbbaa — the same reach as any CSS hex color the renderer's `fillStyle` accepts. */
@@ -28,6 +30,27 @@ const RING_STROKE_RANGE = { min: 0.02, max: 0.5 }
 const CHIP_SIZE_RANGE = { min: 0.005, max: 0.2 }
 
 export type Issue = { level: 'error' | 'warn'; message: string; slot?: string; locale?: string }
+
+/** A box in the units the headline checks use: `left`/`right` fractions of the composition width,
+ *  `top`/`bottom` fractions of the tile height. */
+export type Band = { left: number; right: number; top: number; bottom: number }
+
+/** A slot's text block where the renderer really puts it for one target and locale, as a `Band`,
+ *  with that target's tile aspect (width / height) — what `forge check` measures. */
+export type TextBlockProbe = { tileAspect: number; box: Band }
+
+/** What is wrong with a `deviceOffset`/`textOffset` value, or null when it is absent or fine: an
+ *  object with finite `dx`/`dy`, each within ±`OFFSET_LIMIT`. */
+function offsetProblem(value: unknown): string | null {
+  if (value === undefined) return null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'must be an object { dx, dy }'
+  const { dx, dy } = value as Record<string, unknown>
+  if (typeof dx !== 'number' || typeof dy !== 'number' || !Number.isFinite(dx) || !Number.isFinite(dy))
+    return 'needs finite numbers dx and dy'
+  if (Math.abs(dx) > OFFSET_LIMIT || Math.abs(dy) > OFFSET_LIMIT)
+    return `dx ${dx} / dy ${dy} outside ±${OFFSET_LIMIT} (fractions of the composition width / tile height)`
+  return null
+}
 
 /** `drawTextBlock` in `render/text.ts` never paints the subhead fully opaque. */
 const SUBHEAD_ALPHA = 0.72
@@ -73,18 +96,33 @@ function stickerBox(el: SlotSticker, span: number, aspect: number | null, tileAs
   }
 }
 
-/** The layout's text band in the same units as `stickerBox`, applying its "tile minus padX" default. */
-function textBand(layout: Layout) {
+/**
+ * Where a slot's text block lands when nothing measures it, in the same units as `stickerBox`: the
+ * layout's text band (its "tile minus padX" default applied), moved by the tile's `textOffset`
+ * exactly as `drawTextBlock` moves it. A layout with a list (`feature-wall`) stacks headline and
+ * list as one group centred in the tile (`textShifts` in `render/scene.ts`), so where the headline
+ * lands depends on how tall both came out. Unmeasured, its band vertically stands for every place
+ * it can be: from the top of the tallest group (both blocks filling their bands) down to the tile's
+ * middle, since the headline is the group's upper part.
+ */
+function approxTextBlock(layout: Layout, offset: Offset | undefined): Band {
   const text = layout.text!
   const left = text.left ?? layout.padX / layout.span
   const width = text.width ?? (1 - 2 * layout.padX) / layout.span
-  return { left, right: left + width, top: text.top, bottom: text.top + text.height }
+  const [top, bottom] = layout.list
+    ? [(1 - text.height - LIST_GAP - layout.list.height) / 2, 0.5]
+    : [text.top, text.top + text.height]
+  const dx = offset?.dx ?? 0
+  const dy = offset?.dy ?? 0
+  return { left: left + dx, right: left + width + dx, top: top + dy, bottom: bottom + dy }
 }
 
-const boxesOverlap = (
-  a: { left: number; right: number; top: number; bottom: number },
-  b: { left: number; right: number; top: number; bottom: number },
-) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+const boxesOverlap = (a: Band, b: Band) =>
+  a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+const within = (a: Band, b: Band) =>
+  a.left >= b.left && a.right <= b.right && a.top >= b.top && a.bottom <= b.bottom
+
+const TILE: Band = { left: 0, right: 1, top: 0, bottom: 1 }
 
 export function validateProject(
   project: Project,
@@ -96,6 +134,9 @@ export function validateProject(
   elementAspect: (localeId: string, artwork: string) => number | null = () => null,
   /** Whether a `feature-wall` slot's list fits its band at the final render size, per locale. */
   listFits: (localeId: string, slotId: string) => boolean = () => true,
+  /** Where a slot's text block really lands, per locale, for every target; absent, the headline
+   *  checks fall back to `approxTextBlock`. */
+  textBlocks: ((localeId: string, slotId: string) => TextBlockProbe[]) | null = null,
 ): Issue[] {
   const { set, copies } = project
   const issues: Issue[] = []
@@ -162,6 +203,10 @@ export function validateProject(
     error(`Unknown subheadStyle "${set.settings.subheadStyle}"`)
   if (set.settings.deviceShadow !== undefined && !validDeviceShadow(set.settings.deviceShadow))
     error(`Unknown deviceShadow "${set.settings.deviceShadow}"`)
+  for (const key of ['deviceOffset', 'textOffset'] as const) {
+    const problem = offsetProblem(set.settings[key])
+    if (problem) error(`${key} ${problem}`)
+  }
 
   const seen = new Set<string>()
   for (const slot of set.slots) {
@@ -173,6 +218,10 @@ export function validateProject(
       error(`Unknown subheadStyle "${slot.overrides.subheadStyle}"`, { slot: slot.id })
     if (slot.overrides.deviceShadow !== undefined && !validDeviceShadow(slot.overrides.deviceShadow))
       error(`Unknown deviceShadow "${slot.overrides.deviceShadow}"`, { slot: slot.id })
+    for (const key of ['deviceOffset', 'textOffset'] as const) {
+      const problem = offsetProblem(slot.overrides[key])
+      if (problem) error(`${key} ${problem}`, { slot: slot.id })
+    }
     if (slot.elements !== undefined && !Array.isArray(slot.elements))
       error('elements must be an array', { slot: slot.id })
     if (slot.extra !== undefined && !Array.isArray(slot.extra))
@@ -200,8 +249,28 @@ export function validateProject(
     const position = positionOf(set, slot)
     if (!slot.artwork && !layout.deviceless && position.placements.some((p) => p.source === 'artwork'))
       error(`Arrangement ${position.id} needs an artwork, but the slot names none`, { slot: slot.id })
+    // An offset the tile never draws is harmless — the layout may change back — so it only warns,
+    // like `list` on a layout without one. Only the slot's own override is judged here: a set-wide
+    // offset is meant for the tiles that do draw the part.
+    const drawsDevice =
+      !layout.deviceless &&
+      (slot.kind !== 'artwork' || position.placements.some((p) => p.source === 'artwork'))
+    if (slot.overrides.deviceOffset !== undefined && !drawsDevice)
+      issues.push({
+        level: 'warn',
+        message: 'deviceOffset set but this tile draws no device; unused',
+        slot: slot.id,
+      })
+    if (slot.overrides.textOffset !== undefined && !layout.text)
+      issues.push({
+        level: 'warn',
+        message: 'textOffset set but this layout has no text; unused',
+        slot: slot.id,
+      })
     if (slot.note?.trim())
       issues.push({ level: 'warn', message: `Open feedback: ${slot.note.trim()}`, slot: slot.id })
+    if (slot.role !== undefined && !TILE_ROLES.includes(slot.role))
+      error(`Unknown role "${slot.role}"`, { slot: slot.id })
 
     // A mosaic tile draws cell 0 from `screen` and one cell per `extra` — the count is fixed at
     // 4–6 total, so 3–5 named extras. Naming any on another layout does nothing (the layout may
@@ -425,6 +494,11 @@ export function validateProject(
       issues.push({ level: 'warn', message: 'Eyebrow set for some locales but not others', slot: slot.id })
   }
 
+  const tileAspects = (set.targets.length ? set.targets : [{ sizeId: EXPORT_SIZES[0].id }]).map((t) => {
+    const size = EXPORT_SIZES.find((s) => s.id === t.sizeId) ?? EXPORT_SIZES[0]
+    return size.w / size.h
+  })
+
   // Contrast. Colours are locale-independent (overrides never vary by locale), so each slot is
   // resolved once — exactly as the renderer resolves it, including an active "contrast tile" —
   // but subhead/eyebrow/highlight checks only fire when some locale actually carries that text.
@@ -442,25 +516,30 @@ export function validateProject(
     }
 
     // A 'behind' sticker sits under the text block and can never cover it; a 'front' one is drawn
-    // last, over everything. The box is only ever approximate: `elementAspect` gives the real
-    // aspect ratio when the check has loaded the image, otherwise the sticker is treated as a
-    // square. A shape is deco, not content — it may sit under the headline on purpose (the big
-    // background circle behind the feature graphic's stickers is exactly this), so it never warns.
-    // A chip's real box needs its shrunk font size, which this check has no canvas to measure —
-    // it is exempt too, rather than warn from a guess that could easily be wrong either way.
+    // last, over everything. The sticker's box is only ever approximate: `elementAspect` gives the
+    // real aspect ratio when the check has loaded the image, otherwise the sticker is treated as a
+    // square. The text block is where the renderer puts it — measured when `textBlocks` can,
+    // `approxTextBlock` otherwise — `textOffset` and `feature-wall`'s centring included. A shape
+    // is deco, not content — it may sit under the headline on purpose (the big background circle
+    // behind the feature graphic's stickers is exactly this), so it never warns. A chip's real box
+    // needs its shrunk font size, which this check has no canvas to measure — it is exempt too,
+    // rather than warn from a guess that could easily be wrong either way.
     const layout = slotLayouts.get(slot.id)!
-    if (layout.text) {
-      const band = textBand(layout)
-      const tileAspects = (set.targets.length ? set.targets : [{ sizeId: EXPORT_SIZES[0].id }]).map((t) => {
-        const size = EXPORT_SIZES.find((s) => s.id === t.sizeId) ?? EXPORT_SIZES[0]
-        return size.w / size.h
-      })
-      for (const el of elementsOf.get(slot.id)!.filter(isSlotSticker)) {
-        if ((el.layer ?? 'front') !== 'front') continue
+    const frontStickers = elementsOf
+      .get(slot.id)!
+      .filter(isSlotSticker)
+      .filter((el) => (el.layer ?? 'front') === 'front')
+    const offset = offsetProblem(effective.textOffset) ? undefined : effective.textOffset
+    const moved = !!offset && (offset.dx !== 0 || offset.dy !== 0)
+    if (layout.text && (frontStickers.length || moved)) {
+      const blocks: TextBlockProbe[] = textBlocks
+        ? set.locales.flatMap((l) => textBlocks(l.id, slot.id))
+        : tileAspects.map((tileAspect) => ({ tileAspect, box: approxTextBlock(layout, offset) }))
+      for (const el of frontStickers) {
         const aspect = elementAspect(set.locales[0]?.id ?? '', el.artwork)
         if (
-          tileAspects.some((tileAspect) =>
-            boxesOverlap(stickerBox(el, layout.span, aspect, tileAspect), band),
+          blocks.some(({ tileAspect, box }) =>
+            boxesOverlap(stickerBox(el, layout.span, aspect, tileAspect), box),
           )
         )
           issues.push({
@@ -468,6 +547,16 @@ export function validateProject(
             message: `Sticker "${el.id}" may cover the headline (box approximated from width${aspect ? " and the image's aspect ratio" : ' as a square, since the image size is not known here'})`,
             slot: slot.id,
           })
+      }
+      // Only a move can put the copy off the tile; the layout alone keeps its band inside.
+      const off = moved ? blocks.filter(({ box }) => !within(box, TILE)) : []
+      if (off.length) {
+        const how = off.some(({ box }) => !boxesOverlap(box, TILE)) ? 'entirely' : 'partly'
+        issues.push({
+          level: 'warn',
+          message: `textOffset pushes the headline ${how} off the tile${textBlocks ? '' : " (text box approximated from the layout's text band)"}`,
+          slot: slot.id,
+        })
       }
     }
 

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { applyShadow, blobPoints, drawShape, drawSticker, type Box } from './frames'
-import { composeDevices, mosaicCells, renderScene, sceneSpan, textFloor } from './scene'
-import { CHIP_HEIGHT, CHIP_PAD_X } from './text'
+import {
+  composeDevices,
+  LIST_GAP,
+  listCapSize,
+  mosaicCells,
+  renderScene,
+  sceneSpan,
+  textFloor,
+  textShifts,
+} from './scene'
+import { CHIP_HEIGHT, CHIP_PAD_X, listBlockBox, textBlockBox } from './text'
 import { getLayout } from '../presets/layouts'
 import { POSITIONS, getPosition } from '../presets/positions'
 import { DEFAULT_SETTINGS } from '../store'
@@ -374,6 +383,64 @@ describe('renderScene with a feature-wall list', () => {
     renderScene(ctx, TILE.w, TILE.h, s, settings, { self: fakeImage(400, 800) })
     const texts = calls.filter((c) => c.fn === 'fillText').map((c) => c.args[0])
     expect(texts).not.toContain('One')
+  })
+})
+
+describe('textShifts', () => {
+  const wall = getLayout('feature-wall')
+  const settings = { ...DEFAULT_SETTINGS, layout: 'feature-wall' as const }
+  const placed = (s: Screen, set = settings) => {
+    const { ctx } = recorder()
+    const shifts = textShifts(ctx, TILE.w, TILE.w, TILE.h, wall, s, set)
+    return {
+      text: textBlockBox(ctx, TILE.w, TILE.w, TILE.h, wall, s, set, shifts.text),
+      list: listBlockBox(
+        ctx,
+        TILE.w,
+        TILE.w,
+        TILE.h,
+        wall,
+        s,
+        set,
+        listCapSize(TILE.h, set, wall),
+        shifts.list,
+      ),
+    }
+  }
+
+  it('centres feature-wall’s headline and list as one group, LIST_GAP apart', () => {
+    const { text, list } = placed({
+      ...screen(),
+      subhead: 'Sub',
+      list: ['Budget', 'Sparziele', 'Notgroschen'],
+    })
+    expect(list!.y - (text!.y + text!.h)).toBeCloseTo(LIST_GAP * TILE.h, 6)
+    expect(text!.y).toBeCloseTo(TILE.h - (list!.y + list!.h), 6)
+  })
+
+  it('centres the headline alone when the screen carries no list', () => {
+    const { text, list } = placed({ ...screen(), subhead: 'Sub' })
+    expect(list).toBeNull()
+    expect(text!.y).toBeCloseTo(TILE.h - (text!.y + text!.h), 6)
+  })
+
+  it('moves the centred group by textOffset as a whole', () => {
+    const s = { ...screen(), list: ['One', 'Two'] }
+    const a = placed(s)
+    const b = placed(s, { ...settings, textOffset: { dx: 0.1, dy: -0.05 } })
+    for (const key of ['text', 'list'] as const) {
+      expect(b[key]!.x - a[key]!.x).toBeCloseTo(0.1 * TILE.w, 6)
+      expect(b[key]!.y - a[key]!.y).toBeCloseTo(-0.05 * TILE.h, 6)
+    }
+  })
+
+  it('passes textOffset straight through on a layout without a list', () => {
+    const { ctx } = recorder()
+    const hero = { ...DEFAULT_SETTINGS, layout: 'hero' as const }
+    expect(textShifts(ctx, TILE.w, TILE.w, TILE.h, getLayout('hero'), screen(), hero)).toEqual({
+      text: undefined,
+      list: undefined,
+    })
   })
 })
 
@@ -1067,5 +1134,120 @@ describe('renderScene with a mosaic layout', () => {
     expect(ctx.shadowBlur).toBe(0)
     expect(ctx.shadowOffsetX).toBeGreaterThan(0)
     expect(ctx.shadowOffsetX).toBeCloseTo(ctx.shadowOffsetY as number, 5)
+  })
+})
+
+describe('offsets', () => {
+  /** Calls whose first two numeric arguments are an (x, y) position on the canvas. */
+  const POSITIONED = new Set(['roundRect', 'fillRect', 'arc', 'ellipse', 'moveTo', 'lineTo', 'translate'])
+  const positions = (calls: { fn: string; args: unknown[] }[]) =>
+    calls
+      .filter((c) => POSITIONED.has(c.fn))
+      .map((c) => ({ fn: c.fn, x: c.args[0] as number, y: c.args[1] as number }))
+  const withOverrides = (base: Screen, overrides: Screen['overrides']): Screen => ({
+    ...base,
+    overrides: { ...base.overrides, ...overrides },
+  })
+  const render = (s: Screen, w = TILE.w, sources = {}) => {
+    const { ctx, calls } = recorder()
+    renderScene(ctx, w, TILE.h, s, DEFAULT_SETTINGS, sources)
+    return calls
+  }
+
+  it('composeDevices moves every placement by exactly the offset, after the lift', () => {
+    const layout = getLayout('hero')
+    const tall = { w: 1080, h: 1920 }
+    const plain = composeDevices(layout, 'duo', tall.w, tall.h, ASPECT, 1, 0, tall.h * 0.3)
+    const moved = composeDevices(layout, 'duo', tall.w, tall.h, ASPECT, 1, 0, tall.h * 0.3, {
+      dx: 0.1,
+      dy: -0.2,
+    })
+    moved.forEach((d, i) => {
+      expect(d.box.x - plain[i].box.x).toBeCloseTo(0.1 * tall.w, 9)
+      expect(d.box.y - plain[i].box.y).toBeCloseTo(-0.2 * tall.h, 9)
+      expect([d.box.w, d.box.h, d.angle]).toEqual([plain[i].box.w, plain[i].box.h, plain[i].angle])
+    })
+  })
+
+  it('draws the device exactly deviceOffset away and leaves the background where it was', () => {
+    const base: Screen = { ...screen({ layout: 'text-top', positionId: 'center' }), headline: '' }
+    const plain = positions(render(base))
+    const moved = positions(render(withOverrides(base, { deviceOffset: { dx: 0.05, dy: 0.02 } })))
+    expect(moved).toHaveLength(plain.length)
+    // The background fill comes first and stays put; everything after it is the device.
+    expect(moved[0]).toEqual(plain[0])
+    expect(plain.length).toBeGreaterThan(3)
+    for (let i = 1; i < plain.length; i++) {
+      expect(moved[i].fn).toBe(plain[i].fn)
+      expect(moved[i].x - plain[i].x).toBeCloseTo(0.05 * TILE.w, 6)
+      expect(moved[i].y - plain[i].y).toBeCloseTo(0.02 * TILE.h, 6)
+    }
+  })
+
+  it('counts a panorama device offset in composition widths', () => {
+    const base: Screen = { ...screen({ layout: 'panorama', positionId: 'center' }), headline: '' }
+    const plain = positions(render(base))
+    const moved = positions(render(withOverrides(base, { deviceOffset: { dx: 0.05, dy: 0 } })))
+    expect(moved[1].x - plain[1].x).toBeCloseTo(0.05 * TILE.w * 2, 6)
+  })
+
+  it('moves the mosaic grid as one unit', () => {
+    const base: Screen = { ...screen({ layout: 'mosaic' }), headline: '', extraIds: ['b', 'c', 'd'] }
+    const cells = (calls: { fn: string; args: unknown[] }[]) =>
+      calls.filter((c) => c.fn === 'fillRect').slice(1)
+    const plain = cells(render(base))
+    const moved = cells(render(withOverrides(base, { deviceOffset: { dx: -0.03, dy: 0.04 } })))
+    expect(plain).toHaveLength(4)
+    moved.forEach((c, i) => {
+      expect((c.args[0] as number) - (plain[i].args[0] as number)).toBeCloseTo(-0.03 * TILE.w, 6)
+      expect((c.args[1] as number) - (plain[i].args[1] as number)).toBeCloseTo(0.04 * TILE.h, 6)
+    })
+  })
+
+  it('draws every line of copy exactly textOffset away and leaves the device alone', () => {
+    const base: Screen = {
+      ...screen({ layout: 'text-top', positionId: 'center', accentBar: '#ff0000' }),
+      headline: 'Head *mark*',
+      subhead: 'Sub line',
+      eyebrow: 'Eyebrow',
+    }
+    const a = render(base)
+    const b = render(withOverrides(base, { textOffset: { dx: -0.04, dy: 0.01 } }))
+    const texts = (calls: typeof a) => calls.filter((c) => c.fn === 'fillText')
+    expect(texts(b)).toHaveLength(texts(a).length)
+    texts(b).forEach((c, i) => {
+      expect(c.args[0]).toBe(texts(a)[i].args[0])
+      expect((c.args[1] as number) - (texts(a)[i].args[1] as number)).toBeCloseTo(-0.04 * TILE.w, 6)
+      expect((c.args[2] as number) - (texts(a)[i].args[2] as number)).toBeCloseTo(0.01 * TILE.h, 6)
+    })
+    // The device comes after the copy in draw order; its calls must not have moved at all.
+    const afterText = (calls: typeof a) => calls.slice(calls.map((c) => c.fn).lastIndexOf('fillText') + 1)
+    expect(afterText(b).map((c) => [c.fn, c.args])).toEqual(afterText(a).map((c) => [c.fn, c.args]))
+  })
+
+  it('takes feature-wall’s list along with the headline', () => {
+    const base: Screen = {
+      ...screen({ layout: 'feature-wall' }),
+      kind: 'artwork',
+      list: ['One', 'Two'],
+    }
+    const listRows = (calls: { fn: string; args: unknown[] }[]) =>
+      calls.filter((c) => c.fn === 'fillText' && (c.args[0] === 'One' || c.args[0] === 'Two'))
+    const plain = listRows(render(base))
+    const moved = listRows(render(withOverrides(base, { textOffset: { dx: 0, dy: 0.05 } })))
+    expect(plain).toHaveLength(2)
+    moved.forEach((c, i) =>
+      expect((c.args[2] as number) - (plain[i].args[2] as number)).toBeCloseTo(0.05 * TILE.h, 6),
+    )
+  })
+
+  it('draws a screen with no offset exactly as one with the fields absent — nothing else moves', () => {
+    const base: Screen = { ...screen({ layout: 'hero', positionId: 'tilted' }), subhead: 'Sub' }
+    const a = render(base)
+    const b = render({
+      ...base,
+      overrides: { ...base.overrides, deviceOffset: undefined, textOffset: undefined },
+    })
+    expect(b.map((c) => [c.fn, c.args])).toEqual(a.map((c) => [c.fn, c.args]))
   })
 })

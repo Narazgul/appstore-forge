@@ -16,6 +16,20 @@ const hex = (buf: ArrayBuffer) =>
   Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('')
 
 /**
+ * The text part of the approval: set and copies as canonical JSON, without the stamp itself and
+ * without what a slot carries that draws no pixel. Two projects with the same content here and the
+ * same image files hash alike — which is how undo/redo (`store.ts`) tell a step the stamp never
+ * covered from one that makes it stale.
+ */
+export function approvalContent(project: Pick<Project, 'set' | 'copies'>): string {
+  const { approval: _ignored, ...set } = project.set
+  // A note is a message about the set, not part of it — hashing it would make feedback stale an
+  // approval. A role draws no pixel either, for the same reason it stays out too.
+  const hashable = { ...set, slots: set.slots.map(({ note: _note, role: _role, ...slot }) => slot) }
+  return canonicalJson({ set: hashable, copies: project.copies })
+}
+
+/**
  * Text parts first, then every referenced source image in locale × slot order, then the paired
  * screens, the artwork/sticker images, and finally the mosaic layout's extra cells — each of
  * those groups only when a slot has one, so a set using none of them keeps the exact hash it had
@@ -26,12 +40,8 @@ export async function approvalHash(
   sourceBytes: (localeId: string, screen: string) => Promise<Uint8Array>,
   artworkBytes?: (localeId: string, artwork: string) => Promise<Uint8Array>,
 ): Promise<string> {
-  const { approval: _ignored, ...set } = project.set
-  // A note is a message about the set, not part of it — hashing it would make feedback stale an approval.
-  const hashable = { ...set, slots: set.slots.map(({ note: _note, ...slot }) => slot) }
-  const parts: Uint8Array[] = [
-    new TextEncoder().encode(canonicalJson({ set: hashable, copies: project.copies })),
-  ]
+  const { set } = project
+  const parts: Uint8Array[] = [new TextEncoder().encode(approvalContent(project))]
   for (const locale of set.locales) {
     for (const slot of set.slots) {
       if (slot.kind !== 'artwork' && slot.screen) parts.push(await sourceBytes(locale.id, slot.screen))

@@ -9,6 +9,12 @@ a real bug.
    output with CSS/DOM and never add a second export path. If a feature seems to
    need one, it belongs in `renderScene` with a size parameter.
 
+   The canvas editor's selection frame, handles and snap guides are the one sanctioned exception
+   to "never draw output with DOM" — because they are not output: DOM over the preview
+   (`components/CanvasEditor.tsx`), never passed to or drawn by `renderScene`, so no export can
+   contain them. Their geometry, in turn, must come from the renderer's own functions
+   (`render/targets.ts`), never a copy of its arithmetic, or the frame drifts off what was drawn.
+
    A generated shape counts as a second render path the moment its geometry needs
    anything beyond its own fields: `blobPoints` in `render/frames.ts` draws a blob
    from its `seed` alone, never `Math.random` or the clock. Picking a _new_ seed
@@ -42,6 +48,10 @@ a real bug.
    real gap, not the nominal band, or the control will fight the shrink and feel
    broken.
 
+   `deviceOffset` and `textOffset` are the deliberate exception: a move the user made by hand.
+   They are applied after the shrink and the lift, never fed into either — a shrink that reacted
+   to the drag would change the type size under the pointer.
+
    A `deviceless` layout (`text-only`, `feature-wall`) has no device band to leave
    room for, so its own text band is the shrink's limit instead (`availableTextHeight`
    in `render/text.ts`). `composeDevices` returns no boxes at all for one, whatever
@@ -66,6 +76,15 @@ a real bug.
 8. **Overrides are `undefined`-means-inherit.** Never write a resolved value into
    `screen.overrides` to represent "same as global" — that silently pins it and
    the screen stops following the global.
+
+9. **One gesture, one write.** A canvas drag, corner pull or turn draws live from local state
+   (`screenWithEdit`) and reaches the store once, when the pointer lets go — one undo step, one
+   save. Writing on every pointer move would fill the undo stack with one entry per pixel and,
+   once the 300 ms save debounce runs out mid-drag, send a PUT (or a Firestore `update`) while
+   the user is still dragging. A gesture that ends where it began, or is Escaped, writes nothing.
+   "Where it began" is judged on the values the gesture started from, before `resolveOverrides`
+   (`GestureSession.end`): resolving first turns a pin that merely repeats the global into a
+   "drop it", which is a write — a save, an undo step and a lost approval.
 
 ## Packaging
 

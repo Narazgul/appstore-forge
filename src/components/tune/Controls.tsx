@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { formatOffset } from '../../lib/canvasEdit'
+import type { Offset } from '../../types'
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -8,6 +10,31 @@ export function Row({ label, children }: { label: string; children: React.ReactN
       </span>
       {children}
     </div>
+  )
+}
+
+/**
+ * The move the canvas editor wrote for the device arrangement or the copy, read-only — dragging on
+ * the tile is how it is set — with a Reset that drops it from the active scope.
+ */
+export function OffsetRow({
+  offset,
+  owned,
+  onReset,
+}: {
+  offset: Offset | undefined
+  owned: boolean
+  onReset: () => void
+}) {
+  return (
+    <Row label="Offset">
+      <span className="flex-1 text-[12px] tabular-nums" data-offset={offset ? 'set' : 'none'}>
+        {offset ? formatOffset(offset) : 'none, drag on the tile'}
+      </span>
+      <button className="seg" style={{ flex: 'none' }} disabled={!owned} onClick={onReset}>
+        Reset
+      </button>
+    </Row>
   )
 }
 

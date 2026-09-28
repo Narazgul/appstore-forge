@@ -1,10 +1,17 @@
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
+import {
+  CHIP_SIZE_RANGE,
+  ELEMENT_POSITION_RANGE,
+  ELEMENT_ROTATE_LIMIT,
+  ELEMENT_WIDTH_RANGE,
+} from '../../lib/canvasEdit'
 import { DEFAULT_CHIP_SIZE } from '../../project/bridge'
 import { EMPTY_GALLERY } from '../../project/store'
 import { isSlotChip, isSlotShape } from '../../project/types'
 import type { SlotChip, SlotElement, SlotShape, SlotSticker } from '../../project/types'
 import { useStore } from '../../store'
+import { turnsVisibly } from '../../types'
 import type { ShapeKind } from '../../types'
 import { Row } from './Controls'
 
@@ -180,8 +187,8 @@ export function StickersSection({ slotId }: { slotId: string }) {
           <Row label={`X ${Math.round(el.x * 100)}%`}>
             <input
               type="range"
-              min={-0.2}
-              max={1.2}
+              min={ELEMENT_POSITION_RANGE.min}
+              max={ELEMENT_POSITION_RANGE.max}
               step={0.01}
               value={el.x}
               onChange={(e) => update(el.id, { x: Number(e.target.value) })}
@@ -190,8 +197,8 @@ export function StickersSection({ slotId }: { slotId: string }) {
           <Row label={`Y ${Math.round(el.y * 100)}%`}>
             <input
               type="range"
-              min={-0.2}
-              max={1.2}
+              min={ELEMENT_POSITION_RANGE.min}
+              max={ELEMENT_POSITION_RANGE.max}
               step={0.01}
               value={el.y}
               onChange={(e) => update(el.id, { y: Number(e.target.value) })}
@@ -200,8 +207,8 @@ export function StickersSection({ slotId }: { slotId: string }) {
           <Row label={`${isSlotChip(el) ? 'Max width' : 'Width'} ${Math.round(el.width * 100)}%`}>
             <input
               type="range"
-              min={0.05}
-              max={1.5}
+              min={ELEMENT_WIDTH_RANGE.min}
+              max={ELEMENT_WIDTH_RANGE.max}
               step={0.01}
               value={el.width}
               onChange={(e) => update(el.id, { width: Number(e.target.value) })}
@@ -234,8 +241,8 @@ export function StickersSection({ slotId }: { slotId: string }) {
               <Row label={`Text size ${Math.round((el.size ?? DEFAULT_CHIP_SIZE) * 1000) / 10}%`}>
                 <input
                   type="range"
-                  min={0.01}
-                  max={0.05}
+                  min={CHIP_SIZE_RANGE.min}
+                  max={CHIP_SIZE_RANGE.max}
                   step={0.001}
                   value={el.size ?? DEFAULT_CHIP_SIZE}
                   onChange={(e) => update(el.id, { size: Number(e.target.value) })}
@@ -271,12 +278,12 @@ export function StickersSection({ slotId }: { slotId: string }) {
               </Row>
             </>
           )}
-          {!isSlotShape(el) && (
+          {turnsVisibly(el) && (
             <Row label={`Rotate ${el.rotate ?? 0}°`}>
               <input
                 type="range"
-                min={-45}
-                max={45}
+                min={-ELEMENT_ROTATE_LIMIT}
+                max={ELEMENT_ROTATE_LIMIT}
                 value={el.rotate ?? 0}
                 onChange={(e) => update(el.id, { rotate: Number(e.target.value) })}
               />

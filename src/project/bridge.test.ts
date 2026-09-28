@@ -131,6 +131,27 @@ describe('screensFor', () => {
   })
 })
 
+describe('role', () => {
+  const withRole = (): Project => ({
+    ...project,
+    set: {
+      ...project.set,
+      slots: [{ ...project.set.slots[0], role: 'hero' }, project.set.slots[1]],
+    },
+  })
+
+  it('never reaches the built screen — a role is drawn nowhere, so the bridge leaves it behind', () => {
+    const [budget] = screensFor(withRole(), 'de')
+    expect(budget).not.toHaveProperty('role')
+  })
+
+  it('does not disturb the rest of what the slot bridges', () => {
+    const [budget] = screensFor(withRole(), 'de')
+    expect(budget.headline).toBe('Budget *meistern*')
+    expect(budget.imageId).toBe('de/budget_screen')
+  })
+})
+
 describe('artwork and pair', () => {
   const withExtras = (): Project => ({
     ...project,

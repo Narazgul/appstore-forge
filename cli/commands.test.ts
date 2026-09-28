@@ -189,6 +189,46 @@ describe('eyebrow overflow', () => {
   })
 })
 
+// Play's 1080×1920 tile, measured: "Hi" on text-top sits at 0.125–0.17 of the height, 0.3 lower
+// with `textOffset`; feature-wall's centred group puts "All in one" at 0.357–0.403.
+describe('the headline checks measure the real text block', () => {
+  async function withSticker(y: number, overrides: object, copy: object = { headline: 'Hi', subhead: '' }) {
+    const { dir } = await scaffold()
+    await mkdir(join(dir, 'artwork'), { recursive: true })
+    await writeFile(join(dir, 'artwork', 'dot.png'), createCanvas(100, 100).toBuffer('image/png'))
+    const project = await readProject(dir)
+    const slot = {
+      ...project.set.slots[0],
+      overrides,
+      elements: [{ id: 'dot', artwork: 'dot', x: 0.5, y, width: 0.1, layer: 'front' }],
+    }
+    await writeFile(join(dir, 'default.json'), JSON.stringify({ ...project.set, slots: [slot] }))
+    await writeFile(join(dir, 'copy', 'en.json'), JSON.stringify({ a: copy }))
+    const { issues } = await checkCommand({ projectDir: dir, setId: 'default', requireApproval: false })
+    return { messages: issues.map((i) => i.message) }
+  }
+  const covers = (messages: string[]) => messages.some((m) => m.includes('may cover the headline'))
+
+  it('follows textOffset: quiet where the headline was, a warning where it went', async () => {
+    const moved = { textOffset: { dx: 0, dy: 0.3 } }
+    expect(covers((await withSticker(0.12, {})).messages)).toBe(true)
+    expect(covers((await withSticker(0.12, moved)).messages)).toBe(false)
+    expect(covers((await withSticker(0.45, moved)).messages)).toBe(true)
+  })
+
+  it('finds a feature-wall headline where the centred group put it, not on the layout band', async () => {
+    const wall = { headline: 'All in one', subhead: '', list: ['Budgets', 'Goals', 'Reports'] }
+    expect(covers((await withSticker(0.38, { layout: 'feature-wall' }, wall)).messages)).toBe(true)
+    expect(covers((await withSticker(0.12, { layout: 'feature-wall' }, wall)).messages)).toBe(false)
+  })
+
+  it('warns about a headline pushed off the tile', async () => {
+    const { messages } = await withSticker(0.9, { textOffset: { dx: 0, dy: 0.95 } })
+    expect(messages).toContain('textOffset pushes the headline entirely off the tile')
+    expect(covers(messages)).toBe(false)
+  })
+})
+
 // A hand-edited project file can give `extra`, `elements`, `list` or `chips` the wrong JSON shape
 // (a string instead of an array, say). Before this was guarded, `eyebrowFitsChecker`/
 // `listFitsChecker` built screens (and, for `list`, laid them out) ahead of `validateProject`

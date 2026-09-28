@@ -115,6 +115,25 @@ describe('validateProject', () => {
     expect(validateProject(p, always)).toEqual([])
   })
 
+  it('accepts every known role', () => {
+    for (const role of ['hero', 'difference', 'feature', 'proof', 'closer'] as const) {
+      const p = base()
+      p.set.slots[0].role = role
+      expect(validateProject(p, always)).toEqual([])
+    }
+  })
+
+  it('flags an unknown role', () => {
+    const p = base()
+    // @ts-expect-error a hand-edited project file may carry any string
+    p.set.slots[0].role = 'villain'
+    expect(validateProject(p, always)).toContainEqual({
+      level: 'error',
+      message: 'Unknown role "villain"',
+      slot: 'a',
+    })
+  })
+
   it('flags a slot whose arrangement needs an artwork but names none', () => {
     const p = base()
     p.set.slots[0].overrides = { positionId: 'duo-artwork' }
@@ -607,6 +626,108 @@ describe('stickers', () => {
     const p = base()
     p.set.slots[0].elements = [sticker({ y: 0.9, width: 0.1, layer: 'front' })]
     expect(validateProject(p, always, always).some((i) => i.message.includes('may cover'))).toBe(false)
+  })
+})
+
+describe('the headline checks follow the text block, not the layout band', () => {
+  const sticker = (patch: Partial<SlotElement> = {}): SlotElement => ({
+    id: 's',
+    artwork: 'dot',
+    x: 0.5,
+    y: 0.75,
+    width: 0.2,
+    layer: 'front',
+    ...patch,
+  })
+  const covers = (issues: ReturnType<typeof validateProject>) =>
+    issues.some((i) => i.message.includes('may cover'))
+  const offTile = (issues: ReturnType<typeof validateProject>) =>
+    issues.filter((i) => i.message.startsWith('textOffset pushes')).map((i) => i.message)
+
+  it('moves the band with textOffset: the old place goes quiet, the new one warns', () => {
+    // text-top's band spans 0.065–0.23 of the tile height; 0.3 down puts it at 0.365–0.53.
+    const p = base()
+    p.set.slots[0].elements = [sticker({ y: 0.12 })]
+    expect(covers(validateProject(p, always, always))).toBe(true)
+    p.set.slots[0].overrides.textOffset = { dx: 0, dy: 0.3 }
+    expect(covers(validateProject(p, always, always))).toBe(false)
+    p.set.slots[0].elements = [sticker({ y: 0.45 })]
+    expect(covers(validateProject(p, always, always))).toBe(true)
+  })
+
+  it('follows a set-wide textOffset too', () => {
+    const p = base()
+    p.set.settings.textOffset = { dx: 0, dy: 0.3 }
+    p.set.slots[0].elements = [sticker({ y: 0.45 })]
+    expect(covers(validateProject(p, always, always))).toBe(true)
+  })
+
+  it('looks for a feature-wall headline around the middle, where the centred group puts it', () => {
+    const p = base()
+    p.set.slots[0].overrides.layout = 'feature-wall'
+    p.copies.en.a = { headline: 'All in one', subhead: '', list: ['Budgets', 'Goals', 'Reports'] }
+    // On the layout's nominal band (0.065–0.265) but above any group the centring can make.
+    p.set.slots[0].elements = [sticker({ y: 0.08, width: 0.05 })]
+    expect(covers(validateProject(p, always, always))).toBe(false)
+    // Below that band, where a short list's group really lands the headline.
+    p.set.slots[0].elements = [sticker({ y: 0.4, width: 0.1 })]
+    expect(covers(validateProject(p, always, always))).toBe(true)
+  })
+
+  it('uses the measured block when the check has one, for every locale and target', () => {
+    const p = base()
+    const measured = (localeId: string, slotId: string) => {
+      expect([localeId, slotId]).toEqual(['en', 'a'])
+      return [{ tileAspect: 1320 / 2868, box: { left: 0.3, right: 0.7, top: 0.6, bottom: 0.65 } }]
+    }
+    const check = () =>
+      validateProject(
+        p,
+        always,
+        always,
+        () => true,
+        () => null,
+        () => true,
+        measured,
+      )
+    p.set.slots[0].elements = [sticker({ y: 0.12 })]
+    expect(covers(check())).toBe(false)
+    p.set.slots[0].elements = [sticker({ y: 0.62 })]
+    expect(covers(check())).toBe(true)
+  })
+
+  it('warns when textOffset pushes the headline partly or entirely off the tile', () => {
+    const at = (offset: { dx: number; dy: number } | undefined) => {
+      const p = base()
+      p.set.slots[0].overrides.textOffset = offset
+      return offTile(validateProject(p, always, always))
+    }
+    const approx = " (text box approximated from the layout's text band)"
+    expect(at(undefined)).toEqual([])
+    expect(at({ dx: 0, dy: 0.1 })).toEqual([])
+    expect(at({ dx: 0, dy: 0.9 })).toEqual([`textOffset pushes the headline partly off the tile${approx}`])
+    expect(at({ dx: 0, dy: -0.95 })).toEqual([
+      `textOffset pushes the headline entirely off the tile${approx}`,
+    ])
+    expect(at({ dx: 1, dy: 0 })).toEqual([`textOffset pushes the headline entirely off the tile${approx}`])
+  })
+
+  it('judges the measured block for the off-tile warning, and names no approximation', () => {
+    const p = base()
+    p.set.slots[0].overrides.textOffset = { dx: 0.4, dy: 0 }
+    const measured = () => [
+      { tileAspect: 1320 / 2868, box: { left: 0.8, right: 1.1, top: 0.1, bottom: 0.2 } },
+    ]
+    const issues = validateProject(
+      p,
+      always,
+      always,
+      () => true,
+      () => null,
+      () => true,
+      measured,
+    )
+    expect(offTile(issues)).toEqual(['textOffset pushes the headline partly off the tile'])
   })
 })
 
@@ -1511,5 +1632,88 @@ describe('feature-wall list', () => {
     p.set.slots = [{ id: 'a', kind: 'artwork', overrides: {} }]
     p.copies.en.a = { headline: '', subhead: '', list: ['Budget', 'Sparziele'] }
     expect(validateProject(p, always)).toEqual([])
+  })
+})
+
+describe('deviceOffset and textOffset', () => {
+  it('accepts offsets inside ±1, set-wide and per slot', () => {
+    const p = base()
+    p.set.settings.textOffset = { dx: -1, dy: 0.2 }
+    p.set.slots[0].overrides.deviceOffset = { dx: 0.05, dy: 1 }
+    // Valid — but a whole composition width to the left leaves none of the headline on the tile.
+    expect(validateProject(p, always)).toEqual([
+      {
+        level: 'warn',
+        message:
+          "textOffset pushes the headline entirely off the tile (text box approximated from the layout's text band)",
+        slot: 'a',
+      },
+    ])
+  })
+
+  it('rejects an offset past one composition width or tile height', () => {
+    const p = base()
+    p.set.slots[0].overrides.deviceOffset = { dx: 1.01, dy: 0 }
+    p.set.settings.textOffset = { dx: 0, dy: -2 }
+    const issues = validateProject(p, always)
+    expect(issues).toContainEqual({
+      level: 'error',
+      message: 'deviceOffset dx 1.01 / dy 0 outside ±1 (fractions of the composition width / tile height)',
+      slot: 'a',
+    })
+    expect(issues).toContainEqual({
+      level: 'error',
+      message: 'textOffset dx 0 / dy -2 outside ±1 (fractions of the composition width / tile height)',
+    })
+  })
+
+  it('rejects the wrong shape instead of drawing from it', () => {
+    for (const bad of [
+      [0.1, 0.2],
+      null,
+      'left',
+      { x: 0.1, y: 0 },
+      { dx: Number.NaN, dy: 0 },
+      { dx: '0.1', dy: 0 },
+    ]) {
+      const p = base()
+      p.set.slots[0].overrides.textOffset = bad as never
+      const issue = validateProject(p, always).find((i) => i.message.startsWith('textOffset'))
+      expect(issue?.level, JSON.stringify(bad)).toBe('error')
+    }
+  })
+
+  it('warns, never errors, about an offset the tile does not draw', () => {
+    const p = base()
+    p.set.slots[0].overrides = { layout: 'centered', textOffset: { dx: 0.1, dy: 0 } }
+    p.set.slots.push({
+      id: 'wall',
+      kind: 'artwork',
+      overrides: { layout: 'text-only', deviceOffset: { dx: 0.1, dy: 0 } },
+    })
+    p.copies.en.wall = { headline: 'Wall', subhead: '' }
+    const issues = validateProject(p, always)
+    expect(issues).toContainEqual({
+      level: 'warn',
+      message: 'textOffset set but this layout has no text; unused',
+      slot: 'a',
+    })
+    expect(issues).toContainEqual({
+      level: 'warn',
+      message: 'deviceOffset set but this tile draws no device; unused',
+      slot: 'wall',
+    })
+    expect(issues.filter((i) => i.level === 'error')).toEqual([])
+  })
+
+  it('does not warn about a device offset on an artwork tile whose arrangement draws the artwork', () => {
+    const p = base()
+    p.set.slots[0] = {
+      id: 'a',
+      kind: 'artwork',
+      artwork: 'art',
+      overrides: { positionId: 'duo-artwork', deviceOffset: { dx: 0.1, dy: 0 } },
+    }
+    expect(validateProject(p, always).filter((i) => i.message.startsWith('deviceOffset'))).toEqual([])
   })
 })

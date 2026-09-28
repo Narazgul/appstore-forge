@@ -18,7 +18,9 @@ thicker — or the picker feels fake.
 
 1. Add the key to `Settings` in `types.ts`. It becomes overridable automatically
    unless it must be global (like `sizeId`, excluded via `OverridableKey`).
-2. Default it in `DEFAULT_SETTINGS` in `store.ts`.
+2. Default it in `DEFAULT_SETTINGS` in `store.ts` — unless absent is itself the default (like
+   `deviceOffset`/`textOffset`): then make it optional, leave it out of `DEFAULT_SETTINGS` and
+   list it in `OPTIONAL_SETTING_KEYS` (`lib/settings.ts`), so a template reset never writes it.
 3. Consume it in `renderScene`.
 4. Add the control to the matching section in `components/tune/` using
    `settings.<key>` to read and `put({...})` to write — `put` routes to the
@@ -200,7 +202,10 @@ await window.__store.getState().addFiles([new File([blob], 'x.png', { type: 'ima
 `pnpm test` (Vitest, node environment). The suite covers the pure logic only:
 
 - `render/text.test.ts` — markup parsing, line breaking, auto-shrink
-- `render/scene.test.ts` — device geometry, span
+- `render/scene.test.ts` — device geometry, span, offsets moving exactly what they move
+- `render/targets.test.ts` — what the canvas editor can grab, framed where it is drawn
+- `lib/canvasEdit.test.ts` — the editor's gesture math: pointer → fractions, hit-testing, snap,
+  scale, turn, the gesture lifecycle
 - `lib/settings.test.ts` — override inheritance, `SECTION_KEYS` completeness
 - `lib/progress.test.ts` — readiness and store limits
 - `presets/presets.test.ts` — every preset id resolves, every number is in range

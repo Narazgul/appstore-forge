@@ -1,6 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { sceneSpan } from '../render/scene'
 import { getSize } from '../presets/sizes'
+import { groupLeadingTiles, searchResultLabel } from '../lib/thumbnailGroup'
 import { localeLabel } from '../project/localeLabel'
 import { screensFor } from '../project/bridge'
 import { useStore } from '../store'
@@ -9,37 +10,85 @@ import { ScreenPreview } from './ScreenPreview'
 
 /** Store tile width on the mock product page — roughly what the store's web page shows. */
 const TILE = 196
+/** App Store / Play search result tile width — the thumbnail test's whole point is that this is
+ *  much smaller than the product page, so a headline that reads fine at `TILE` may not here. */
+const THUMB_TILE = 160
 const GAP = 10
+/** How many leading store *tiles* (not screens — a span-2 screen counts as two) the search result
+ *  actually shows. */
+const THUMB_GROUP_SIZE = 3
 
-/** One language's strip, rendered for the active target with the notes under their tiles. */
-function Strip({ screens, notes }: { screens: Screen[]; notes: Record<string, string> }) {
+/** One language's strip, rendered for the active target with the notes under their tiles.
+ *  `groupFirstTiles` (thumbnail test only) visually fences off the leading tiles the search result
+ *  shows — a screen counts as "in" the group the moment any of its tiles falls inside it, so a
+ *  span-2 hero straddling the boundary is still fenced whole, but its tile past the boundary is
+ *  dimmed and labelled: the search result shows only the first. */
+function Strip({
+  screens,
+  notes,
+  tile = TILE,
+  groupFirstTiles,
+}: {
+  screens: Screen[]
+  notes: Record<string, string>
+  tile?: number
+  groupFirstTiles?: number
+}) {
   const settings = useStore((s) => s.settings)
   const size = getSize(settings.sizeId)
-  const tileH = Math.round((TILE * size.h) / size.w)
+  const tileH = Math.round((tile * size.h) / size.w)
+
+  const groupRows = groupLeadingTiles(screens, (screen) => sceneSpan(screen, settings), groupFirstTiles)
+  const rows = groupRows.map((r) => ({
+    screen: r.item,
+    span: r.span,
+    inGroup: r.inGroup,
+    cutAt: r.inGroup && r.shown < r.span ? r.shown : null,
+  }))
+
+  const renderTile = ({ screen, span, cutAt }: { screen: Screen; span: number; cutAt: number | null }) => (
+    <div key={screen.id} className="flex shrink-0 flex-col gap-1.5">
+      <div className="flex" style={{ gap: GAP }}>
+        {Array.from({ length: span }, (_, part) => (
+          <div
+            key={part}
+            className="overflow-hidden rounded-xl"
+            data-cut={(cutAt !== null && part >= cutAt) || undefined}
+            style={{ width: tile, height: tileH }}
+          >
+            <div style={{ marginLeft: -part * tile }}>
+              <ScreenPreview screen={screen} screens={screens} width={tile} height={tileH} />
+            </div>
+          </div>
+        ))}
+      </div>
+      {cutAt !== null && (
+        <span className="thumb-group-label" style={{ width: tile * span }}>
+          Only the left half shows in the search result
+        </span>
+      )}
+      {notes[screen.id] && (
+        <p className="text-[11px] leading-snug" style={{ color: 'var(--muted)', width: tile * span }}>
+          {notes[screen.id]}
+        </p>
+      )}
+    </div>
+  )
+
+  const grouped = rows.filter((r) => r.inGroup)
+  const rest = rows.filter((r) => !r.inGroup)
 
   return (
-    <div className="flex overflow-x-auto pb-3" style={{ gap: GAP }}>
-      {screens.map((screen) => {
-        const span = sceneSpan(screen, settings)
-        return (
-          <div key={screen.id} className="flex shrink-0 flex-col gap-1.5">
-            <div className="flex" style={{ gap: GAP }}>
-              {Array.from({ length: span }, (_, part) => (
-                <div key={part} className="overflow-hidden rounded-xl" style={{ width: TILE, height: tileH }}>
-                  <div style={{ marginLeft: -part * TILE }}>
-                    <ScreenPreview screen={screen} screens={screens} width={TILE} height={tileH} />
-                  </div>
-                </div>
-              ))}
-            </div>
-            {notes[screen.id] && (
-              <p className="text-[11px] leading-snug" style={{ color: 'var(--muted)', width: TILE * span }}>
-                {notes[screen.id]}
-              </p>
-            )}
+    <div className="flex items-start overflow-x-auto pb-3" style={{ gap: GAP }}>
+      {grouped.length > 0 && (
+        <div className="thumb-group shrink-0">
+          <div className="flex" style={{ gap: GAP }}>
+            {grouped.map(renderTile)}
           </div>
-        )
-      })}
+          <span className="thumb-group-label">{searchResultLabel(groupRows)}</span>
+        </div>
+      )}
+      {rest.map(renderTile)}
     </div>
   )
 }
@@ -57,6 +106,9 @@ export function StorePreview() {
   const setListing = useStore((s) => s.setListing)
   const project = useStore((s) => s.project)
   const play = getSize(settings.sizeId).store === 'Google Play'
+  // Pure view state: never written to the project, never saved, never undoable — switching it
+  // back and forth changes nothing a reload or an approval would see.
+  const [thumbnailTest, setThumbnailTest] = useState(false)
 
   const strips = useMemo(
     () =>
@@ -116,18 +168,41 @@ export function StorePreview() {
         </div>
       )}
 
+      <div className="flex items-center justify-between">
+        <div className="store-section" style={{ margin: 0 }}>
+          Preview
+        </div>
+        <button
+          type="button"
+          className="seg"
+          style={{ flex: 'none' }}
+          data-active={thumbnailTest}
+          title="Show the tiles at App Store / Play search result size instead of the product page size"
+          onClick={() => setThumbnailTest((v) => !v)}
+        >
+          Thumbnail test
+        </button>
+      </div>
+
       {project ? (
         strips.map(({ locale, screens: localeScreens }) => (
           <div key={locale.id}>
-            <div className="store-section">Preview {localeLabel(locale)}</div>
-            <Strip screens={localeScreens} notes={notes} />
+            <div className="store-section">{localeLabel(locale)}</div>
+            <Strip
+              screens={localeScreens}
+              notes={notes}
+              tile={thumbnailTest ? THUMB_TILE : TILE}
+              groupFirstTiles={thumbnailTest ? THUMB_GROUP_SIZE : undefined}
+            />
           </div>
         ))
       ) : (
-        <>
-          <div className="store-section">Preview</div>
-          <Strip screens={screens} notes={notes} />
-        </>
+        <Strip
+          screens={screens}
+          notes={notes}
+          tile={thumbnailTest ? THUMB_TILE : TILE}
+          groupFirstTiles={thumbnailTest ? THUMB_GROUP_SIZE : undefined}
+        />
       )}
 
       <div className="store-section">Description</div>

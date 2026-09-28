@@ -4,6 +4,12 @@ export type ProjectTarget = { id: string; sizeId: string; deviceId: string; out:
 export type ProjectLocale = { id: string; store: Record<string, string> }
 export type SlotKind = 'screen' | 'artwork'
 
+/** A slot's place in the deck's sequence — which job its headline has to do. Feeds the "Ideas"
+ *  menu's formula picker (`presets/copyIdeas.ts`); drawn nowhere, so it is not part of the
+ *  approval hash (`project/hash.ts`, like `note`). */
+export type TileRole = 'hero' | 'difference' | 'feature' | 'proof' | 'closer'
+export const TILE_ROLES: TileRole[] = ['hero', 'difference', 'feature', 'proof', 'closer']
+
 /** Fields every free-standing slot element shares — sticker or shape — not a setting, not an
  *  override, just extra material the slot carries. `x`/`y` are the element's centre, `x` a
  *  fraction of the composition width (tile width × the layout's span), `y` a fraction of the
@@ -112,6 +118,10 @@ export type ProjectSlot = {
   extra?: string[]
   /** open feedback for whoever regenerates this screenshot; never part of the approval hash */
   note?: string
+  /** this slot's place in the deck (hero, differentiator, ...); absent = none picked. Changes no
+   *  pixel, so it never invalidates an approval — unlike a note, it is an ordinary edit and travels
+   *  through undo/redo (`store.ts`'s `setSlotRole`). */
+  role?: TileRole
 }
 export type Approval = { hash: string; by: string; at: string }
 export type ProjectSettings = Omit<Settings, 'sizeId' | 'deviceId'>

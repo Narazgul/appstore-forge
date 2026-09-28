@@ -48,6 +48,19 @@ export type Position = {
   placements: Placement[]
 }
 
+/**
+ * A pure move of one part of a composition, in the units a placement's own `dx`/`dy` use: `dx` a
+ * fraction of the composition width (tile width × span), `dy` of the tile height. Applied after
+ * the layout has placed the part — the device lift and the text auto-shrink never see it — so the
+ * part lands exactly this far from where the layout alone would put it. No RTL mirroring, like a
+ * sticker's `x`. Absent means no move; the GUI never writes `{ dx: 0, dy: 0 }`.
+ */
+export type Offset = { dx: number; dy: number }
+
+/** `|dx|` and `|dy|` may not exceed this: one whole composition width / tile height — anything
+ *  further is entirely off the canvas, a slip rather than a design. */
+export const OFFSET_LIMIT = 1
+
 export type SceneElementLayer = 'behind' | 'front'
 
 /** The soft drop shadow a device frame casts, or a flat hard-edged one, or none.
@@ -115,6 +128,9 @@ export type SceneElement = StickerElement | ShapeElement | ChipElement
 export const isShapeElement = (el: SceneElement): el is ShapeElement => 'shape' in el
 export const isChipElement = (el: SceneElement): el is ChipElement => 'text' in el
 export const isStickerElement = (el: SceneElement): el is StickerElement => 'imageId' in el
+/** Whether turning an element shows — a circle or a ring looks the same at every angle, so neither
+ *  the canvas (turn handle) nor the Stickers panel (Rotate slider) offers one. Scene or slot element. */
+export const turnsVisibly = (el: object): boolean => !('shape' in el) || el.shape === 'blob'
 
 export type LayoutId =
   | 'text-top'
@@ -214,6 +230,8 @@ export type Screen = {
 
 /** Export size is deliberately global — every shot in a set must share one canvas size. */
 export type OverridableKey = Exclude<keyof Settings, 'sizeId'>
+/** The settings with no entry in `DEFAULT_SETTINGS`: absent is their own, meaningful default. */
+export type OptionalSettingKey = 'deviceOffset' | 'textOffset'
 export type ScreenOverrides = Partial<Pick<Settings, OverridableKey>>
 
 export type TextAlign = 'center' | 'left'
@@ -253,6 +271,13 @@ export type Settings = {
   layout: LayoutId
   tilt: number
   deviceScale: number
+  /** moves the whole arrangement — every placement together, or the mosaic grid as one unit.
+   *  Optional with no default, unlike every other key: absent is "where the layout puts it", so
+   *  a template reset or a set that never used it writes nothing (see `Offset`). */
+  deviceOffset?: Offset
+  /** moves the copy: the text block (accent bar, eyebrow, headline, subhead) and feature-wall's
+   *  list with it, as one unit. Same convention as `deviceOffset`. */
+  textOffset?: Offset
   textColor: string
   /** eyebrow's own color; null = same as textColor */
   eyebrowColor: string | null

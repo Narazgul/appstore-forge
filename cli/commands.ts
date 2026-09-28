@@ -9,15 +9,17 @@ import { artworkPath, screensFor, settingsFor, sourcePath } from '../src/project
 import { approvalHash } from '../src/project/hash'
 import { isSlotSticker } from '../src/project/types'
 import type { Approval, Project } from '../src/project/types'
-import { validateProject, type Issue } from '../src/project/validate'
-import { sceneSpan } from '../src/render/scene'
+import { validateProject, type Issue, type TextBlockProbe } from '../src/project/validate'
+import { sceneSpan, textShifts } from '../src/render/scene'
 import {
   headlineBaseSize,
   LIST_CAP_MULT,
   measureListBlock,
   measureTextBlock,
+  textBlockBox,
   type TextMeasurer,
 } from '../src/render/text'
+import type { Screen } from '../src/types'
 import { CliError } from './errors'
 import { registerFonts } from './fonts'
 import { readProject, repoRootOf, writeProject } from './project-io'
@@ -83,6 +85,49 @@ function listFitsChecker(project: Project): (localeId: string, slotId: string) =
     }
   }
   return (localeId, slotId) => fits.get(`${localeId}:${slotId}`) ?? true
+}
+
+/**
+ * Where each slot's text block really lands, per locale, for every target: the renderer's own
+ * `textShifts` + `textBlockBox`, called the way `render/targets.ts` frames the copy in the editor,
+ * so `validateProject`'s headline checks see `textOffset` and `feature-wall`'s centring. Measured
+ * only when asked — just the slots with a front sticker or a moved text block ever are.
+ */
+function textBlockChecker(project: Project): (localeId: string, slotId: string) => TextBlockProbe[] {
+  registerFonts()
+  const screens = new Map<string, Screen[]>()
+  const measured = new Map<string, TextBlockProbe[]>()
+  return (localeId, slotId) => {
+    const key = `${localeId}:${slotId}`
+    const known = measured.get(key)
+    if (known) return known
+    if (!screens.has(localeId)) screens.set(localeId, screensFor(project, localeId))
+    const screen = screens.get(localeId)!.find((s) => s.id === slotId)
+    if (!screen) return []
+    const probes: TextBlockProbe[] = []
+    for (const target of project.set.targets) {
+      const settings = settingsFor(project, target.id)
+      const size = getSize(settings.sizeId)
+      const resolved = effectiveSettings(screen, settings)
+      const layout = getLayout(resolved.layout)
+      const W = size.w * layout.span
+      const ctx = createCanvas(W, size.h).getContext('2d') as unknown as TextMeasurer
+      const shifts = textShifts(ctx, W, size.w, size.h, layout, screen, resolved)
+      const box = textBlockBox(ctx, W, size.w, size.h, layout, screen, resolved, shifts.text)
+      if (!box) continue
+      probes.push({
+        tileAspect: size.w / size.h,
+        box: {
+          left: box.x / W,
+          right: (box.x + box.w) / W,
+          top: box.y / size.h,
+          bottom: (box.y + box.h) / size.h,
+        },
+      })
+    }
+    measured.set(key, probes)
+    return probes
+  }
 }
 
 /**
@@ -153,6 +198,7 @@ export async function checkCommand(opts: { projectDir: string; setId: string; re
     eyebrowFitsChecker(project),
     await elementAspectChecker(project, repoRoot),
     listFitsChecker(project),
+    textBlockChecker(project),
   )
   const approvalOk =
     opts.requireApproval && !issues.some((i) => i.level === 'error')
@@ -177,6 +223,7 @@ export async function renderCommand(opts: {
       eyebrowFitsChecker(project),
       await elementAspectChecker(project, repoRoot),
       listFitsChecker(project),
+      textBlockChecker(project),
     ),
   )
   if (opts.requireApproval && !(await approvalMatches(project, bytes, artBytes))) {
@@ -204,6 +251,7 @@ export async function approveCommand(opts: {
       eyebrowFitsChecker(project),
       await elementAspectChecker(project, repoRoot),
       listFitsChecker(project),
+      textBlockChecker(project),
     ),
   )
   const approval: Approval = {

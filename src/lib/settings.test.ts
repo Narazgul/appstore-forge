@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SECTION_KEYS, effectiveSettings, isOverridden } from './settings'
+import { OPTIONAL_SETTING_KEYS, SECTION_KEYS, effectiveSettings, isOverridden } from './settings'
 import { DEFAULT_SETTINGS } from '../store'
 import type { OverridableKey, PaletteColors, Screen } from '../types'
 
@@ -114,9 +114,12 @@ describe('SECTION_KEYS', () => {
   const listed = Object.values(SECTION_KEYS).flat()
 
   it('reaches every overridable setting, so nothing is unresettable', () => {
-    const all = (Object.keys(DEFAULT_SETTINGS) as (keyof typeof DEFAULT_SETTINGS)[]).filter(
-      (k) => k !== 'sizeId',
-    ) as OverridableKey[]
+    const all = [
+      ...((Object.keys(DEFAULT_SETTINGS) as (keyof typeof DEFAULT_SETTINGS)[]).filter(
+        (k) => k !== 'sizeId',
+      ) as OverridableKey[]),
+      ...OPTIONAL_SETTING_KEYS,
+    ]
     expect([...listed].sort()).toEqual([...all].sort())
   })
 

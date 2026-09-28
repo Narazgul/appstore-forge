@@ -6,6 +6,7 @@ import { isSlotChip } from '../project/types'
 import { sceneSpan } from '../render/scene'
 import { useStore } from '../store'
 import type { Screen } from '../types'
+import { CopyIdeasMenu } from './CopyIdeasMenu'
 import { ScreenPreview } from './ScreenPreview'
 import { SourcePicker } from './SourcePicker'
 
@@ -90,6 +91,7 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
   )
   const note = useStore((s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.note ?? '')
   const setSlotNote = useStore((s) => s.setSlotNote)
+  const role = useStore((s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.role)
   const layout = useStore((s) => getLayout(effectiveSettings(screen, s.settings).layout))
   const fileRef = useRef<HTMLInputElement>(null)
   // A tile takes the copy of every language with it, so the click asks once.
@@ -130,7 +132,7 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
       />
 
       <div className="relative">
-        <ScreenPreview screen={screen} width={width} height={height} />
+        <ScreenPreview screen={screen} width={width} height={height} editable />
         {empty && screen.kind !== 'artwork' && (
           <button
             className="slot-cta"
@@ -176,6 +178,16 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
               <span className="count" data-over={headLen > HEADLINE_SOFT}>
                 {headLen}
               </span>
+              {project && (
+                <CopyIdeasMenu
+                  slotId={screen.id}
+                  role={role}
+                  index={index}
+                  total={total}
+                  lang={localeId}
+                  onPick={(headline) => updateScreen(screen.id, { headline })}
+                />
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               <textarea

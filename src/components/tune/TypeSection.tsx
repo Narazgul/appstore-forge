@@ -1,11 +1,11 @@
 import { FONTS, getFont } from '../../presets/fonts'
-import { Row } from './Controls'
+import { OffsetRow, Row } from './Controls'
 import type { SectionProps } from './shared'
 
 const FALLBACK_HIGHLIGHT = '#ffe27a'
 
 /** Typeface, size, tracking, alignment, and the marker colours `*starred*` words cycle through. */
-export function TypeSection({ settings, put }: SectionProps) {
+export function TypeSection({ settings, put, owns, clear }: SectionProps) {
   const setHighlight = (index: number, color: string) => {
     const next = [...settings.highlights]
     while (next.length <= index) next.push(next[0] ?? FALLBACK_HIGHLIGHT)
@@ -77,6 +77,11 @@ export function TypeSection({ settings, put }: SectionProps) {
           </button>
         </div>
       </Row>
+      <OffsetRow
+        offset={settings.textOffset}
+        owned={owns?.('textOffset') ?? false}
+        onReset={() => clear?.('textOffset')}
+      />
       <Row label="Color">
         <input type="color" value={settings.textColor} onChange={(e) => put({ textColor: e.target.value })} />
         <input

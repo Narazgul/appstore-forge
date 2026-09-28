@@ -118,6 +118,28 @@ describe('fileProjectStore', () => {
     expect(sent.copies.en.a.chips).toEqual({ pill: '+312 € saved' })
   })
 
+  it('save() carries a slot role through the PUT body, the same way', async () => {
+    vi.stubGlobal('location', new URL('http://localhost:4324/?set=promo'))
+    const calls: { url: string; init?: RequestInit }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        calls.push({ url, init })
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }),
+    )
+    const withRole: Project = {
+      ...project('promo'),
+      set: {
+        ...project('promo').set,
+        slots: [{ id: 'a', kind: 'screen', screen: 'shot', overrides: {}, role: 'hero' }],
+      },
+    }
+    await fileProjectStore().save(withRole)
+    const sent = JSON.parse(calls[0].init?.body as string) as Project
+    expect(sent.set.slots[0].role).toBe('hero')
+  })
+
   it('listSets() reads /api/sets', async () => {
     vi.stubGlobal(
       'fetch',

@@ -42,15 +42,19 @@ option.
 | **Chip**                   | A floating pill of a short line of text on a slot — the third kind of `SlotElement`/`SceneElement`, discriminated by `chip: true`. Same `x`/`y`/`rotate`/`layer` positioning as a sticker or a shape, but `width` is the pill's _maximum_ width, not its actual one — the pill hugs its (auto-shrinking) text up to that ceiling, at a font size that is itself a fraction of the tile height. Its text lives in the copy, keyed by the chip's own id (`SlotCopy.chips`), one per locale — the same reason headline and subhead live outside the set file. No image, so no approval-hash bytes beyond its own JSON and its copy; exempt from the "may cover the headline" warning like a shape, for a narrower reason (see `SlotChip` in `project/types.ts`).                                                                                                                                                                                       |
 | **Blob**                   | A shape kind: seven points on the unit circle, radius `[0.78, 1.0]` jittered per point and angle jittered off an even 7-way spacing, all from a seeded PRNG (`mulberry32` in `render/frames.ts`) keyed only by `seed`, closed into a smooth loop with a Catmull-Rom-to-Bézier conversion. No randomness outside the seed — same seed, same shape, in the GUI and the CLI alike, exactly like a device frame is one geometric description drawn twice.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | **Device shadow**          | `settings.deviceShadow` (`'soft' \| 'hard' \| 'none'`, default `'soft'`, overridable per screen): the drop shadow a device frame casts. `'soft'` is the frame's original, hard-coded blur — the default keeps every existing export byte-identical. `'hard'` is flat (no blur), offset `0.03`× the frame width down and right, in the tile's own effective `textColor`. `'none'` casts none. `applyShadow` in `render/frames.ts` is the one place that sets it, so a sticker's own shadow (still a plain boolean, unchanged) and a future frameless element can share the same numbers.                                                                                                                                                                                                                                                                                                                                                             |
+| **Role**                   | A slot's place in the deck's sequence (`hero`, `difference`, `feature`, `proof`, `closer`) — which job its headline has to do. Feeds the editor's "Ideas" menu; draws no pixel itself, so it is absent from the approval hash like a `note`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | **Mosaic**                 | An overview/closer layout (`layout: 'mosaic'`): a headline band, then a staggered brick-pattern grid of 4–6 rahmenlose (frameless) mini-screens starting right under the band and cut off at the bottom. 4 cells are two columns of two (the right one staggered down); 5–6 switch to three columns (6 = 2/2/2, 5 = 2/1/2, the middle one staggered down). Cell 1 is the slot's own `screen`; cells 2–n come from `ProjectSlot.extra` (3–5 names, `Screen.extraIds` on the bridged `Screen`), each resolved through `sources` exactly like `screen`/`pair`/`pairPrev`. No device frame is ever drawn for it — `mosaicCells` in `render/scene.ts` computes the cell boxes (shrinking them if a count/offset combination would otherwise leave one less than half on-canvas) and `drawMosaicCell` in `render/frames.ts` paints each one as a white rounded card with today's device drop shadow, image cover-fitted top-anchored, no bezel, no notch. |
+| **Offset**                 | `settings.deviceOffset` / `settings.textOffset` (`{ dx, dy }`, optional, no default, overridable per screen): a pure move of the device arrangement (every placement, the mosaic grid as one unit) or of the copy (text block plus `feature-wall`'s list), `dx` a fraction of the composition width, `dy` of the tile height — a placement's own units. Applied after layout, lift and auto-shrink; absent = no move. See "Canvas moves" below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Canvas editor**          | The direct manipulation on each tile preview (`components/CanvasEditor.tsx`): select, drag, scale, turn, snap. Its frames and handles are DOM over the canvas, never part of `renderScene`; its geometry comes from `render/targets.ts`, its math from `lib/canvasEdit.ts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ## Data model
 
 ```ts
 Screen   = { id, headline, subhead, imageId, overrides: Partial<Settings>, lang?, elements?: SceneElement[], extraIds?: string[] }
 Settings = { background, backdropColor, deviceId, frameColorId, deviceShadow, positionId, layout,
-             tilt, deviceScale, textColor, textAlign, highlights, fontId,
+             tilt, deviceScale, deviceOffset?, textOffset?, textColor, textAlign, highlights, fontId,
              headlineScale, subheadScale, headlineTracking, accentBar, subheadStyle, sizeId }
+Offset   = { dx, dy }   // dx: fraction of the composition width, dy: of the tile height
 Template = { id, label, settings: Partial<Settings>, variants?: ScreenOverrides[], sample }
 SceneElement = StickerElement | ShapeElement | ChipElement   // all three share { id, x, y, width, rotate, layer }
 StickerElement = { ...base, imageId, shadow }
@@ -77,7 +81,7 @@ Project = { set: ProjectSet, copies: ProjectCopies }
 ProjectSet = { version: 1, id, targets, locales, sources, settings, slots, approval }
 ProjectTarget = { id, sizeId, deviceId, out } // out: 'store/ios/{storeLocale}/{n}.png'
 ProjectLocale = { id, store: Record<targetId, string> } // { ios: 'en-US', play: 'en-US' }
-ProjectSlot = { id, kind: 'screen' | 'artwork', screen, pair?, artwork?, elements?: SlotElement[], extra?: string[], overrides: ScreenOverrides }
+ProjectSlot = { id, kind: 'screen' | 'artwork', screen, pair?, artwork?, elements?: SlotElement[], extra?: string[], overrides: ScreenOverrides, role?: TileRole }
 SlotElement = SlotSticker | SlotShape | SlotChip   // all three share { id, x, y, width, rotate?, layer? }
 SlotSticker = { ...base, artwork, shadow? }
 SlotShape   = { ...base, shape, color, stroke?, seed? }   // stroke: ring only, seed: blob only
@@ -138,7 +142,12 @@ a chip's copy) are already part of the set JSON and the copies map hashed
 above. `validateProject` reports a missing sticker image the same way it
 reports a missing slot artwork (a shape or a chip names no file, so neither
 can ever be missing one), and warns (never blocks) when a `front` sticker's
-approximate box overlaps the layout's text band — a shape is deco, not
+approximate box overlaps the text block where it really lands — `textOffset`
+and `feature-wall`'s centring included, measured by `forge check` with the
+renderer's own `textShifts`/`textBlockBox` (`cli/commands.ts`), otherwise the
+layout band moved by the offset (`approxTextBlock` in `project/validate.ts`) —
+the same block also yields a warning when `textOffset` pushes the headline
+partly or entirely off the tile. A shape is deco, not
 content, and is exempt: it may sit under the headline on purpose, which is
 exactly what the feature graphic's background circle does. A chip is exempt
 from the same warning for a different reason: its real box depends on the
@@ -194,6 +203,57 @@ screen replaces it with the frameless artwork placement. Like a slot's `pair`,
 only for the slots that have one, so a set using no mosaic cell hashes exactly
 as it did before this feature existed.
 
+**Canvas moves.** `deviceOffset` and `textOffset` are the only `Settings` keys with no entry in
+`DEFAULT_SETTINGS` (`OptionalSettingKey`, listed in `OPTIONAL_SETTING_KEYS`): absent is their own
+meaningful default, "where the layout puts it", so a template reset (`projectAfterTemplate`) or a
+set that never used them writes nothing. `renderScene` hands `deviceOffset` to `composeDevices`
+(added to every box after the lift) and to `mosaicGrid` (the grid as one unit), and `textOffset`,
+multiplied out by `shiftFor`, to `drawTextBlock`/`drawListBlock` (added to the band's left and
+top). Nothing else sees them: the lift, the auto-shrink, `availableTextHeight` and the backdrop
+are computed exactly as without — the moved part lands exactly the offset away, and may overlap
+what the layout kept apart. No RTL mirroring, like an element's `x`. `validateProject` requires an
+object with finite `dx`/`dy` within ±`OFFSET_LIMIT` (1) at set and slot level, and warns when a
+slot's own offset targets a part its tile never draws (a deviceless layout or an artwork slot with
+no artwork placement for `deviceOffset`, `text: null` for `textOffset`). Absent keys change no
+approval hash; the GUI writes an offset only when it differs from what the tile would inherit
+(`resolveOverrides`), so a 0/0 lands in the file only to overrule a set-wide offset.
+
+The canvas editor writes these two plus the existing `tilt`/`deviceScale` (device) and an
+element's `x`/`y`/`width`/`rotate` (and a chip's `size`) — nothing else. `sceneTargets`
+(`render/targets.ts`) lists what a tile offers, bottom first in draw order, from the renderer's
+own geometry functions (`elementBox`, `chipGeometry`, `textBlockBox`/`listBlockBox`,
+`composeDevices`, `mosaicGrid`); `lib/canvasEdit.ts` holds the pure gesture math (pointer → scene
+pixels → fractions, hit-testing turned boxes, snap, scale, turn, the `GestureSession` lifecycle).
+A gesture draws live through `screenWithEdit` in `ScreenPreview` without touching the store and
+commits once through `applyCanvasEdit` — one undo step with a history kind unique to the gesture,
+one `scheduleSave`; arrow-key nudges share one kind per part so a held key coalesces like a slider.
+
+A slot's `role` (`TileRole`: `'hero' | 'difference' | 'feature' | 'proof' | 'closer'`,
+`project/types.ts`) names its place in the deck, purely to drive the editor's
+"Ideas" menu (`components/CopyIdeasMenu.tsx`) next to the headline field —
+picking a role shows that role's headline formulas (`presets/copyIdeas.ts`,
+ported with attribution from `ParthJadhav/app-store-screenshots`, see
+`NOTICE`), in German when the copy being edited is `de` and English
+otherwise; clicking one drops it into the current locale's headline as one
+undoable edit, brackets and all — the user fills them in. An unset slot is
+offered a suggestion (the first slot `hero`, the last `closer`) but nothing is
+written until the user actually picks a role. `role` draws no pixel, so it
+stays out of the approval hash exactly like `note` (`project/hash.ts`); unlike
+`note`, it is an ordinary document edit and travels through undo/redo like any
+other (`store.ts`'s `setSlotRole`/`projectAfterRole`) — and undoing or redoing it
+keeps the stamp as well: undo/redo drop an approval only when the step changes
+`approvalContent` (`project/hash.ts`), the same text the hash is built from.
+
+The Review step's `StorePreview.tsx` also has a "Thumbnail test" toggle: it
+redraws the same strip through the same `ScreenPreview` canvas at App Store /
+Play search-result tile size (~160px) instead of the product-page size, and
+fences the leading tiles the search result actually shows (a span-2 layout
+still counts as two). A panorama straddling the boundary is fenced whole, but
+its caption counts only the tiles really shown (at most three), and the half
+past the boundary is dimmed with "Only the left half shows in the search
+result" (`shown` in `lib/thumbnailGroup.ts`). It is pure view state — a local
+`useState`, never written to the project, Firestore or undo/redo.
+
 Headlines carry light markup: `*word*` highlights the word. `parseMarkup` in
 `render/scene.ts` is the only parser; `stripMarkup` feeds filenames.
 
@@ -235,6 +295,9 @@ src/components/Footer.tsx        status line + the step's one primary action (Ne
 src/components/steps/*           Target → Look → Screenshots → Review & export
 src/components/TunePanel.tsx     the full control set, scoped to all screens or the selected one (lives in the Screenshots step)
 src/components/StorePreview.tsx  the set inside a mock App Store product page (Review step)
+src/components/CanvasEditor.tsx  select/drag/scale/turn on a tile preview — DOM over the canvas, never drawn
+src/render/targets.ts            what the editor can grab, from the renderer's own geometry
+src/lib/canvasEdit.ts            the editor's pure gesture math
 ```
 
 ### The one decision everything rests on

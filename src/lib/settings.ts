@@ -1,4 +1,4 @@
-import type { OverridableKey, Screen, Settings } from '../types'
+import type { OptionalSettingKey, OverridableKey, Screen, Settings } from '../types'
 
 /**
  * A screen's own values win; everything else falls through to the global settings. Then, if the
@@ -39,6 +39,10 @@ export const SECTION_KEYS: Record<string, OverridableKey[]> = {
     'highlights',
     'accentBar',
     'subheadStyle',
+    'textOffset',
   ],
-  adjust: ['tilt', 'deviceScale'],
+  adjust: ['tilt', 'deviceScale', 'deviceOffset'],
 }
+
+/** The overridable keys `DEFAULT_SETTINGS` has no entry for — see `OptionalSettingKey`. */
+export const OPTIONAL_SETTING_KEYS: OptionalSettingKey[] = ['deviceOffset', 'textOffset']
