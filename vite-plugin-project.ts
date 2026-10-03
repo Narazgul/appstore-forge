@@ -6,7 +6,7 @@ import { join, normalize, sep } from 'node:path'
 import type { Plugin } from 'vite'
 import { copyDir, listSets, readGallery, readProject, repoRootOf, writeProject } from './cli/project-io'
 import { SET_ID_RE } from './src/project/duplicate'
-import { artworkPath, sourcePath } from './src/project/bridge'
+import { artworkPath, nodesPath, sourcePath } from './src/project/bridge'
 import type { Project } from './src/project/types'
 
 /** One PUT rewrites the set file and every copy file; the window covers the copies too. */
@@ -29,7 +29,8 @@ const isProjectRoute = (url: string) => {
     path === '/api/gallery' ||
     path === '/api/sets' ||
     path.startsWith('/sources/') ||
-    path.startsWith('/artwork/')
+    path.startsWith('/artwork/') ||
+    path.startsWith('/nodes/')
   )
 }
 
@@ -201,11 +202,15 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
     url: string,
     res: ServerResponse,
     resolve: (set: Project['set'], locale: string, name: string) => string,
+    contentType = 'image/png',
   ): Promise<void> {
     const [, , locale, file] = url.split('/')
     let path: string
     try {
-      const name = decodeURIComponent(file ?? '').replace(/\.png$/, '')
+      const name = decodeURIComponent(file ?? '').replace(
+        contentType === 'image/png' ? /\.png$/ : /\.json$/,
+        '',
+      )
       const project = await readProject(projectDir, currentSetId)
       path = normalize(join(repoRoot, resolve(project.set, decodeURIComponent(locale ?? ''), name)))
     } catch (err) {
@@ -221,7 +226,7 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
       return
     }
     try {
-      res.setHeader('content-type', 'image/png')
+      res.setHeader('content-type', contentType)
       res.end(await readFile(path))
     } catch {
       res.statusCode = 404
@@ -265,6 +270,10 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
     }
     if (path.startsWith('/artwork/')) {
       await sendImage(path, res, artworkPath)
+      return true
+    }
+    if (path.startsWith('/nodes/')) {
+      await sendImage(path, res, nodesPath, 'application/json')
       return true
     }
     return false

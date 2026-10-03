@@ -32,15 +32,33 @@ function roundRect(ctx: CanvasRenderingContext2D, b: Box, r: number) {
   ctx.roundRect(b.x, b.y, b.w, b.h, Math.max(0, Math.min(r, b.w / 2, b.h / 2)))
 }
 
+export const imageSize = (img: CanvasImageSource) => ({
+  w: (img as HTMLImageElement).naturalWidth || (img as HTMLCanvasElement).width,
+  h: (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height,
+})
+
+/** Where a cover-fitted, top-anchored image of `iw`×`ih` lands in `b`: its top-left and scale. */
+export function coverTop(iw: number, ih: number, b: Box): { x: number; y: number; scale: number } {
+  const scale = Math.max(b.w / iw, b.h / ih)
+  return { x: b.x + (b.w - iw * scale) / 2, y: b.y, scale }
+}
+
 /** Cover-fit an image into a box, anchored to the top so the status bar is never cropped. */
 function drawCoverTop(ctx: CanvasRenderingContext2D, img: CanvasImageSource, b: Box) {
-  const iw = (img as HTMLImageElement).naturalWidth || (img as HTMLCanvasElement).width
-  const ih = (img as HTMLImageElement).naturalHeight || (img as HTMLCanvasElement).height
+  const { w: iw, h: ih } = imageSize(img)
   if (!iw || !ih) return
-  const scale = Math.max(b.w / iw, b.h / ih)
-  const dw = iw * scale
-  const dh = ih * scale
-  ctx.drawImage(img, b.x + (b.w - dw) / 2, b.y, dw, dh)
+  const fit = coverTop(iw, ih, b)
+  ctx.drawImage(img, fit.x, fit.y, iw * fit.scale, ih * fit.scale)
+}
+
+/** The screen area inside a device frame drawn at `box`, and its corner radius. */
+export function deviceScreen(box: Box, device: DeviceSpec): { screen: Box; radius: number } {
+  const outerR = device.radius * box.w
+  const bezel = device.bezel * box.w
+  return {
+    screen: { x: box.x + bezel, y: box.y + bezel, w: box.w - bezel * 2, h: box.h - bezel * 2 },
+    radius: Math.max(0, outerR - bezel),
+  }
 }
 
 /**
@@ -262,13 +280,7 @@ export function drawDevice(
 ) {
   const outerR = device.radius * box.w
   const bezel = device.bezel * box.w
-  const screen: Box = {
-    x: box.x + bezel,
-    y: box.y + bezel,
-    w: box.w - bezel * 2,
-    h: box.h - bezel * 2,
-  }
-  const screenR = Math.max(0, outerR - bezel)
+  const { screen, radius: screenR } = deviceScreen(box, device)
 
   ctx.save()
   applyShadow(ctx, shadowStyle, box.w, shadowColor)

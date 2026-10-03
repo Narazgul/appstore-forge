@@ -1,4 +1,4 @@
-import { isChipElement, isShapeElement } from '../types'
+import { isChipElement, isEffectElement, isShapeElement } from '../types'
 import type {
   Background,
   ChipElement,
@@ -6,6 +6,7 @@ import type {
   Offset,
   PlacementSource,
   SceneElement,
+  SceneElementLayer,
   Screen,
   Settings,
   ShapeElement,
@@ -33,6 +34,7 @@ import {
   type Shift,
 } from './text'
 import { drawArtwork, drawDevice, drawMosaicCell, drawPill, drawShape, drawSticker, type Box } from './frames'
+import { drawEffectOverlays, prepareScreen } from './effects'
 
 export function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, bg: Background) {
   if (bg.kind === 'solid') {
@@ -392,13 +394,13 @@ function drawElements(
   h: number,
   elements: SceneElement[] | undefined,
   sources: SceneSources,
-  layer: SceneElement['layer'],
+  layer: SceneElementLayer,
   settings: Settings,
   lang: string | undefined,
 ) {
   if (!elements) return
   for (const el of elements) {
-    if (el.layer !== layer) continue
+    if (isEffectElement(el) || el.layer !== layer) continue
     if (isChipElement(el)) {
       drawChipElement(ctx, W, w, h, el, settings, lang)
       continue
@@ -507,12 +509,24 @@ export function renderScene(
     // An artwork screen has no source screenshot at all — self/next/prev would draw an empty
     // device body. Only a placement that draws the slot's own frameless artwork applies to it.
     const isArtworkScreen = screen.kind === 'artwork'
-    for (const { box, source, angle, frameless } of boxes) {
+    const effects = (screen.elements ?? []).filter(isEffectElement)
+    const effectBox =
+      effects.length && !isArtworkScreen && sources.self
+        ? boxes.find((b) => b.source === 'self' && !b.frameless)
+        : undefined
+    const prepared = effectBox ? prepareScreen(ctx, sources.self!, effects) : null
+    for (const deviceBox of boxes) {
+      const { box, source, angle, frameless } = deviceBox
       if (isArtworkScreen && source !== 'artwork') continue
       // A multi-device arrangement falls back to the current screenshot when there is no
       // neighbour, so a single-screen project still renders every frame. Artwork gets no such
       // fallback: an unframed screenshot in that slot would be wrong, not merely a stand-in.
-      const img = source === 'artwork' ? (sources.artwork ?? null) : (sources[source] ?? sources.self ?? null)
+      const img =
+        deviceBox === effectBox
+          ? prepared!.base
+          : source === 'artwork'
+            ? (sources.artwork ?? null)
+            : (sources[source] ?? sources.self ?? null)
       if (!img && (frameless || source === 'artwork')) continue
 
       ctx.save()
@@ -525,6 +539,8 @@ export function renderScene(
       else drawDevice(ctx, box, device, color, img, settings.deviceShadow, settings.textColor)
       ctx.restore()
     }
+    if (effectBox && prepared)
+      drawEffectOverlays(ctx, effectBox.box, effectBox.angle, device, prepared, effects, w)
   }
 
   drawElements(ctx, W, w, h, screen.elements, sources, 'front', settings, screen.lang)

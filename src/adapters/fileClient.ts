@@ -52,6 +52,11 @@ export function fileProjectStore(): ProjectStore {
       if (!res.ok) throw new Error(`Artwork missing: ${localeId}/${artwork}`)
       return new Uint8Array(await res.arrayBuffer())
     },
+    async nodesBytes(localeId, screen) {
+      const res = await fetch(`/nodes/${encodeURIComponent(localeId)}/${encodeURIComponent(screen)}.json`)
+      if (!res.ok) throw new Error(`Nodes missing: ${localeId}/${screen}`)
+      return new Uint8Array(await res.arrayBuffer())
+    },
     gallery(localeId) {
       return galleries[localeId] ?? EMPTY_GALLERY
     },

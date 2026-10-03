@@ -4,7 +4,7 @@ import { getSize } from '../presets/sizes'
 import { groupLeadingTiles, searchResultLabel } from '../lib/thumbnailGroup'
 import { localeLabel } from '../project/localeLabel'
 import { screensFor } from '../project/bridge'
-import { useStore } from '../store'
+import { nodesLookupOf, useStore } from '../store'
 import type { Screen } from '../types'
 import { ScreenPreview } from './ScreenPreview'
 
@@ -105,6 +105,7 @@ export function StorePreview() {
   const listing = useStore((s) => s.listing)
   const setListing = useStore((s) => s.setListing)
   const project = useStore((s) => s.project)
+  const nodes = useStore((s) => s.nodes)
   const play = getSize(settings.sizeId).store === 'Google Play'
   // Pure view state: never written to the project, never saved, never undoable — switching it
   // back and forth changes nothing a reload or an approval would see.
@@ -113,9 +114,12 @@ export function StorePreview() {
   const strips = useMemo(
     () =>
       project
-        ? project.set.locales.map((locale) => ({ locale, screens: screensFor(project, locale.id) }))
+        ? project.set.locales.map((locale) => ({
+            locale,
+            screens: screensFor(project, locale.id, nodesLookupOf(nodes)),
+          }))
         : [],
-    [project],
+    [project, nodes],
   )
   const notes = useMemo(() => {
     const map: Record<string, string> = {}

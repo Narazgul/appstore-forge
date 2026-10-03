@@ -51,6 +51,26 @@ import type { Issue } from './validate'
 /** A file the preview wrote: one tile of one slot, for one locale and target. */
 export type PreviewFile = { slot: string; locale: string; target: string; part: number; file: string }
 
+export type CaptureOptions = {
+  out: string
+  serial?: string
+  port?: number
+  screen?: string
+  seed?: boolean
+  store?: 'apple' | 'google'
+  calls?: { tool: string; args?: Record<string, unknown> }[]
+  settleMs?: number
+}
+
+export type CaptureResult = {
+  image: string
+  nodes: string
+  width: number
+  height: number
+  nodeCount: number
+  steps: { tool: string; result: unknown }[]
+}
+
 /** What the tools need from the place a project lives — files on disk for the CLI. */
 export interface ToolHost {
   listSets(): Promise<string[]>
@@ -69,6 +89,8 @@ export interface ToolHost {
     setId: string,
     opts: { locales?: string[]; targets?: string[]; requireApproval: boolean },
   ): Promise<string[]>
+  /** needs adb and a device, so only the CLI host has it */
+  capture?(opts: CaptureOptions): Promise<CaptureResult>
   readGuidelines(): Promise<string | null>
   writeGuidelines(text: string): Promise<void>
   today(): string
@@ -213,27 +235,70 @@ function summary(project: Project) {
 }
 
 const elementBase = (description: string) =>
-  object(
-    description,
-    {
-      id: str('Element id; free one derived from the kind when absent.'),
-      artwork: str('Sticker: artwork file name (no folder, no extension), resolved like a slot artwork.'),
-      shape: str('Shape kind.', { enum: ['circle', 'ring', 'blob'] }),
-      chip: { type: 'boolean', description: 'true makes a text pill; its text comes from chipText.' },
-      x: { type: 'number', description: 'Centre, fraction of the composition width.' },
-      y: { type: 'number', description: 'Centre, fraction of the tile height.' },
-      width: { type: 'number', description: 'Fraction of the tile width.' },
-      rotate: { type: 'number', description: 'Degrees, clockwise.' },
-      layer: str('Drawn behind or in front of the composition.', { enum: ['behind', 'front'] }),
-      color: str('Hex colour (shape fill, chip pill).'),
-      textColor: str('Chip text colour, hex.'),
-      size: { type: 'number', description: 'Chip font size, fraction of the tile height.' },
-      stroke: { type: 'number', description: 'Ring only: stroke, fraction of the diameter, 0.02-0.5.' },
-      seed: { type: 'integer', description: 'Blob only: shape seed.' },
-      shadow: { type: 'boolean', description: 'Sticker or chip shadow.' },
+  object(description, {
+    id: str('Element id; free one derived from the kind when absent.'),
+    artwork: str('Sticker: artwork file name (no folder, no extension), resolved like a slot artwork.'),
+    shape: str('Shape kind.', { enum: ['circle', 'ring', 'blob'] }),
+    chip: { type: 'boolean', description: 'true makes a text pill; its text comes from chipText.' },
+    x: { type: 'number', description: 'Centre, fraction of the composition width.' },
+    y: { type: 'number', description: 'Centre, fraction of the tile height.' },
+    width: { type: 'number', description: 'Fraction of the tile width.' },
+    rotate: { type: 'number', description: 'Degrees, clockwise.' },
+    layer: str('Drawn behind or in front of the composition.', { enum: ['behind', 'front'] }),
+    color: str('Hex colour (shape fill, chip pill).'),
+    textColor: str('Chip text colour, hex.'),
+    size: {
+      type: 'number',
+      description:
+        'Chip: font size, fraction of the tile height. Loupe: diameter, fraction of the tile width, 0.05-0.9 (default: sized from the magnified target).',
     },
-    ['x', 'y', 'width'],
-  )
+    stroke: { type: 'number', description: 'Ring only: stroke, fraction of the diameter, 0.02-0.5.' },
+    seed: { type: 'integer', description: 'Blob only: shape seed.' },
+    shadow: { type: 'boolean', description: 'Sticker or chip shadow.' },
+    effect: str(
+      "Effect on the slot's own screenshot inside its device, instead of a placed element (no x, y, width, rotate, layer): lift raises the target out of the device, loupe magnifies it in a round glass, focus blurs everything else, redact pixelates or blurs it for good.",
+      { enum: ['lift', 'loupe', 'focus', 'redact'] },
+    ),
+    rect: object(
+      'Effect target by hand: fractions of the screenshot (x, w of its width; y, h of its height).',
+      {
+        x: { type: 'number', description: 'Left edge, 0-1.' },
+        y: { type: 'number', description: 'Top edge, 0-1.' },
+        w: { type: 'number', description: 'Width, >0, x + w <= 1.' },
+        h: { type: 'number', description: 'Height, >0, y + h <= 1.' },
+      },
+      ['x', 'y', 'w', 'h'],
+    ),
+    node: {
+      description:
+        'Effect target from the capture: a string, or an array of at least two strings for the rectangle around all their nodes (a row made of several text nodes). Each is looked up in <screenshot>.nodes.json by exact tag, then text, then desc; no match or several is an error, never a guess. Exactly one of rect or node.',
+    },
+    pad: {
+      type: 'number',
+      description: 'Effect: margin around the target, fraction of the screenshot width, 0-0.2. Default 0.',
+    },
+    scale: { type: 'number', description: 'Lift: enlargement of the raised part, 1-1.5. Default 1.08.' },
+    dim: {
+      type: 'number',
+      description:
+        'Lift, focus: how far the rest of the screen darkens, 0-0.9. Default 0.35 (lift), 0 (focus).',
+    },
+    gray: {
+      type: 'number',
+      description: 'Lift: how far the rest of the screen loses its colour, 0-1. Default 0.',
+    },
+    zoom: { type: 'number', description: 'Loupe: magnification, 1.2-4. Default 2.' },
+    place: str('Loupe: over the target or beside it. Default over.', {
+      enum: ['over', 'above', 'below', 'left', 'right'],
+    }),
+    ring: str('Loupe: rim colour, hex. Default #ffffff.'),
+    style: str('Redact: pixelate or blur. Default pixelate.', { enum: ['pixelate', 'blur'] }),
+    strength: {
+      type: 'number',
+      description:
+        'Focus: blur radius, fraction of the screenshot width, 0.002-0.05 (default 0.012). Redact: block size or blur radius, 0.005-0.1 (default 0.03).',
+    },
+  })
 
 export const TOOLS: Tool[] = [
   {
@@ -530,13 +595,13 @@ export const TOOLS: Tool[] = [
   {
     name: 'add_element',
     description:
-      'Adds a sticker (artwork), deco shape (shape + color) or text pill (chip: true + chipText per locale) to a tile.',
+      'Adds a sticker (artwork), deco shape (shape + color), text pill (chip: true + chipText per locale) or a screen effect (effect + rect or node: lift, loupe, focus, redact) to a tile. Placed elements need x, y, width; an effect has none.',
     input: object(
       '',
       {
         set: SET,
         slot: SLOT,
-        element: elementBase('The element; exactly one of artwork, shape, chip.'),
+        element: elementBase('The element; exactly one of artwork, shape, chip, effect.'),
         chipText: freeObject('Chip only: { "<locale>": "text" } — every locale needs one.'),
       },
       ['slot', 'element'],
@@ -546,8 +611,15 @@ export const TOOLS: Tool[] = [
       const slotId = input.slot as string
       const slot = slotOf(project, slotId)
       const elements = slot.elements ?? []
-      const el = { ...(input.element as SlotElement & { shape?: string; artwork?: string }) }
-      const base = el.artwork ?? el.shape ?? ('chip' in el ? 'chip' : 'element')
+      const el = { ...(input.element as SlotElement & { shape?: string; artwork?: string; effect?: string }) }
+      if (el.effect === undefined) {
+        const missing = (['x', 'y', 'width'] as const).filter(
+          (k) => (el as Record<string, unknown>)[k] === undefined,
+        )
+        if (missing.length)
+          throw new ToolError(`element.${missing.join(', element.')} required for a placed element`)
+      }
+      const base = el.artwork ?? el.shape ?? el.effect ?? ('chip' in el ? 'chip' : 'element')
       el.id =
         el.id ??
         freeSlotId(
@@ -567,7 +639,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'update_element',
     description:
-      'Changes fields of one element (move, resize, recolour, layer); null drops an optional field.',
+      'Changes fields of one element (move, resize, recolour, layer; for an effect its target rect or node, pad and its own settings); null drops an optional field.',
     input: object(
       '',
       { set: SET, slot: SLOT, element: str('Element id.'), patch: freeObject('Fields to change.') },
@@ -654,6 +726,39 @@ export const TOOLS: Tool[] = [
         requireApproval: (input.requireApproval as boolean | undefined) ?? false,
       })
       return { files }
+    },
+  },
+  {
+    name: 'capture',
+    description:
+      'Takes a screenshot of the debug app on an Android device: optionally seeds the demo data and opens a screen through the dev MCP, sets the status bar to 9:41 with full battery and signal, and writes <out>.png plus <out>.nodes.json (position of every element with a testTag, text or description). Runs against a real device; the file paths are relative to the project folder.',
+    input: object(
+      '',
+      {
+        out: str('Output path of the PNG, relative to the project folder (".png" is added when missing).'),
+        serial: str('adb serial of the device; default from FORGE_ADB_SERIAL.'),
+        port: { type: 'integer', description: 'Local port forwarded to the dev MCP. Default 8765.' },
+        screen: str('Screen for dev_goto_screen, e.g. "budget".'),
+        seed: { type: 'boolean', description: 'Run dev_seed_screenshot_data first (takes over a minute).' },
+        store: str('With seed: which pay brand to show.', { enum: ['apple', 'google'] }),
+        calls: {
+          type: 'array',
+          description: 'More dev MCP calls, run in order after seed and screen.',
+          items: object('', { tool: str('Dev MCP tool name.'), args: freeObject('Its arguments.') }, [
+            'tool',
+          ]),
+        },
+        settleMs: {
+          type: 'integer',
+          description: 'Wait before the shot so the screen is calm. Default 1500.',
+        },
+      },
+      ['out'],
+    ),
+    async run(host, input) {
+      if (!host.capture)
+        throw new ToolError('capture needs a device and adb; run it through forge capture or forge tool')
+      return host.capture(input as unknown as CaptureOptions)
     },
   },
   {

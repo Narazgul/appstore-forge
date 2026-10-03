@@ -1,21 +1,23 @@
 import { createCanvas, loadImage, type Image } from '@napi-rs/canvas'
 import { mkdir, readdir, unlink, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { PNG } from 'pngjs'
 import {
   artworkIdFor,
   artworkPath,
   imageIdFor,
+  nodesPath,
   outFormat,
   outLocale,
   outPath,
   screensFor,
   settingsFor,
   sourcePath,
+  type NodesLookup,
 } from '../src/project/bridge'
 import { isSlotSticker, slotScreens } from '../src/project/types'
-import type { Project } from '../src/project/types'
+import type { NodesFile, Project, ProjectSet } from '../src/project/types'
 import { renderScene, sceneSpan } from '../src/render/scene'
 import { isChipElement, isStickerElement } from '../src/types'
 import { fitChipText, measureTextBlock, type TextMeasurer } from '../src/render/text'
@@ -42,6 +44,27 @@ function webp(width: number, height: number, rgba: Uint8ClampedArray): Buffer {
   image.data.set(rgba)
   ctx.putImageData(image, 0, 0)
   return canvas.encodeSync('webp', WEBP_QUALITY)
+}
+
+/** Each capture's nodes file, read once; a file that is not JSON comes back as an empty object,
+ *  which `validateProject` then reports as malformed. */
+export function nodesLookup(repoRoot: string, set: ProjectSet): NodesLookup {
+  const read = new Map<string, NodesFile | null>()
+  return (localeId, screen) => {
+    const path = join(repoRoot, nodesPath(set, localeId, screen))
+    if (!read.has(path)) {
+      let file: NodesFile | null = null
+      if (existsSync(path)) {
+        try {
+          file = JSON.parse(readFileSync(path, 'utf8')) as NodesFile
+        } catch {
+          file = {} as NodesFile
+        }
+      }
+      read.set(path, file)
+    }
+    return read.get(path)!
+  }
 }
 
 function pick<T extends { id: string }>(all: T[], wanted: string[] | undefined, kind: string): T[] {
@@ -82,6 +105,7 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
   // One render pass owns each output folder: clearing per locale would wipe what an earlier
   // locale wrote whenever two locales or two targets share a directory.
   const cleared = new Set<string>()
+  const nodes = nodesLookup(repoRoot, set)
 
   for (const locale of locales) {
     const images: Record<string, Image> = {}
@@ -111,7 +135,7 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
         images[id] = await loadImage(art)
       }
     }
-    const screens = screensFor(project, locale.id)
+    const screens = screensFor(project, locale.id, nodes)
 
     for (const target of targets) {
       const settings = settingsFor(project, target.id)

@@ -13,6 +13,9 @@ export interface ProjectStore {
   /** the slot's frameless artwork; absent means the backend serves no artwork at all */
   artworkUrl?(localeId: string, artwork: string): string
   artworkBytes?(localeId: string, artwork: string): Promise<Uint8Array>
+  /** a capture's nodes file next to the screenshot, which effects aim at; rejects when absent.
+   *  Absent method: the backend keeps no captures, and a `node` effect draws nothing. */
+  nodesBytes?(localeId: string, screen: string): Promise<Uint8Array>
   /**
    * Everything the backend has for a locale, so the GUI can offer a choice per frame instead of
    * only the images a slot already names. Filled by `load`; absent means no picker.

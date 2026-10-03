@@ -17,9 +17,28 @@ import { parseMarkup } from '../render/text'
 import { DEFAULT_SETTINGS } from '../store'
 import { OFFSET_LIMIT } from '../types'
 import type { Layout, Offset, Screen, Settings, ShapeKind } from '../types'
-import { DEFAULT_ARTWORK_SOURCES, OUT_FORMATS, artworkPath, sourcePath } from './bridge'
-import { TILE_ROLES, isSlotChip, isSlotShape, isSlotSticker, isStudioSet, slotScreens } from './types'
-import type { Project, ProjectSet, ProjectSlot, SlotElement, SlotSticker } from './types'
+import {
+  DEFAULT_ARTWORK_SOURCES,
+  OUT_FORMATS,
+  artworkPath,
+  isNodeTarget,
+  nodesFileProblem,
+  nodesPath,
+  resolveNode,
+  sourcePath,
+  type NodesLookup,
+} from './bridge'
+import {
+  EFFECT_KINDS,
+  TILE_ROLES,
+  isSlotChip,
+  isSlotEffect,
+  isSlotShape,
+  isSlotSticker,
+  isStudioSet,
+  slotScreens,
+} from './types'
+import type { Project, ProjectSet, ProjectSlot, SlotEffect, SlotElement, SlotSticker } from './types'
 
 /** #rgb, #rrggbb or #rrggbbaa — the same reach as any CSS hex color the renderer's `fillStyle` accepts. */
 const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
@@ -117,6 +136,67 @@ function approxTextBlock(layout: Layout, offset: Offset | undefined): Band {
   return { left: left + dx, right: left + width + dx, top: top + dy, bottom: bottom + dy }
 }
 
+type Range = { min: number; max: number }
+const EFFECT_FIELDS: Record<SlotEffect['effect'], Record<string, Range | readonly string[] | 'hex'>> = {
+  lift: { scale: { min: 1, max: 1.5 }, dim: { min: 0, max: 0.9 }, gray: { min: 0, max: 1 } },
+  loupe: {
+    zoom: { min: 1.2, max: 4 },
+    size: { min: 0.05, max: 0.9 },
+    place: ['over', 'above', 'below', 'left', 'right'],
+    ring: 'hex',
+  },
+  focus: { strength: { min: 0.002, max: 0.05 }, dim: { min: 0, max: 0.9 } },
+  redact: { style: ['pixelate', 'blur'], strength: { min: 0.005, max: 0.1 } },
+}
+const EFFECT_COMMON = new Set(['id', 'effect', 'rect', 'node', 'pad'])
+const PAD_RANGE: Range = { min: 0, max: 0.2 }
+
+/** Everything wrong with one effect's own fields — its target and its settings, not yet whether a
+ *  `node` resolves (that needs each locale's capture). */
+function effectProblems(el: SlotEffect): string[] {
+  const problems: string[] = []
+  const fields = EFFECT_FIELDS[el.effect]
+  if (!fields) return [`unknown effect "${el.effect}"; one of ${EFFECT_KINDS.join(', ')}`]
+  const hasRect = el.rect !== undefined
+  const hasNode = el.node !== undefined
+  if (hasRect === hasNode) problems.push('needs exactly one of rect or node')
+  if (hasNode && !isNodeTarget(el.node))
+    problems.push('node must be a non-empty string or an array of at least two of them')
+  if (hasRect) {
+    const r = el.rect as Record<string, unknown> | null
+    const nums = r && typeof r === 'object' ? [r.x, r.y, r.w, r.h] : []
+    if (nums.length !== 4 || !nums.every((n) => typeof n === 'number' && Number.isFinite(n)))
+      problems.push('rect needs finite numbers x, y, w, h')
+    else {
+      const [x, y, w, h] = nums as number[]
+      if (w <= 0 || h <= 0) problems.push('rect needs w and h above 0')
+      else if (x < 0 || y < 0 || x + w > 1 + 1e-9 || y + h > 1 + 1e-9)
+        problems.push('rect must lie inside the screenshot (fractions 0..1)')
+    }
+  }
+  if (
+    el.pad !== undefined &&
+    !(Number.isFinite(el.pad) && el.pad >= PAD_RANGE.min && el.pad <= PAD_RANGE.max)
+  )
+    problems.push(`pad ${el.pad} outside ${PAD_RANGE.min}–${PAD_RANGE.max}`)
+  for (const [key, value] of Object.entries(el)) {
+    if (value === undefined || EFFECT_COMMON.has(key)) continue
+    const rule = fields[key]
+    if (!rule) problems.push(`field ${key} does not apply to a ${el.effect}`)
+    else if (rule === 'hex') {
+      if (typeof value !== 'string' || !HEX_COLOR.test(value))
+        problems.push(`${key} is not a hex colour: ${value}`)
+    } else if (Array.isArray(rule)) {
+      if (!rule.includes(value as string)) problems.push(`${key} must be one of ${rule.join(', ')}`)
+    } else {
+      const range = rule as Range
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < range.min || value > range.max)
+        problems.push(`${key} ${value} outside ${range.min}–${range.max}`)
+    }
+  }
+  return problems
+}
+
 const boxesOverlap = (a: Band, b: Band) =>
   a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 const within = (a: Band, b: Band) =>
@@ -137,6 +217,8 @@ export function validateProject(
   /** Where a slot's text block really lands, per locale, for every target; absent, the headline
    *  checks fall back to `approxTextBlock`. */
   textBlocks: ((localeId: string, slotId: string) => TextBlockProbe[]) | null = null,
+  /** The capture's nodes for one locale's screen, which an effect's `node` is looked up in. */
+  nodes: NodesLookup = () => null,
 ): Issue[] {
   const { set, copies } = project
   const issues: Issue[] = []
@@ -316,8 +398,34 @@ export function validateProject(
         { slot: slot.id },
       )
 
+    const effects = elements.filter(isSlotEffect)
+    if (effects.length) {
+      if (slot.kind === 'artwork')
+        error('An effect needs a screen slot; an artwork slot has no screenshot', { slot: slot.id })
+      else if (layout.deviceless || layout.id === 'mosaic')
+        issues.push({
+          level: 'warn',
+          message: `Layout "${layout.id}" draws no device screen; effects unused`,
+          slot: slot.id,
+        })
+      else if (!position.placements.some((p) => p.source === 'self' && !p.frameless))
+        issues.push({
+          level: 'warn',
+          message: `Arrangement ${position.id} frames no own screen; effects unused`,
+          slot: slot.id,
+        })
+    }
+
     const elementIds = new Set<string>()
     for (const el of elements) {
+      if (isSlotEffect(el)) {
+        if (elementIds.has(el.id)) error(`Duplicate effect id ${el.id}`, { slot: slot.id })
+        elementIds.add(el.id)
+        if (['artwork', 'shape', 'chip'].some((k) => k in el))
+          error(`Element ${el.id} must be exactly one of artwork, shape, chip or effect`, { slot: slot.id })
+        for (const problem of effectProblems(el)) error(`Effect ${el.id}: ${problem}`, { slot: slot.id })
+        continue
+      }
       const kind = isSlotShape(el) ? 'shape' : isSlotChip(el) ? 'chip' : 'sticker'
       const label = kind === 'shape' ? 'Shape' : kind === 'chip' ? 'Chip' : 'Sticker'
       if (elementIds.has(el.id)) error(`Duplicate ${kind} id ${el.id}`, { slot: slot.id })
@@ -402,6 +510,32 @@ export function validateProject(
               artworkPerLocale ? { slot: slot.id, locale: locale.id } : { slot: slot.id },
             )
         }
+      }
+      // A position only ever comes from the real screen: a node that is missing, ambiguous or
+      // has no capture behind it fails here instead of being drawn somewhere guessed.
+      const nodeEffects = elementsOf
+        .get(slot.id)!
+        .filter(isSlotEffect)
+        .filter((el) => isNodeTarget(el.node) && el.rect === undefined)
+      if (nodeEffects.length && slot.kind !== 'artwork' && slot.screen) {
+        const file = nodes(locale.id, slot.screen)
+        const problem = file ? nodesFileProblem(file) : null
+        if (!file)
+          error(`Nodes file missing: ${nodesPath(set, locale.id, slot.screen)}`, {
+            slot: slot.id,
+            locale: locale.id,
+          })
+        else if (problem)
+          error(`Nodes file ${nodesPath(set, locale.id, slot.screen)} ${problem}`, {
+            slot: slot.id,
+            locale: locale.id,
+          })
+        else
+          for (const el of nodeEffects) {
+            const resolved = resolveNode(file, el.node!)
+            if ('error' in resolved)
+              error(`Effect ${el.id}: ${resolved.error}`, { slot: slot.id, locale: locale.id })
+          }
       }
       // An artwork slot may be a pure visual with no copy at all; a store 'screen' slot always needs
       // one. A studio picture may be the screen alone.

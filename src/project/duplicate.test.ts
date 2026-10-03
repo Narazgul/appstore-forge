@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { duplicateProject, rewriteTargetOut, SET_ID_RE } from './duplicate'
 import { validateProject } from './validate'
-import type { Project } from './types'
+import type { Project, SlotSticker } from './types'
 
 const twoTargetProject = (): Project => ({
   set: {
@@ -144,11 +144,11 @@ describe('duplicateProject', () => {
     result.set.slots[0].overrides.layout = 'hero'
     result.copies.en.a.headline = 'Mutated'
     result.set.settings.background = { kind: 'solid', color: '#000000' }
-    result.set.slots[0].elements![0].x = 0.9
+    ;(result.set.slots[0].elements![0] as SlotSticker).x = 0.9
     expect(original.set.slots[0].overrides.layout).toBe('text-top')
     expect(original.copies.en.a.headline).toBe('Hello *world*')
     expect(original.set.settings.background).toEqual({ kind: 'solid', color: '#eaf2ff' })
-    expect(original.set.slots[0].elements![0].x).toBe(0.5)
+    expect((original.set.slots[0].elements![0] as SlotSticker).x).toBe(0.5)
   })
 
   it('produces a project that still validates (the kept slot note is a warning, not an error)', () => {

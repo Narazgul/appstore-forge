@@ -80,13 +80,96 @@ export type SlotChip = SlotElementBase & {
   shadow?: boolean
 }
 
-/** Exactly one of `artwork` (a sticker), `shape` (a deco shape) or `chip` (a text pill) — never
- *  more than one, never none; `validateProject` enforces it. */
-export type SlotElement = SlotSticker | SlotShape | SlotChip
+/** A part of the slot's own screenshot, as fractions of its width (`x`, `w`) and height (`y`, `h`). */
+export type EffectRect = { x: number; y: number; w: number; h: number }
+
+/**
+ * An effect works on the slot's own screenshot inside its device, not on the composition, so it
+ * has no position, size, turn or layer of its own. It targets exactly one of `rect` (by hand) or
+ * `node` (one name or several, looked up in the capture's `<screen>.nodes.json`: first `tag`, then `text`, then `desc`,
+ * each exact; no match or several on one step is an error, never a guess).
+ */
+type SlotEffectBase = {
+  id: string
+  rect?: EffectRect
+  /** several names target the rectangle around all their nodes */
+  node?: string | string[]
+  /** margin around the target on every side, as a fraction of the screenshot width; default 0 */
+  pad?: number
+}
+
+/** Lifts the target out of the device, slightly enlarged and with a shadow; the rest recedes. */
+export type SlotLift = SlotEffectBase & {
+  effect: 'lift'
+  /** default 1.08 */
+  scale?: number
+  /** how far the rest of the screen darkens, 0–0.9; default 0.35 */
+  dim?: number
+  /** how far the rest of the screen loses its colour, 0–1; default 0 */
+  gray?: number
+}
+
+export type LoupePlace = 'over' | 'above' | 'below' | 'left' | 'right'
+
+/** A round magnifier over or beside the target. */
+export type SlotLoupe = SlotEffectBase & {
+  effect: 'loupe'
+  /** default 2 */
+  zoom?: number
+  /** diameter as a fraction of the tile width; default: the magnified target, within 0.18–0.45 */
+  size?: number
+  /** default 'over' */
+  place?: LoupePlace
+  /** rim colour, hex; default '#ffffff' */
+  ring?: string
+}
+
+/** Blurs everything on the screen except the target. */
+export type SlotFocus = SlotEffectBase & {
+  effect: 'focus'
+  /** blur radius as a fraction of the screenshot width; default 0.012 */
+  strength?: number
+  /** darkens the blurred rest, 0–0.9; default 0 */
+  dim?: number
+}
+
+export type RedactStyle = 'pixelate' | 'blur'
+
+/** Makes the target unreadable for good: whatever samples the screen afterwards sees it redacted. */
+export type SlotRedact = SlotEffectBase & {
+  effect: 'redact'
+  /** default 'pixelate' */
+  style?: RedactStyle
+  /** block size (pixelate) or blur radius (blur), fraction of the screenshot width; default 0.03 */
+  strength?: number
+}
+
+export type SlotEffect = SlotLift | SlotLoupe | SlotFocus | SlotRedact
+export type EffectKind = SlotEffect['effect']
+export const EFFECT_KINDS: EffectKind[] = ['lift', 'loupe', 'focus', 'redact']
+
+/** Exactly one of `artwork` (a sticker), `shape` (a deco shape), `chip` (a text pill) or `effect`
+ *  — never more than one, never none; `validateProject` enforces it. */
+export type SlotElement = SlotSticker | SlotShape | SlotChip | SlotEffect
+
+/** A placed element: everything but an effect, which has no place of its own on the tile. */
+export type SlotPlaced = SlotSticker | SlotShape | SlotChip
 
 export const isSlotShape = (el: SlotElement): el is SlotShape => 'shape' in el
 export const isSlotChip = (el: SlotElement): el is SlotChip => 'chip' in el
 export const isSlotSticker = (el: SlotElement): el is SlotSticker => 'artwork' in el
+export const isSlotEffect = (el: SlotElement): el is SlotEffect => 'effect' in el
+export const isSlotPlaced = (el: SlotElement): el is SlotPlaced => !('effect' in el)
+
+/** What a capture writes next to its screenshot: every node with its bounds in the capture's pixels. */
+export type CaptureNode = {
+  tag?: string
+  text?: string
+  desc?: string
+  /** [left, top, right, bottom] */
+  bounds: [number, number, number, number]
+}
+export type NodesFile = { width: number; height: number; nodes: CaptureNode[] }
 export type ProjectSlot = {
   id: string
   kind: SlotKind

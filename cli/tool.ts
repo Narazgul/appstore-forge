@@ -8,6 +8,7 @@ import { sceneSpan } from '../src/render/scene'
 import { checkCommand, renderCommand } from './commands'
 import { listSets, readGallery, readProject, repoRootOf, writeProject } from './project-io'
 import { renderProject } from './render'
+import { runCapture } from './capture'
 
 export const GUIDELINES_FILE = 'guidelines.md'
 
@@ -70,6 +71,7 @@ export function fileHost(projectDir: string): ToolHost {
     },
     render: (setId, { locales, targets, requireApproval }) =>
       renderCommand({ projectDir, setId, localeIds: locales, targetIds: targets, requireApproval }),
+    capture: (opts) => runCapture(projectDir, opts),
     async readGuidelines() {
       return existsSync(guidelines) ? readFile(guidelines, 'utf8') : null
     },

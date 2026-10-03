@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { effectiveSettings } from '../src/lib/settings'
 import { getLayout } from '../src/presets/layouts'
 import { getSize } from '../src/presets/sizes'
-import { artworkPath, screensFor, settingsFor, sourcePath } from '../src/project/bridge'
+import { artworkPath, nodesPath, screensFor, settingsFor, sourcePath } from '../src/project/bridge'
 import { approvalHash } from '../src/project/hash'
 import { isSlotSticker, isStudioSet } from '../src/project/types'
 import type { Approval, Project } from '../src/project/types'
@@ -23,7 +23,7 @@ import type { Screen } from '../src/types'
 import { CliError } from './errors'
 import { registerFonts } from './fonts'
 import { readProject, repoRootOf, writeProject } from './project-io'
-import { renderProject } from './render'
+import { nodesLookup, renderProject } from './render'
 
 /**
  * Whether each slot's eyebrow fits its box on one line, per locale, at the size the block
@@ -174,7 +174,11 @@ async function load(projectDir: string, setId: string) {
     existsSync(join(repoRoot, artworkPath(project.set, locale, artwork)))
   const artBytes = async (locale: string, artwork: string) =>
     new Uint8Array(await readFile(join(repoRoot, artworkPath(project.set, locale, artwork))))
-  return { repoRoot, project, exists, bytes, artExists, artBytes }
+  const nodesBytes = async (locale: string, screen: string) => {
+    const path = join(repoRoot, nodesPath(project.set, locale, screen))
+    return existsSync(path) ? new Uint8Array(await readFile(path)) : new Uint8Array()
+  }
+  return { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes }
 }
 
 function assertValid(issues: Issue[]) {
@@ -184,13 +188,16 @@ function assertValid(issues: Issue[]) {
 
 type Bytes = (a: string, b: string) => Promise<Uint8Array>
 
-async function approvalMatches(project: Project, bytes: Bytes, artBytes: Bytes) {
+async function approvalMatches(project: Project, bytes: Bytes, artBytes: Bytes, nodesBytes: Bytes) {
   if (!project.set.approval) return false
-  return (await approvalHash(project, bytes, artBytes)) === project.set.approval.hash
+  return (await approvalHash(project, bytes, artBytes, nodesBytes)) === project.set.approval.hash
 }
 
 export async function checkCommand(opts: { projectDir: string; setId: string; requireApproval: boolean }) {
-  const { repoRoot, project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes } = await load(
+    opts.projectDir,
+    opts.setId,
+  )
   const issues = validateProject(
     project,
     exists,
@@ -199,11 +206,12 @@ export async function checkCommand(opts: { projectDir: string; setId: string; re
     await elementAspectChecker(project, repoRoot),
     listFitsChecker(project),
     textBlockChecker(project),
+    nodesLookup(repoRoot, project.set),
   )
   // A studio set carries no stamp: there is nothing to approve it for.
   const approvalOk =
     opts.requireApproval && !isStudioSet(project.set) && !issues.some((i) => i.level === 'error')
-      ? await approvalMatches(project, bytes, artBytes)
+      ? await approvalMatches(project, bytes, artBytes, nodesBytes)
       : null
   return { issues, approvalOk }
 }
@@ -215,7 +223,10 @@ export async function renderCommand(opts: {
   localeIds?: string[]
   requireApproval: boolean
 }) {
-  const { repoRoot, project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes } = await load(
+    opts.projectDir,
+    opts.setId,
+  )
   assertValid(
     validateProject(
       project,
@@ -225,12 +236,13 @@ export async function renderCommand(opts: {
       await elementAspectChecker(project, repoRoot),
       listFitsChecker(project),
       textBlockChecker(project),
+      nodesLookup(repoRoot, project.set),
     ),
   )
   if (
     opts.requireApproval &&
     !isStudioSet(project.set) &&
-    !(await approvalMatches(project, bytes, artBytes))
+    !(await approvalMatches(project, bytes, artBytes, nodesBytes))
   ) {
     throw new CliError(
       project.set.approval
@@ -247,7 +259,10 @@ export async function approveCommand(opts: {
   setId: string
   by: string
 }): Promise<Approval> {
-  const { repoRoot, project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes } = await load(
+    opts.projectDir,
+    opts.setId,
+  )
   if (isStudioSet(project.set)) throw new CliError('A studio set carries no approval; render it directly.', 1)
   assertValid(
     validateProject(
@@ -258,10 +273,11 @@ export async function approveCommand(opts: {
       await elementAspectChecker(project, repoRoot),
       listFitsChecker(project),
       textBlockChecker(project),
+      nodesLookup(repoRoot, project.set),
     ),
   )
   const approval: Approval = {
-    hash: await approvalHash(project, bytes, artBytes),
+    hash: await approvalHash(project, bytes, artBytes, nodesBytes),
     by: opts.by,
     at: new Date().toISOString(),
   }

@@ -18,6 +18,7 @@ import { effectiveSettings } from '../lib/settings'
 import type { SceneSources } from '../render/scene'
 import { orientedCorners, sceneTargets, targetKey, type SceneTarget } from '../render/targets'
 import { useStore } from '../store'
+import { isPlacedElement } from '../types'
 import type { Screen, Settings } from '../types'
 
 /** Side of a square handle, and how close a press must land to take it, in CSS pixels. */
@@ -184,7 +185,10 @@ export function CanvasEditor({
       e.preventDefault()
       const t = now.selected
       const effective = effectiveSettings(now.screen, now.settings)
-      const element = t.kind === 'element' ? now.screen.elements?.find((el) => el.id === t.id) : undefined
+      const element =
+        t.kind === 'element'
+          ? now.screen.elements?.filter(isPlacedElement).find((el) => el.id === t.id)
+          : undefined
       if (t.kind === 'element' && !element) return
       const edit = nudgeEdit(t, effective, element, dir, e.shiftKey, { span: now.span })
       const resolved: CanvasEdit =
@@ -220,7 +224,10 @@ export function CanvasEditor({
         target: t,
         origin: p,
         effective: effectiveSettings(screen, settings),
-        element: t.kind === 'element' ? screen.elements?.find((el) => el.id === t.id) : undefined,
+        element:
+          t.kind === 'element'
+            ? screen.elements?.filter(isPlacedElement).find((el) => el.id === t.id)
+            : undefined,
       },
       e.pointerId,
       { x: e.clientX, y: e.clientY },

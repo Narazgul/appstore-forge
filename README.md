@@ -716,7 +716,7 @@ forge tool update_slot --project ./studio --json @patch.json
 | `add_slot`, `remove_slot`, `update_slot`              | tiles: source images, overrides (`null` = inherit again), note, role |
 | `update_settings`, `update_target`                    | the set-wide look; a target's size or device                         |
 | `set_copy`                                            | one locale's headline, subhead, eyebrow, list, chip texts            |
-| `add_element`, `update_element`, `remove_element`     | stickers, shapes, chips                                              |
+| `add_element`, `update_element`, `remove_element`     | stickers, shapes, chips, screen effects (lift, loupe, focus, redact) |
 | `check`, `preview`, `render`                          | validate; PNGs into a scratch folder to look at; the real render     |
 | `guidelines`, `remember`                              | read `guidelines.md`; append a dated design rule to it               |
 
@@ -726,6 +726,91 @@ judgement. The result is JSON on stdout, a refused call prints `{ "error": … }
 
 **`guidelines.md`** in the project folder holds the project's design rules, one dated line each
 (`remember` appends one). It changes no pixel and is not part of the approval hash.
+
+### Screenshots with positions: `forge capture`
+
+Takes a screenshot of the debug app on an Android device and writes the position of every
+element next to it, so effects and arrows can aim at a `testTag` instead of guessing from pixels.
+
+```bash
+forge capture --project ./studio --serial emulator-5554 --out aufnahmen/de/budget --screen budget
+forge capture --project ./studio --serial emulator-5554 --out aufnahmen/de/budget --seed --store google --screen budget
+forge capture --project ./studio --serial emulator-5554 --out aufnahmen/de/liga --call dev_goto_screen --args '{"screen":"league"}'
+```
+
+Steps, in this order: forward the dev MCP port (`adb forward tcp:<port> tcp:8765`), run the dev
+MCP calls (`--seed` = `dev_seed_screenshot_data` with a five minute limit, `--screen` =
+`dev_goto_screen`, then every `--call <tool> [--args '<json>']`), wait `--settle` ms (default 1500),
+put the status bar into demo mode (9:41, full battery, full Wi-Fi and mobile signal, no
+notification icons), `adb exec-out screencap -p` to `<out>.png`, `uiautomator dump` to
+`<out>.nodes.json`, leave demo mode (also when something failed). Every adb call carries `-s <serial>`.
+
+| Option                    | Meaning                                                                   |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `--out <path>`            | PNG path relative to the project folder; `.png` is added. Required.       |
+| `--serial <id>`           | adb serial. Required, or set `FORGE_ADB_SERIAL`.                          |
+| `--port <n>`              | Local dev MCP port, default 8765 (or `FORGE_DEV_MCP_PORT`).               |
+| `--screen <name>`         | `dev_goto_screen`.                                                        |
+| `--seed`, `--store <s>`   | `dev_seed_screenshot_data`, optionally `apple` or `google`.               |
+| `--call`, `--args <json>` | Any dev MCP tool; `--args` belongs to the `--call` before it. Repeatable. |
+| `--settle <ms>`           | Wait before the shot. Default 1500.                                       |
+
+`<out>.nodes.json`:
+
+```json
+{ "width": 1080, "height": 2400, "nodes": [{ "tag": "emergency_bar", "text": "…", "desc": "…", "bounds": [l, t, r, b] }] }
+```
+
+`tag` is the resource-id (a Compose `testTag` when the app sets `testTagsAsResourceId` at its
+root; a `pkg:id/` prefix is cut off), `desc` the content description. Only nodes with at least one
+of the three and an area are kept, in dump order. The dev MCP is spoken to over its SSE transport
+(`GET /`, the `endpoint` event, JSON-RPC posts, answers on the stream) by a small client in
+`cli/capture.ts`, not the MCP SDK, which is not a dependency of the fork. The same operation is
+the tool `capture` (`forge tool capture --json …`); it exists only in the CLI host, because it
+needs adb. Android only.
+
+### Effects on the screen: lift, loupe, focus, redact
+
+Four element kinds work on a slot's own screenshot inside its device, so a picture can show
+exactly one thing. They sit in `elements` like stickers, but carry `effect` instead of
+`artwork`/`shape`/`chip` and have no `x`, `y`, `width`, `rotate` or `layer`:
+
+```json
+"elements": [
+  { "id": "up",    "effect": "lift",   "node": "emergency_bar", "pad": 0.01, "scale": 1.08, "dim": 0.35, "gray": 0 },
+  { "id": "row",   "effect": "lift",   "node": ["🏠", "Rent", "$1,000"], "pad": 0.01 },
+  { "id": "glass", "effect": "loupe",  "node": "balance_amount", "zoom": 2, "place": "right", "ring": "#ffffff" },
+  { "id": "sharp", "effect": "focus",  "rect": { "x": 0, "y": 0.3, "w": 1, "h": 0.12 }, "strength": 0.012, "dim": 0 },
+  { "id": "iban",  "effect": "redact", "node": "account_iban", "style": "pixelate", "strength": 0.03 }
+]
+```
+
+| Effect   | Does                                                                    | Own fields (default)                                                                                                                    |
+| -------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `lift`   | raises the target, enlarged and with a shadow; may reach past the frame | `scale` 1–1.5 (1.08), `dim` 0–0.9 (0.35) and `gray` 0–1 (0) for the rest of the screen                                                  |
+| `loupe`  | a round glass with the target magnified, over it or beside it           | `zoom` 1.2–4 (2), `size` 0.05–0.9 of the tile width (from the target), `place` over/above/below/left/right (over), `ring` hex (#ffffff) |
+| `focus`  | everything but the target blurred                                       | `strength` blur radius 0.002–0.05 of the screenshot width (0.012), `dim` 0–0.9 (0)                                                      |
+| `redact` | the target pixelated or blurred for good                                | `style` pixelate/blur (pixelate), `strength` block size or radius 0.005–0.1 (0.03)                                                      |
+
+**The target** is exactly one of `rect` (fractions of the screenshot: `x`, `w` of its width, `y`,
+`h` of its height) or `node`, looked up in the capture's `nodes.json` next to the screenshot (the
+source path with `.nodes.json` for its extension, the file `forge capture` writes): first an exact
+`tag`, then an exact `text`, then an exact `desc`. `node` may also be a list of at least two names, for a row the
+app draws as several text nodes: each is resolved by the same rules, every one must resolve, and
+the target is the rectangle around all of them (`pad` comes on top). A node that matches nothing, several nodes on
+the step that matched first, or a missing nodes file is an error in `forge check` (per locale) and
+the effect is not drawn; a position is never guessed. `pad` (0–0.2, a fraction of the screenshot
+width) adds a margin on every side.
+
+Redact and focus happen once on the screenshot at its own resolution, in integer steps, so every
+render is byte-identical in the CLI and the editor. Whatever samples the screen afterwards — the
+lifted part, the loupe — sees the redaction. Effects draw on the slot's own framed screen (the
+first `self` placement), turn with the device, and sit under the front stickers. On a deviceless
+layout, on `mosaic` or in an arrangement without its own framed screen they draw nothing
+(warning); on an artwork slot they are an error. A set without effects renders and hashes exactly
+as before; the effect fields are part of the approval hash, and so are the nodes file bytes of
+every slot whose effect aims at a `node`. In the editor effects render and are listed in the
+Stickers panel (reorder, remove); dragging them is not built yet.
 
 ### The four commands
 

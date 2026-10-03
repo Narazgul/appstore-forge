@@ -123,11 +123,35 @@ export type ChipElement = SceneElementBase & {
   shadow: boolean
 }
 
-export type SceneElement = StickerElement | ShapeElement | ChipElement
+/** A part of the screenshot, as fractions of its width (`x`, `w`) and height (`y`, `h`). */
+export type ScreenRect = { x: number; y: number; w: number; h: number }
+
+/** Every field resolved: `rect` is already looked up from a capture's nodes when the slot named
+ *  one, `pad` (a fraction of the screenshot width) is applied by the renderer, which knows the
+ *  image's pixel size. */
+type EffectBase = { id: string; rect: ScreenRect; pad: number }
+export type LiftEffect = EffectBase & { effect: 'lift'; scale: number; dim: number; gray: number }
+export type LoupeEffect = EffectBase & {
+  effect: 'loupe'
+  zoom: number
+  /** fraction of the tile width; undefined sizes the loupe from the magnified target */
+  size?: number
+  place: 'over' | 'above' | 'below' | 'left' | 'right'
+  ring: string
+}
+export type FocusEffect = EffectBase & { effect: 'focus'; strength: number; dim: number }
+export type RedactEffect = EffectBase & { effect: 'redact'; style: 'pixelate' | 'blur'; strength: number }
+export type EffectElement = LiftEffect | LoupeEffect | FocusEffect | RedactEffect
+
+export type SceneElement = StickerElement | ShapeElement | ChipElement | EffectElement
+/** Everything with a place of its own on the tile — every element but an effect. */
+export type PlacedElement = StickerElement | ShapeElement | ChipElement
 
 export const isShapeElement = (el: SceneElement): el is ShapeElement => 'shape' in el
 export const isChipElement = (el: SceneElement): el is ChipElement => 'text' in el
 export const isStickerElement = (el: SceneElement): el is StickerElement => 'imageId' in el
+export const isEffectElement = (el: SceneElement): el is EffectElement => 'effect' in el
+export const isPlacedElement = (el: SceneElement): el is PlacedElement => !('effect' in el)
 /** Whether turning an element shows — a circle or a ring looks the same at every angle, so neither
  *  the canvas (turn handle) nor the Stickers panel (Rotate slider) offers one. Scene or slot element. */
 export const turnsVisibly = (el: object): boolean => !('shape' in el) || el.shape === 'blob'

@@ -1,7 +1,7 @@
 import { DEFAULT_CHIP_SIZE } from '../project/bridge'
 import type { OrientedBox, SceneTarget } from '../render/targets'
 import { OFFSET_LIMIT } from '../types'
-import type { Offset, SceneElement, Screen, Settings } from '../types'
+import type { Offset, PlacedElement, SceneElement, Screen, Settings } from '../types'
 
 /**
  * The editor's direct manipulation, as pure functions: pointer → scene pixels, what a click hits,
@@ -228,7 +228,7 @@ export type Gesture = {
   target: SceneTarget
   origin: Pt
   effective: Settings
-  element?: SceneElement
+  element?: PlacedElement
 }
 
 export type Modifiers = { shift?: boolean; alt?: boolean }
@@ -378,7 +378,7 @@ export class GestureSession {
 export function nudgeEdit(
   t: SceneTarget,
   effective: Settings,
-  element: SceneElement | undefined,
+  element: PlacedElement | undefined,
   dir: Pt,
   big: boolean,
   { span }: Pick<Dims, 'span'>,

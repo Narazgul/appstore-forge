@@ -4,13 +4,14 @@ import type { CanvasEdit, CanvasOverrides } from './lib/canvasEdit'
 import { preloadScriptFonts } from './presets/fonts'
 import { getRhythm, rhythmStep } from './presets/rhythms'
 import { getTemplateSpec } from './presets/templates'
-import { artworkIdFor, imageIdFor, screensFor, settingsFor } from './project/bridge'
+import { artworkIdFor, imageIdFor, screensFor, settingsFor, type NodesLookup } from './project/bridge'
 import { approvalContent, approvalHash } from './project/hash'
 import { EMPTY_GALLERY } from './project/store'
 import type { Gallery, ProjectStore } from './project/store'
-import { isSlotChip, isSlotSticker } from './project/types'
+import { isSlotChip, isSlotEffect, isSlotPlaced, isSlotSticker } from './project/types'
 import type {
   Approval,
+  NodesFile,
   Project,
   ProjectCopies,
   ProjectSettings,
@@ -161,7 +162,7 @@ export function projectAfterCanvasEdit(project: Project, slotId: string, edit: C
     return overrides ? projectAfterOverride(project, slotId, overrides) : null
   }
   const elements = slot.elements ?? []
-  const current = elements.find((el) => el.id === edit.id)
+  const current = elements.filter(isSlotPlaced).find((el) => el.id === edit.id)
   if (!current) return null
   const changed = changedElementFields(current, edit.fields)
   if (!changed) return null
@@ -405,6 +406,8 @@ export function projectAfterSlotRemoval(project: Project, slotId: string): Proje
 type State = {
   screens: Screen[]
   images: Record<string, HTMLImageElement>
+  /** capture nodes keyed like `images`, for effects that aim at a `node` */
+  nodes: Record<string, NodesFile>
   settings: Settings
   /** last template applied; new screens pick up its variant cycle */
   templateId: string
@@ -540,6 +543,39 @@ async function loadProjectImages(
   return images
 }
 
+/** The capture nodes of every slot whose effects aim at a `node`, keyed like its screenshot. A
+ *  missing or broken file stays absent; the effect then draws nothing and `forge check` says why. */
+async function loadProjectNodes(project: Project, store: ProjectStore): Promise<Record<string, NodesFile>> {
+  const nodesBytes = store.nodesBytes?.bind(store)
+  if (!nodesBytes) return {}
+  const rows = project.set.locales.flatMap((l) =>
+    project.set.slots
+      .filter((s) => s.screen && (s.elements ?? []).some((el) => isSlotEffect(el) && el.node !== undefined))
+      .map((s) => ({ id: imageIdFor(l.id, s.screen!), localeId: l.id, screen: s.screen! })),
+  )
+  const results = await Promise.allSettled(
+    rows.map(
+      async (r) => JSON.parse(new TextDecoder().decode(await nodesBytes(r.localeId, r.screen))) as NodesFile,
+    ),
+  )
+  const nodes: Record<string, NodesFile> = {}
+  results.forEach((result, i) => {
+    if (result.status === 'fulfilled') nodes[rows[i].id] = result.value
+  })
+  return nodes
+}
+
+export const nodesLookupOf =
+  (nodes: Record<string, NodesFile>): NodesLookup =>
+  (localeId, screen) =>
+    nodes[imageIdFor(localeId, screen)] ?? null
+
+/** A backend without the nodes file answers with no bytes, exactly as the CLI does. */
+const nodesBytesOf = (store: ProjectStore) =>
+  store.nodesBytes
+    ? (localeId: string, screen: string) => store.nodesBytes!(localeId, screen).catch(() => new Uint8Array())
+    : undefined
+
 /**
  * Loads images the set newly points at into the registry, for EVERY language: the set is shared,
  * so a picture that only reached the active locale would leave a hole on the next switch.
@@ -662,7 +698,7 @@ function applySnapshot(state: State, snapshot: HistorySnapshot): Partial<State> 
   if (snapshot.mode === 'freeform') return { screens: snapshot.screens, settings: snapshot.settings }
   if (!state.project) return {}
   const derived = (project: Project): Partial<State> => ({
-    screens: screensFor(project, state.localeId),
+    screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
     settings: project.set.targets.some((t) => t.id === state.targetId)
       ? settingsFor(project, state.targetId)
       : state.settings,
@@ -727,6 +763,7 @@ export const OUTSIDE_CHANGE =
 export const useStore = create<State>((set, get) => ({
   screens: [],
   images: {},
+  nodes: {},
   settings: DEFAULT_SETTINGS,
   templateId: 'classic',
   rhythmId: 'uniform',
@@ -758,7 +795,10 @@ export const useStore = create<State>((set, get) => ({
       copies: state.project.copies,
     }
     set({
-      ...mutated(state, project, { rhythmId: rhythm.id, screens: screensFor(project, state.localeId) }),
+      ...mutated(state, project, {
+        rhythmId: rhythm.id,
+        screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
+      }),
       ...pushHistory(state, 'rhythm'),
     })
     scheduleSave(get)
@@ -774,7 +814,7 @@ export const useStore = create<State>((set, get) => ({
         ...mutated(state, project, {
           templateId: template.id,
           rhythmId,
-          screens: screensFor(project, state.localeId),
+          screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
           settings: settingsFor(project, state.targetId),
         }),
         ...pushHistory(state, 'template'),
@@ -996,7 +1036,9 @@ export const useStore = create<State>((set, get) => ({
     const project = projectAfterCanvasEdit(state.project, slotId, edit)
     if (!project) return
     set({
-      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...mutated(state, project, {
+        screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
+      }),
       ...pushHistory(state, historyKind),
     })
     scheduleSave(get)
@@ -1042,6 +1084,7 @@ export const useStore = create<State>((set, get) => ({
     const project = await store.load()
     await preloadScriptFonts(project.set.locales.map((l) => l.id))
     const images = await loadProjectImages(project, store)
+    const nodes = await loadProjectNodes(project, store)
     const localeId = project.set.locales[0]?.id ?? 'en'
     const targetId = project.set.targets[0]?.id ?? ''
     set({
@@ -1049,9 +1092,10 @@ export const useStore = create<State>((set, get) => ({
       projectStore: store,
       gallery: readGalleries(project, store),
       images,
+      nodes,
       localeId,
       targetId,
-      screens: screensFor(project, localeId),
+      screens: screensFor(project, localeId, nodesLookupOf(nodes)),
       settings: settingsFor(project, targetId),
       selectedId: null,
       step: 'shots',
@@ -1078,6 +1122,7 @@ export const useStore = create<State>((set, get) => ({
     const project = await store.load()
     await preloadScriptFonts(project.set.locales.map((l) => l.id))
     const images = await loadProjectImages(project, store)
+    const nodes = await loadProjectNodes(project, store)
     const state = get()
     const localeId = project.set.locales.some((l) => l.id === state.localeId)
       ? state.localeId
@@ -1089,9 +1134,10 @@ export const useStore = create<State>((set, get) => ({
       project,
       gallery: readGalleries(project, store),
       images,
+      nodes,
       localeId,
       targetId,
-      screens: screensFor(project, localeId),
+      screens: screensFor(project, localeId, nodesLookupOf(nodes)),
       settings: settingsFor(project, targetId),
       selectedId: project.set.slots.some((s) => s.id === state.selectedId) ? state.selectedId : null,
       // Someone else wrote the set; old undo/redo snapshots would restore over their change.
@@ -1102,7 +1148,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setLocale: (localeId) =>
-    set((state) => (state.project ? { localeId, screens: screensFor(state.project, localeId) } : state)),
+    set((state) =>
+      state.project
+        ? { localeId, screens: screensFor(state.project, localeId, nodesLookupOf(state.nodes)) }
+        : state,
+    ),
 
   setTarget: (targetId) =>
     set((state) => (state.project ? { targetId, settings: settingsFor(state.project, targetId) } : state)),
@@ -1112,7 +1162,9 @@ export const useStore = create<State>((set, get) => ({
     if (!state.project) return
     const project = projectAfterScreenPatch(state.project, localeId, slotId, patch)
     set({
-      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...mutated(state, project, {
+        screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
+      }),
       ...pushHistory(state, `copy:${localeId}:${slotId}:${sortedKeys(patch)}`),
     })
     scheduleSave(get)
@@ -1123,7 +1175,9 @@ export const useStore = create<State>((set, get) => ({
     if (!state.project) return
     const project = projectAfterChipPatch(state.project, localeId, slotId, chipId, text)
     set({
-      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...mutated(state, project, {
+        screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
+      }),
       ...pushHistory(state, `chip:${localeId}:${slotId}:${chipId}`),
     })
     scheduleSave(get)
@@ -1152,7 +1206,9 @@ export const useStore = create<State>((set, get) => ({
     if (!state.project || !store) return
     const project = projectAfterSlotSource(state.project, slotId, role, name)
     set({
-      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...mutated(state, project, {
+        screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
+      }),
       ...pushHistory(state, `slotSource:${slotId}:${role}`),
     })
     scheduleSave(get)
@@ -1167,7 +1223,9 @@ export const useStore = create<State>((set, get) => ({
     if (!state.project || !store) return
     const project = projectAfterSlotElements(state.project, slotId, elements)
     set({
-      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...mutated(state, project, {
+        screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
+      }),
       ...pushHistory(state, `elements:${slotId}`),
     })
     scheduleSave(get)
@@ -1186,7 +1244,9 @@ export const useStore = create<State>((set, get) => ({
     if (!state.project || !store) return
     const project = projectAfterSlotExtra(state.project, slotId, extra)
     set({
-      ...mutated(state, project, { screens: screensFor(project, state.localeId) }),
+      ...mutated(state, project, {
+        screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
+      }),
       ...pushHistory(state, `extra:${slotId}`),
     })
     scheduleSave(get)
@@ -1211,7 +1271,7 @@ export const useStore = create<State>((set, get) => ({
     const project = projectAfterSlotAdd(state.project, id, screen)
     set({
       ...mutated(state, project, {
-        screens: screensFor(project, state.localeId),
+        screens: screensFor(project, state.localeId, nodesLookupOf(state.nodes)),
         selectedId: id,
         lastError: null,
       }),
@@ -1240,6 +1300,7 @@ export const useStore = create<State>((set, get) => ({
       project,
       (l, s) => projectStore.sourceBytes(l, s),
       projectStore.artworkBytes?.bind(projectStore),
+      nodesBytesOf(projectStore),
     )
     // An edit while the hash was computing wins; approving the older project would be a lie.
     if (get().project !== project) return
@@ -1267,6 +1328,7 @@ export const useStore = create<State>((set, get) => ({
       project,
       (l, s) => projectStore.sourceBytes(l, s),
       projectStore.artworkBytes?.bind(projectStore),
+      nodesBytesOf(projectStore),
     )
     if (get().project !== project) return
     const ok = hash === project.set.approval.hash

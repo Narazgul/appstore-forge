@@ -1,7 +1,15 @@
 import { DEFAULT_SETTINGS } from '../store'
-import type { Screen, SceneElement, Settings } from '../types'
-import { isSlotChip, isSlotShape } from './types'
-import type { Project, ProjectLocale, ProjectSet, ProjectTarget } from './types'
+import type { EffectElement, Screen, SceneElement, ScreenRect, Settings } from '../types'
+import { isSlotChip, isSlotEffect, isSlotShape } from './types'
+import type {
+  NodesFile,
+  Project,
+  ProjectLocale,
+  ProjectSet,
+  ProjectTarget,
+  SlotEffect,
+  SlotPlaced,
+} from './types'
 
 export const imageIdFor = (localeId: string, screen: string) => `${localeId}/${screen}`
 
@@ -14,7 +22,190 @@ export const DEFAULT_ARTWORK_SOURCES = 'aso/artwork/{artwork}.png'
  *  read a touch larger than the default subhead (`h * 0.0205`, see `render/text.ts`). */
 export const DEFAULT_CHIP_SIZE = 0.026
 
-export function screensFor(project: Project, localeId: string): Screen[] {
+export const DEFAULT_LIFT = { scale: 1.08, dim: 0.35, gray: 0 }
+export const DEFAULT_LOUPE = { zoom: 2, place: 'over' as const, ring: '#ffffff' }
+export const DEFAULT_FOCUS = { strength: 0.012, dim: 0 }
+export const DEFAULT_REDACT = { style: 'pixelate' as const, strength: 0.03 }
+
+/** A capture's nodes for one locale's screen; `null` when there is no nodes file. */
+export type NodesLookup = (localeId: string, screen: string) => NodesFile | null
+
+/** The nodes file a capture writes next to its screenshot: the same path, `.nodes.json` for the
+ *  image's extension. */
+export const nodesPath = (set: ProjectSet, localeId: string, screen: string) =>
+  sourcePath(set, localeId, screen).replace(/\.[^./]*$/, '') + '.nodes.json'
+
+const NODE_FIELDS = ['tag', 'text', 'desc'] as const
+
+/** What is wrong with a parsed nodes file, or null when its shape is usable. */
+export function nodesFileProblem(file: unknown): string | null {
+  if (!file || typeof file !== 'object' || Array.isArray(file)) return 'must be an object'
+  const { width, height, nodes } = file as Record<string, unknown>
+  if (typeof width !== 'number' || typeof height !== 'number' || !(width > 0) || !(height > 0))
+    return 'needs positive width and height'
+  if (!Array.isArray(nodes)) return 'needs a nodes array'
+  for (const node of nodes) {
+    const bounds = (node as Record<string, unknown> | null)?.bounds
+    if (
+      !Array.isArray(bounds) ||
+      bounds.length !== 4 ||
+      !bounds.every((n) => typeof n === 'number' && Number.isFinite(n))
+    )
+      return 'every node needs bounds [left, top, right, bottom]'
+  }
+  return null
+}
+
+/**
+ * The part of the screenshot a `node` names, as fractions of the capture: the first of `tag`,
+ * `text`, `desc` with exactly one exact match wins. No match anywhere, or several on the step
+ * that matched first, is an error — a position is only ever taken from the real screen. Several
+ * names target the rectangle around all of their nodes; every one of them has to resolve.
+ */
+export function resolveNode(
+  file: NodesFile,
+  node: string | string[],
+): { rect: ScreenRect } | { error: string } {
+  if (Array.isArray(node)) {
+    const rects: ScreenRect[] = []
+    for (const name of node) {
+      const resolved = resolveNode(file, name)
+      if ('error' in resolved) return resolved
+      rects.push(resolved.rect)
+    }
+    const x = Math.min(...rects.map((r) => r.x))
+    const y = Math.min(...rects.map((r) => r.y))
+    return {
+      rect: {
+        x,
+        y,
+        w: Math.max(...rects.map((r) => r.x + r.w)) - x,
+        h: Math.max(...rects.map((r) => r.y + r.h)) - y,
+      },
+    }
+  }
+  for (const field of NODE_FIELDS) {
+    const hits = file.nodes.filter((n) => n[field] === node)
+    if (hits.length > 1) return { error: `node "${node}" matches ${hits.length} nodes by ${field}` }
+    if (hits.length === 1) {
+      const [left, top, right, bottom] = hits[0].bounds
+      if (!(right > left && bottom > top)) return { error: `node "${node}" has empty bounds` }
+      return {
+        rect: {
+          x: left / file.width,
+          y: top / file.height,
+          w: (right - left) / file.width,
+          h: (bottom - top) / file.height,
+        },
+      }
+    }
+  }
+  return { error: `node "${node}" not found by tag, text or desc` }
+}
+
+/** Whether `node` has a shape `resolveNode` takes: one non-empty name, or at least two. */
+export const isNodeTarget = (node: unknown): node is string | string[] =>
+  (typeof node === 'string' && !!node.trim()) ||
+  (Array.isArray(node) && node.length >= 2 && node.every((n) => typeof n === 'string' && !!n.trim()))
+
+/** An effect's target for one locale: its own `rect`, or its `node` looked up in that locale's
+ *  capture. Null when it cannot be resolved — `validateProject` says why. */
+export function effectRect(
+  el: SlotEffect,
+  localeId: string,
+  screen: string | undefined,
+  nodes: NodesLookup | undefined,
+): ScreenRect | null {
+  if (el.rect && el.node === undefined) return el.rect
+  if (el.rect || !isNodeTarget(el.node) || !screen || !nodes) return null
+  const file = nodes(localeId, screen)
+  if (!file || nodesFileProblem(file)) return null
+  const resolved = resolveNode(file, el.node)
+  return 'rect' in resolved ? resolved.rect : null
+}
+
+function sceneEffect(el: SlotEffect, rect: ScreenRect): EffectElement {
+  const base = { id: el.id, rect, pad: el.pad ?? 0 }
+  switch (el.effect) {
+    case 'lift':
+      return {
+        ...base,
+        effect: 'lift',
+        scale: el.scale ?? DEFAULT_LIFT.scale,
+        dim: el.dim ?? DEFAULT_LIFT.dim,
+        gray: el.gray ?? DEFAULT_LIFT.gray,
+      }
+    case 'loupe':
+      return {
+        ...base,
+        effect: 'loupe',
+        zoom: el.zoom ?? DEFAULT_LOUPE.zoom,
+        size: el.size,
+        place: el.place ?? DEFAULT_LOUPE.place,
+        ring: el.ring ?? DEFAULT_LOUPE.ring,
+      }
+    case 'focus':
+      return {
+        ...base,
+        effect: 'focus',
+        strength: el.strength ?? DEFAULT_FOCUS.strength,
+        dim: el.dim ?? DEFAULT_FOCUS.dim,
+      }
+    default:
+      return {
+        ...base,
+        effect: 'redact',
+        style: el.style ?? DEFAULT_REDACT.style,
+        strength: el.strength ?? DEFAULT_REDACT.strength,
+      }
+  }
+}
+
+function placedElement(el: SlotPlaced, localeId: string, chipText: string | undefined): SceneElement {
+  if (isSlotShape(el))
+    return {
+      id: el.id,
+      shape: el.shape,
+      color: el.color,
+      stroke: el.stroke,
+      seed: el.seed,
+      x: el.x,
+      y: el.y,
+      width: el.width,
+      rotate: el.rotate ?? 0,
+      layer: el.layer ?? 'front',
+    }
+  if (isSlotChip(el))
+    return {
+      id: el.id,
+      text: chipText ?? '',
+      // Colours stay undefined here on purpose — a chip's default depends on the
+      // slot's *effective* settings, which this function does not resolve (rules.md #2).
+      color: el.color,
+      textColor: el.textColor,
+      size: el.size ?? DEFAULT_CHIP_SIZE,
+      x: el.x,
+      y: el.y,
+      width: el.width,
+      rotate: el.rotate ?? 0,
+      layer: el.layer ?? 'front',
+      shadow: el.shadow ?? false,
+    }
+  return {
+    id: el.id,
+    imageId: artworkIdFor(localeId, el.artwork),
+    x: el.x,
+    y: el.y,
+    width: el.width,
+    rotate: el.rotate ?? 0,
+    layer: el.layer ?? 'front',
+    shadow: el.shadow ?? false,
+  }
+}
+
+/** `nodes` resolves an effect's `node`; without it, or when the node does not resolve, the effect
+ *  is left out of the scene rather than drawn somewhere guessed. */
+export function screensFor(project: Project, localeId: string, nodes?: NodesLookup): Screen[] {
   const copy = project.copies[localeId] ?? {}
   return project.set.slots.map((slot) => {
     // A hand-edited project file may give any of these the wrong JSON shape (a string instead of
@@ -39,46 +230,12 @@ export function screensFor(project: Project, localeId: string): Screen[] {
       eyebrow: copy[slot.id]?.eyebrow || undefined,
       list: Array.isArray(list) && list.length ? list : undefined,
       elements: elements.length
-        ? elements.map((el): SceneElement => {
-            if (isSlotShape(el))
-              return {
-                id: el.id,
-                shape: el.shape,
-                color: el.color,
-                stroke: el.stroke,
-                seed: el.seed,
-                x: el.x,
-                y: el.y,
-                width: el.width,
-                rotate: el.rotate ?? 0,
-                layer: el.layer ?? 'front',
-              }
-            if (isSlotChip(el))
-              return {
-                id: el.id,
-                text: copy[slot.id]?.chips?.[el.id] ?? '',
-                // Colours stay undefined here on purpose — a chip's default depends on the
-                // slot's *effective* settings, which this function does not resolve (rules.md #2).
-                color: el.color,
-                textColor: el.textColor,
-                size: el.size ?? DEFAULT_CHIP_SIZE,
-                x: el.x,
-                y: el.y,
-                width: el.width,
-                rotate: el.rotate ?? 0,
-                layer: el.layer ?? 'front',
-                shadow: el.shadow ?? false,
-              }
-            return {
-              id: el.id,
-              imageId: artworkIdFor(localeId, el.artwork),
-              x: el.x,
-              y: el.y,
-              width: el.width,
-              rotate: el.rotate ?? 0,
-              layer: el.layer ?? 'front',
-              shadow: el.shadow ?? false,
+        ? elements.flatMap((el): SceneElement[] => {
+            if (isSlotEffect(el)) {
+              const rect = slot.kind === 'artwork' ? null : effectRect(el, localeId, slot.screen, nodes)
+              return rect ? [sceneEffect(el, rect)] : []
             }
+            return [placedElement(el, localeId, copy[slot.id]?.chips?.[el.id])]
           })
         : undefined,
     }

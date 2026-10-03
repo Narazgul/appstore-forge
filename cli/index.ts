@@ -4,6 +4,7 @@ import { approveCommand, checkCommand, formatIssue, renderCommand } from './comm
 import { CliError } from './errors'
 
 const USAGE = `forge <check|render|approve|dev> --project <dir> [--set default] [--target id]... [--locale id]... [--require-approval] [--by name]
+forge capture --project <dir> --out <path.png> --serial <adb serial> [--port 8765] [--screen name] [--seed [--store apple|google]] [--call tool [--args '<json>']]... [--settle ms]
 forge tool [name] --project <dir> [--json '<input>' | --json @file]   (no name: every tool with its input schema)`
 
 export async function main(argv: string[]): Promise<number> {
@@ -13,6 +14,10 @@ export async function main(argv: string[]): Promise<number> {
     command === 'tool' && afterCommand[0] && !afterCommand[0].startsWith('-') ? afterCommand[0] : null
   const rest = toolName ? afterCommand.slice(1) : afterCommand
   try {
+    if (command === 'capture') {
+      const { captureCommand } = await import('./capture')
+      return await captureCommand(afterCommand)
+    }
     const { values } = parseArgs({
       args: rest,
       options: {
