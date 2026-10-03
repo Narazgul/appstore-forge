@@ -77,6 +77,36 @@ export const LAYOUTS: Layout[] = [
     device: { top: 0.255, bottom: 1.3 },
     padX: 0.07,
   },
+  // Landscape studio formats (16:9, Open Graph): copy fills one side, the device stands upright on
+  // the other. Text and device bands start at the same height, so neither lifts nor shrinks the other.
+  {
+    id: 'landscape-left',
+    label: 'Landscape, text left',
+    span: 1,
+    text: { top: 0.08, height: 0.84, left: 0.06, width: 0.46 },
+    device: { top: 0.08, bottom: 0.92, cx: 0.76 },
+    padX: 0.06,
+    textScale: 2,
+  },
+  {
+    id: 'landscape-right',
+    label: 'Landscape, text right',
+    span: 1,
+    text: { top: 0.08, height: 0.84, left: 0.48, width: 0.46 },
+    device: { top: 0.08, bottom: 0.92, cx: 0.24 },
+    padX: 0.06,
+    textScale: 2,
+  },
+  // Headline across the top, the device centred below it and running off the bottom edge.
+  {
+    id: 'landscape-center',
+    label: 'Landscape, device centre',
+    span: 1,
+    text: { top: 0.06, height: 0.2 },
+    device: { top: 0.31, bottom: 1.12 },
+    padX: 0.12,
+    textScale: 1.6,
+  },
 ]
 
 export const getLayout = (id: LayoutId): Layout => LAYOUTS.find((t) => t.id === id) ?? LAYOUTS[0]

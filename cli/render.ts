@@ -7,6 +7,8 @@ import {
   artworkIdFor,
   artworkPath,
   imageIdFor,
+  outFormat,
+  outLocale,
   outPath,
   screensFor,
   settingsFor,
@@ -29,6 +31,17 @@ function rgbPng(width: number, height: number, rgba: Uint8ClampedArray): Buffer 
   const png = new PNG({ width, height })
   png.data = Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength)
   return PNG.sync.write(png, { colorType: 2 })
+}
+
+export const WEBP_QUALITY = 90
+
+function webp(width: number, height: number, rgba: Uint8ClampedArray): Buffer {
+  const canvas = createCanvas(width, height)
+  const ctx = canvas.getContext('2d')
+  const image = ctx.createImageData(width, height)
+  image.data.set(rgba)
+  ctx.putImageData(image, 0, 0)
+  return canvas.encodeSync('webp', WEBP_QUALITY)
 }
 
 function pick<T extends { id: string }>(all: T[], wanted: string[] | undefined, kind: string): T[] {
@@ -103,7 +116,8 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
     for (const target of targets) {
       const settings = settingsFor(project, target.id)
       const size = getSize(settings.sizeId)
-      const storeLocale = locale.store[target.id]
+      const storeLocale = outLocale(locale, target.id)
+      const encode = outFormat(target) === 'webp' ? webp : rgbPng
       let n = 0
       for (const [i, screen] of screens.entries()) {
         const span = sceneSpan(screen, settings)
@@ -168,7 +182,7 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
             await clearMatching(dir, outFilePattern(target.out, storeLocale))
             cleared.add(dir)
           }
-          await writeFile(file, rgbPng(size.w, size.h, rgba))
+          await writeFile(file, encode(size.w, size.h, rgba))
           written.push(file)
         }
       }

@@ -348,7 +348,10 @@ src/project/duplicate.ts duplicateProject(): the pure, tested transform behind "
 src/adapters/fileClient.ts    talks to the dev server over /api/project (?set=), /api/sets and /sources
 src/adapters/firestoreClient.ts  the backoffice's adapter; a duplicated set carries `sourcesFrom`
                          (the id it was copied from, never chained) until its own images are synced
+src/project/tools.ts     the agent's tools: name, description, JSON schema, run(host, input) over the
+                         same projectAfter* functions the GUI calls; ToolHost is the seam to the files
 cli/index.ts             argument parsing and the exit codes
+cli/tool.ts              fileHost(): the ToolHost on disk (check, preview into tmp, render, guidelines.md)
 cli/commands.ts          check / render / approve on top of the same validate and hash
 cli/render.ts            headless render via @napi-rs/canvas, written as RGB PNG (pngjs, colorType 2)
 cli/fonts.ts             registers every family with Skia up front — it has no fallback we control

@@ -8,6 +8,8 @@ import type { Screen, Settings } from '../types'
 const LIMITS = {
   'App Store': { min: 1, max: 10 },
   'Google Play': { min: 2, max: 8 },
+  // No store behind it: any count of pictures is fine.
+  Studio: { min: 1, max: Infinity },
 } as const
 
 export type Readiness = {

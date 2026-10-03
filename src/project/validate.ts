@@ -17,8 +17,8 @@ import { parseMarkup } from '../render/text'
 import { DEFAULT_SETTINGS } from '../store'
 import { OFFSET_LIMIT } from '../types'
 import type { Layout, Offset, Screen, Settings, ShapeKind } from '../types'
-import { DEFAULT_ARTWORK_SOURCES, artworkPath, sourcePath } from './bridge'
-import { TILE_ROLES, isSlotChip, isSlotShape, isSlotSticker, slotScreens } from './types'
+import { DEFAULT_ARTWORK_SOURCES, OUT_FORMATS, artworkPath, sourcePath } from './bridge'
+import { TILE_ROLES, isSlotChip, isSlotShape, isSlotSticker, isStudioSet, slotScreens } from './types'
 import type { Project, ProjectSet, ProjectSlot, SlotElement, SlotSticker } from './types'
 
 /** #rgb, #rrggbb or #rrggbbaa — the same reach as any CSS hex color the renderer's `fillStyle` accepts. */
@@ -143,6 +143,11 @@ export function validateProject(
   const error = (message: string, where: { slot?: string; locale?: string } = {}) =>
     issues.push({ level: 'error', message, ...where })
 
+  const studio = isStudioSet(set)
+  if (set.purpose !== undefined && set.purpose !== 'store' && set.purpose !== 'studio')
+    error(`Unknown purpose "${set.purpose}"`)
+  if (studio && !set.locales.length) error('A studio set needs at least one locale')
+
   const artworkTemplate = set.artworkSources ?? DEFAULT_ARTWORK_SOURCES
   if (!artworkTemplate.includes('{artwork}')) error('artworkSources must contain {artwork}')
   const artworkPerLocale = artworkTemplate.includes('{locale}')
@@ -181,6 +186,16 @@ export function validateProject(
     if (!DEVICES.some((d) => d.id === target.deviceId)) error(`Unknown device ${target.deviceId}`)
     if (!target.out.includes('{n}') && !oneTileOnly)
       error(`Target ${target.id}: out must contain {n} unless the set renders exactly one tile per locale`)
+    const ext = target.out.slice(target.out.lastIndexOf('.')).toLowerCase()
+    if (!(OUT_FORMATS as readonly string[]).includes(ext))
+      error(`Target ${target.id}: out must end in ${OUT_FORMATS.join(' or ')}`)
+    else if (ext === '.webp' && !studio)
+      error(`Target ${target.id}: the stores take no WebP; only a studio set writes it`)
+    if (studio) {
+      if (set.locales.length > 1 && !/\{(storeLocale|locale)\}/.test(target.out))
+        error(`Target ${target.id}: out must contain {locale} when the set has more than one locale`)
+      continue
+    }
     for (const locale of set.locales) {
       if (!locale.store?.[target.id]) error(`No store locale for target ${target.id}`, { locale: locale.id })
     }
@@ -388,8 +403,9 @@ export function validateProject(
             )
         }
       }
-      // An artwork slot may be a pure visual with no copy at all; a 'screen' slot always needs one.
-      if (slot.kind !== 'artwork' && !copy[slot.id]?.headline?.trim())
+      // An artwork slot may be a pure visual with no copy at all; a store 'screen' slot always needs
+      // one. A studio picture may be the screen alone.
+      if (slot.kind !== 'artwork' && !studio && !copy[slot.id]?.headline?.trim())
         error('Headline missing', { slot: slot.id, locale: locale.id })
       if (copy[slot.id]?.eyebrow && !eyebrowFits(locale.id, slot.id))
         error('Eyebrow does not fit on one line', { slot: slot.id, locale: locale.id })

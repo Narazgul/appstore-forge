@@ -1,7 +1,14 @@
 import type { SceneElementLayer, ScreenOverrides, ShapeKind, Settings } from '../types'
 
 export type ProjectTarget = { id: string; sizeId: string; deviceId: string; out: string }
-export type ProjectLocale = { id: string; store: Record<string, string> }
+/** `store` maps a target id to the store's own locale code; a studio set may leave it out and
+ *  writes under the locale id instead. */
+export type ProjectLocale = { id: string; store?: Record<string, string> }
+/** `store` (the default when absent) feeds an app store: every locale needs a store code, the
+ *  upload needs an approval stamp. `studio` makes pictures for a website or a post: one language is
+ *  enough, no stamp, an empty headline is fine, and a target may write WebP. */
+export type SetPurpose = 'store' | 'studio'
+export const isStudioSet = (set: Pick<ProjectSet, 'purpose'>) => set.purpose === 'studio'
 export type SlotKind = 'screen' | 'artwork'
 
 /** A slot's place in the deck's sequence — which job its headline has to do. Feeds the "Ideas"
@@ -129,6 +136,8 @@ export type ProjectSettings = Omit<Settings, 'sizeId' | 'deviceId'>
 export type ProjectSet = {
   version: 1
   id: string
+  /** absent = 'store' — and absent it stays, so a store set keeps the approval hash it had */
+  purpose?: SetPurpose
   targets: ProjectTarget[]
   locales: ProjectLocale[]
   /** template with {locale} and {screen} */

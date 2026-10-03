@@ -1,7 +1,7 @@
 import { DEFAULT_SETTINGS } from '../store'
 import type { Screen, SceneElement, Settings } from '../types'
 import { isSlotChip, isSlotShape } from './types'
-import type { Project, ProjectSet, ProjectTarget } from './types'
+import type { Project, ProjectLocale, ProjectSet, ProjectTarget } from './types'
 
 export const imageIdFor = (localeId: string, screen: string) => `${localeId}/${screen}`
 
@@ -105,7 +105,18 @@ export const artworkPath = (set: ProjectSet, localeId: string, artwork: string) 
     .replaceAll('{artwork}', artwork)
 
 export const outPath = (target: ProjectTarget, storeLocale: string, n: number) =>
-  target.out.replaceAll('{storeLocale}', storeLocale).replace('{n}', String(n))
+  target.out
+    .replaceAll('{storeLocale}', storeLocale)
+    .replaceAll('{locale}', storeLocale)
+    .replace('{n}', String(n))
+
+/** The folder name a locale writes under for one target: the store's code, or for a studio set
+ *  without one the locale id itself. */
+export const outLocale = (locale: ProjectLocale, targetId: string) => locale.store?.[targetId] ?? locale.id
+
+export const OUT_FORMATS = ['.png', '.webp'] as const
+export const outFormat = (target: ProjectTarget) =>
+  target.out.toLowerCase().endsWith('.webp') ? 'webp' : 'png'
 
 /**
  * The directory a source template points into for one locale, and the pattern its file names

@@ -4,11 +4,10 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join, normalize, sep } from 'node:path'
 import type { Plugin } from 'vite'
-import { copyDir, readProject, repoRootOf, writeProject } from './cli/project-io'
+import { copyDir, listSets, readGallery, readProject, repoRootOf, writeProject } from './cli/project-io'
 import { SET_ID_RE } from './src/project/duplicate'
-import { DEFAULT_ARTWORK_SOURCES, artworkPath, sourceListing, sourcePath } from './src/project/bridge'
-import type { Gallery } from './src/project/store'
-import type { Project, ProjectSet } from './src/project/types'
+import { artworkPath, sourcePath } from './src/project/bridge'
+import type { Project } from './src/project/types'
 
 /** One PUT rewrites the set file and every copy file; the window covers the copies too. */
 const OWN_WRITE_QUIET_MS = 500
@@ -106,23 +105,7 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
     return hash.digest('hex')
   }
 
-  /** The ids of every valid set file directly under the project dir: `version: 1` and an `id`
-   *  matching the file name — anything else (a stray JSON file, a half-written set) is skipped. */
-  async function listSetIds(): Promise<string[]> {
-    const files = await readdir(projectDir).catch(() => [] as string[])
-    const ids: string[] = []
-    for (const file of files) {
-      if (!file.endsWith('.json')) continue
-      const id = file.slice(0, -'.json'.length)
-      try {
-        const data = JSON.parse(await readFile(join(projectDir, file), 'utf8')) as Partial<ProjectSet>
-        if (data.version === 1 && data.id === id) ids.push(id)
-      } catch {
-        // Not a set file (or not valid JSON) — not this endpoint's business.
-      }
-    }
-    return ids.sort()
-  }
+  const listSetIds = () => listSets(projectDir)
 
   async function readBody(req: IncomingMessage, res: ServerResponse): Promise<Buffer | null> {
     const chunks: Buffer[] = []
@@ -246,29 +229,6 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
     }
   }
 
-  /** Every image the repo holds per locale, so the GUI can offer a choice per frame. */
-  async function readGallery(set: Project['set']): Promise<Record<string, Gallery>> {
-    const listNames = async (template: string, localeId: string, token: string) => {
-      const listing = sourceListing(template, localeId, token)
-      if (!listing) return []
-      const dir = normalize(join(repoRoot, listing.dir))
-      if (!dir.startsWith(`${repoRoot}${sep}`)) return []
-      const files = await readdir(dir).catch(() => [] as string[])
-      return files
-        .map((file) => listing.match(file))
-        .filter((name): name is string => name !== null)
-        .sort()
-    }
-    const galleries: Record<string, Gallery> = {}
-    for (const locale of set.locales) {
-      galleries[locale.id] = {
-        screens: await listNames(set.sources, locale.id, '{screen}'),
-        artwork: await listNames(set.artworkSources ?? DEFAULT_ARTWORK_SOURCES, locale.id, '{artwork}'),
-      }
-    }
-    return galleries
-  }
-
   async function serve(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = projectRoute(req)
     const path = pathnameOf(url)
@@ -283,7 +243,7 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
     if (path === '/api/gallery' && req.method === 'GET') {
       const project = await readProject(projectDir, resolveSetId(url, currentSetId))
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify(await readGallery(project.set)))
+      res.end(JSON.stringify(await readGallery(repoRoot, project.set)))
       return true
     }
     if (path === '/api/project' && req.method === 'PUT') {

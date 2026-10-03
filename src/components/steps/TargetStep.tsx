@@ -3,7 +3,7 @@ import { EXPORT_SIZES, getSize } from '../../presets/sizes'
 import { useStore } from '../../store'
 import { StepFrame, Tip } from './StepFrame'
 
-const STORES = ['App Store', 'Google Play'] as const
+const STORES = ['App Store', 'Google Play', 'Studio'] as const
 
 /** Store, canvas size and device: the decisions that shape every pixel, so they come first. */
 export function TargetStep() {
@@ -65,7 +65,9 @@ export function TargetStep() {
               <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
                 {store === 'App Store'
                   ? 'Up to 10 screenshots per device. PNG or JPEG, no alpha channel.'
-                  : '2 to 8 phone screenshots, max 2:1 aspect. PNG or JPEG.'}
+                  : store === 'Google Play'
+                    ? '2 to 8 phone screenshots, max 2:1 aspect. PNG or JPEG.'
+                    : 'Free formats for websites and posts: 4:5, 1:1, 16:9, Open Graph, story.'}
               </span>
             </button>
           ))}

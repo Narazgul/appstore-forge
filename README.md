@@ -675,6 +675,58 @@ this**: they must sync images (and update `gallery`) for every set id found in
 `backoffice/aso/sets`, not only `default`, or a duplicated set stays on its source's screenshots
 forever even after someone means to replace them.
 
+### Studio sets: pictures for a website or a post
+
+A set with `"purpose": "studio"` makes pictures that never go to a store — a guide's step images,
+an Open Graph card, a story. It is an ordinary set file with three rules relaxed:
+
+- **one language is enough**, and a locale needs no `store` codes (`"locales": [{ "id": "de" }]`);
+  `out` writes under the locale id via `{locale}` (required once there is more than one locale);
+- **no approval stamp**: `forge approve` refuses a studio set and `--require-approval` ignores it;
+- **an empty headline is fine**: a picture may be the screen alone.
+
+A studio target may write **WebP** (`out` ending `.webp`, quality 90); a store set refuses WebP, and
+any `out` must end in `.png` or `.webp`. The studio sizes are `studio-4x5` (1080×1350),
+`studio-square` (1080×1080), `studio-16x9` (1920×1080), `open-graph` (1200×630) and `story`
+(1080×1920), and three landscape layouts give the copy room beside or above an upright device:
+`landscape-left`, `landscape-right` and `landscape-center`.
+
+A store set has no `purpose` key at all, so its approval hash is exactly what it was before studio
+sets existed.
+
+### Tools for an agent: `forge tool`
+
+Every operation an agent needs to build and fix pictures is a named tool with a description and a
+JSON input schema (`src/project/tools.ts`). Each write goes through the same `projectAfter*`
+functions the GUI calls, saves, and answers with the set's issues as `forge check` reports them; a
+`forge dev` tab on the same project picks every change up through its file watcher.
+
+```bash
+forge tool --project ./studio                                # every tool with its input schema
+forge tool list_sets --project ./studio
+forge tool set_copy --project ./studio --json '{"set":"ratgeber","locale":"de","slot":"eins","headline":"Ziel *setzen*"}'
+forge tool preview --project ./studio --json '{"set":"ratgeber","slots":["eins"]}'
+forge tool update_slot --project ./studio --json @patch.json
+```
+
+| Tool                                                  | Does                                                                 |
+| ----------------------------------------------------- | -------------------------------------------------------------------- |
+| `list_sets`, `get_set`, `list_images`, `list_presets` | read the project, the images a locale holds, the valid ids           |
+| `create_set`                                          | a new set (studio by default); never overwrites                      |
+| `add_slot`, `remove_slot`, `update_slot`              | tiles: source images, overrides (`null` = inherit again), note, role |
+| `update_settings`, `update_target`                    | the set-wide look; a target's size or device                         |
+| `set_copy`                                            | one locale's headline, subhead, eyebrow, list, chip texts            |
+| `add_element`, `update_element`, `remove_element`     | stickers, shapes, chips                                              |
+| `check`, `preview`, `render`                          | validate; PNGs into a scratch folder to look at; the real render     |
+| `guidelines`, `remember`                              | read `guidelines.md`; append a dated design rule to it               |
+
+`preview` writes `<tmp>/forge-preview/<repo>-<project>/<set>/<target>/<locale>/<slot>.png` and
+never touches a target's `out`. There is deliberately no `approve` tool: the stamp is a person's
+judgement. The result is JSON on stdout, a refused call prints `{ "error": … }` with exit code 2.
+
+**`guidelines.md`** in the project folder holds the project's design rules, one dated line each
+(`remember` appends one). It changes no pixel and is not part of the approval hash.
+
 ### The four commands
 
 ```bash
@@ -693,6 +745,7 @@ forge dev --project ./aso                         # the editor on this project
 | `--require-approval` | `check` and `render` insist on a current approval stamp. |
 | `--by <name>`        | Who approves. Required for `approve`.                    |
 | `--port <n>`         | Dev server port. Default `4324`.                         |
+| `--json <input>`     | `tool` only: the input as JSON, or `@file` to read it.   |
 
 `render` clears stale files from an earlier run before it writes — but only the ones matching
 this target's own file name shape (`{n}` as digits, `{storeLocale}` as that locale's value,

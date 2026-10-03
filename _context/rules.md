@@ -62,6 +62,11 @@ a real bug.
 5. **Fit source screenshots top-anchored, not centred.** Cover-fit anchored to
    the top keeps the status bar visible and crops the bottom.
 
+6. **The agent's tools are a door, not a second editor.** A tool in `src/project/tools.ts` changes
+   a set only through the `projectAfter*` functions the GUI calls and validates only through
+   `validateProject` (via the host's `check`). A tool that needs a transform the GUI lacks gets a
+   new pure `projectAfter*` in `store.ts` that the GUI can use too. No tool approves.
+
 ## State
 
 6. **Never put side effects inside a React state updater.** React may invoke an

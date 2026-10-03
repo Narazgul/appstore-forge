@@ -197,6 +197,13 @@ const blob = await new Promise((r) => canvas.toBlob(r))
 await window.__store.getState().addFiles([new File([blob], 'x.png', { type: 'image/png' })])
 ```
 
+### `forge tool`
+
+An agent works on a project through `forge tool <name> --project <dir> --json …` (`src/project/
+tools.ts`, `cli/tool.ts`). Adding a tool: one entry in `TOOLS` with a schema `inputProblems` can
+check, a `run` that only loads, calls existing `projectAfter*` functions and `commit`s — never a
+write of its own — and a case in `cli/tool.test.ts`.
+
 ## Tests
 
 `pnpm test` (Vitest, node environment). The suite covers the pure logic only:

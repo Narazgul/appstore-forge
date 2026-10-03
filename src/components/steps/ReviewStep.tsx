@@ -138,7 +138,9 @@ export function ReviewStep() {
           }
         : {
             ok: true,
-            text: `${r.tiles} tile${r.tiles === 1 ? '' : 's'} — within ${r.store}'s ${r.limit.min}–${r.limit.max}`,
+            text: Number.isFinite(r.limit.max)
+              ? `${r.tiles} tile${r.tiles === 1 ? '' : 's'} — within ${r.store}'s ${r.limit.min}–${r.limit.max}`
+              : `${r.tiles} picture${r.tiles === 1 ? '' : 's'}`,
           },
     r.store === 'App Store' && format === 'png'
       ? {

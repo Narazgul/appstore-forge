@@ -7,7 +7,7 @@ import { getLayout } from '../src/presets/layouts'
 import { getSize } from '../src/presets/sizes'
 import { artworkPath, screensFor, settingsFor, sourcePath } from '../src/project/bridge'
 import { approvalHash } from '../src/project/hash'
-import { isSlotSticker } from '../src/project/types'
+import { isSlotSticker, isStudioSet } from '../src/project/types'
 import type { Approval, Project } from '../src/project/types'
 import { validateProject, type Issue, type TextBlockProbe } from '../src/project/validate'
 import { sceneSpan, textShifts } from '../src/render/scene'
@@ -200,8 +200,9 @@ export async function checkCommand(opts: { projectDir: string; setId: string; re
     listFitsChecker(project),
     textBlockChecker(project),
   )
+  // A studio set carries no stamp: there is nothing to approve it for.
   const approvalOk =
-    opts.requireApproval && !issues.some((i) => i.level === 'error')
+    opts.requireApproval && !isStudioSet(project.set) && !issues.some((i) => i.level === 'error')
       ? await approvalMatches(project, bytes, artBytes)
       : null
   return { issues, approvalOk }
@@ -226,7 +227,11 @@ export async function renderCommand(opts: {
       textBlockChecker(project),
     ),
   )
-  if (opts.requireApproval && !(await approvalMatches(project, bytes, artBytes))) {
+  if (
+    opts.requireApproval &&
+    !isStudioSet(project.set) &&
+    !(await approvalMatches(project, bytes, artBytes))
+  ) {
     throw new CliError(
       project.set.approval
         ? `Approval by ${project.set.approval.by} at ${project.set.approval.at} no longer matches: set, copy or a source image changed since. Approve again in the GUI or with forge approve.`
@@ -243,6 +248,7 @@ export async function approveCommand(opts: {
   by: string
 }): Promise<Approval> {
   const { repoRoot, project, exists, bytes, artExists, artBytes } = await load(opts.projectDir, opts.setId)
+  if (isStudioSet(project.set)) throw new CliError('A studio set carries no approval; render it directly.', 1)
   assertValid(
     validateProject(
       project,

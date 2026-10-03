@@ -182,10 +182,24 @@ describe('export sizes', () => {
     }
   })
 
-  it('are portrait, except a store landscape format (the Play feature graphic)', () => {
+  it('are portrait in the stores, except the Play feature graphic', () => {
     for (const s of EXPORT_SIZES) {
+      if (s.store === 'Studio') continue
       if (s.id === 'play-feature-graphic') expect(s.w).toBeGreaterThan(s.h)
       else expect(s.h).toBeGreaterThan(s.w)
     }
+  })
+
+  it('offer the studio formats at their exact pixel sizes', () => {
+    const studio = Object.fromEntries(
+      EXPORT_SIZES.filter((s) => s.store === 'Studio').map((s) => [s.id, `${s.w}x${s.h}`]),
+    )
+    expect(studio).toEqual({
+      'studio-4x5': '1080x1350',
+      'studio-square': '1080x1080',
+      'studio-16x9': '1920x1080',
+      'open-graph': '1200x630',
+      story: '1080x1920',
+    })
   })
 })

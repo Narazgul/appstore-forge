@@ -3,10 +3,15 @@ import { resolve } from 'node:path'
 import { approveCommand, checkCommand, formatIssue, renderCommand } from './commands'
 import { CliError } from './errors'
 
-const USAGE = `forge <check|render|approve|dev> --project <dir> [--set default] [--target id]... [--locale id]... [--require-approval] [--by name]`
+const USAGE = `forge <check|render|approve|dev> --project <dir> [--set default] [--target id]... [--locale id]... [--require-approval] [--by name]
+forge tool [name] --project <dir> [--json '<input>' | --json @file]   (no name: every tool with its input schema)`
 
 export async function main(argv: string[]): Promise<number> {
-  const [command, ...rest] = argv
+  const [command, ...afterCommand] = argv
+  // `forge tool <name> …`: the tool name is the one positional argument.
+  const toolName =
+    command === 'tool' && afterCommand[0] && !afterCommand[0].startsWith('-') ? afterCommand[0] : null
+  const rest = toolName ? afterCommand.slice(1) : afterCommand
   try {
     const { values } = parseArgs({
       args: rest,
@@ -18,6 +23,7 @@ export async function main(argv: string[]): Promise<number> {
         'require-approval': { type: 'boolean', default: false },
         by: { type: 'string' },
         port: { type: 'string', default: '4324' },
+        json: { type: 'string' },
       },
     })
     if (!command || !values.project) {
@@ -55,6 +61,10 @@ export async function main(argv: string[]): Promise<number> {
         const a = await approveCommand({ projectDir, setId, by: values.by })
         console.log(`approved by ${a.by} at ${a.at} (${a.hash.slice(0, 12)})`)
         return 0
+      }
+      case 'tool': {
+        const { toolCommand } = await import('./toolCommand')
+        return toolCommand({ projectDir, name: toolName, json: values.json })
       }
       case 'dev': {
         const { devCommand } = await import('./dev')

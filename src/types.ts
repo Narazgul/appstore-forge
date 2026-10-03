@@ -147,6 +147,9 @@ export type LayoutId =
   | 'text-only'
   | 'feature-wall'
   | 'mosaic'
+  | 'landscape-left'
+  | 'landscape-right'
+  | 'landscape-center'
 
 /**
  * A layout is one composition. Fractions are of the *tile* height for vertical values and of
@@ -191,7 +194,7 @@ export type Layout = {
 export type ExportSize = {
   id: string
   label: string
-  store: 'App Store' | 'Google Play'
+  store: 'App Store' | 'Google Play' | 'Studio'
   w: number
   h: number
 }

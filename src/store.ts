@@ -13,6 +13,7 @@ import type {
   Approval,
   Project,
   ProjectCopies,
+  ProjectSettings,
   ProjectTarget,
   SlotCopy,
   SlotElement,
@@ -190,6 +191,18 @@ export function projectAfterTemplate(project: Project, template: TemplateSpec): 
   }
 }
 
+/** The set-wide look: `patch` is written, every key in `clear` dropped so it falls back to the
+ *  default again (`OptionalSettingKey`s simply disappear). */
+export function projectAfterSettings(
+  project: Project,
+  patch: Partial<ProjectSettings>,
+  clear: (keyof ProjectSettings)[] = [],
+): Project {
+  const settings = { ...project.set.settings, ...patch }
+  for (const key of clear) delete settings[key]
+  return { set: { ...project.set, approval: null, settings }, copies: project.copies }
+}
+
 export function projectAfterTargetPatch(
   project: Project,
   id: string,
@@ -354,6 +367,19 @@ export function projectAfterSlotAdd(project: Project, id: string, screen: string
       ...project.set,
       approval: null,
       slots: [...project.set.slots, { id, kind: 'screen', screen, overrides: {} }],
+    },
+    copies: project.copies,
+  }
+}
+
+/** Appends a tile with no source screen: copy, stickers, shapes and chips alone, or an arrangement's
+ *  artwork. */
+export function projectAfterArtworkSlotAdd(project: Project, id: string): Project {
+  return {
+    set: {
+      ...project.set,
+      approval: null,
+      slots: [...project.set.slots, { id, kind: 'artwork', overrides: {} }],
     },
     copies: project.copies,
   }
@@ -899,10 +925,7 @@ export const useStore = create<State>((set, get) => ({
     const base = Object.keys(targetPatch).length
       ? projectAfterTargetPatch(state.project, state.targetId, targetPatch)
       : state.project
-    const project: Project = {
-      set: { ...base.set, approval: null, settings: { ...base.set.settings, ...shared } },
-      copies: base.copies,
-    }
+    const project = projectAfterSettings(base, shared)
     set({
       ...mutated(state, project, { settings: settingsFor(project, state.targetId) }),
       ...pushHistory(state, kind),
@@ -950,12 +973,7 @@ export const useStore = create<State>((set, get) => ({
       for (const key of keys) delete settings[key]
       return set({ settings, ...pushHistory(state, kind) })
     }
-    const shared = { ...state.project.set.settings }
-    for (const key of keys) delete shared[key]
-    const project: Project = {
-      set: { ...state.project.set, approval: null, settings: shared },
-      copies: state.project.copies,
-    }
+    const project = projectAfterSettings(state.project, {}, keys)
     set({
       ...mutated(state, project, { settings: settingsFor(project, state.targetId) }),
       ...pushHistory(state, kind),
