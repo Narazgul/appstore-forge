@@ -569,7 +569,7 @@ export function renderScene(
       if (effectBox && prepared)
         drawEffectOverlays(target, effectBox.box, effectBox.angle, device, prepared, effects, w)
     }
-    if (settings.deviceFade)
+    if (settings.deviceFade && settings.deviceFade !== 'none')
       drawFaded(
         ctx,
         W,

@@ -38,12 +38,10 @@ export function TunePanel() {
     selected ? selected.overrides[key] !== undefined : global[key] !== undefined
   const clear = (key: OptionalSettingKey) =>
     selected ? clearOverrides(selected.id, [key]) : clearSettings([key])
-  // `deviceFade` has no "off" value a screen could set, so a screen can only go back to inheriting it.
   const turnOff = (key: SwitchableKey) => {
     if (!selected) return clearSettings([key])
-    const off = key === 'browserUrl' ? '' : key === 'backBlur' ? false : undefined
-    if (off === undefined || global[key] === undefined || global[key] === off)
-      return clearOverrides(selected.id, [key])
+    const off = key === 'browserUrl' ? '' : key === 'backBlur' ? false : 'none'
+    if (global[key] === undefined || global[key] === off) return clearOverrides(selected.id, [key])
     setOverride(selected.id, { [key]: off })
   }
   const sectionOverridden = (key: string) =>

@@ -68,6 +68,18 @@ describe('check', () => {
       approvalOk: null,
     })
   })
+  it('reports a headline that only fits below the shrink floor, before any render', async () => {
+    const { dir } = await scaffold()
+    const headline = Array.from({ length: 80 }, () => 'overlong').join(' ')
+    await writeFile(join(dir, 'copy', 'en.json'), JSON.stringify({ a: { headline, subhead: '' } }))
+    const { issues } = await checkCommand({ projectDir: dir, setId: 'default', requireApproval: false })
+    expect(issues).toContainEqual({
+      level: 'error',
+      message: 'Headline does not fit: shorten the copy or lower headlineScale',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
   it('reports approvalOk false without a stamp', async () => {
     const { dir } = await scaffold()
     expect(

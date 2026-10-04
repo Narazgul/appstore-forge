@@ -1,11 +1,14 @@
+import { imageOpaqueBounds } from '../lib/opaqueBounds'
 import { getSize } from '../presets/sizes'
 import { sceneSources } from '../lib/export'
 import { artworkIdFor, backgroundIdFor, imageIdFor, screensFor, settingsFor } from '../project/bridge'
 import {
   eyebrowFitsChecker,
+  headlineFitsChecker,
   listFitsChecker,
   textBackdropChecker,
   textBlockChecker,
+  worstBackdropContrast,
   type ContextFactory,
 } from '../project/checkers'
 import { ToolError, type PreviewFile, type ToolHost } from '../project/tools'
@@ -107,6 +110,18 @@ function reused(which: 'measure' | 'paint'): ContextFactory {
   }
 }
 
+/** The headline-on-picture contrast `forge check` judges, for the open set's tiles (or `slotIds`). */
+export function editorBackdropContrast(state: EditorState, slotIds?: string[]) {
+  const project = state.project as Project | null
+  if (!project) return null
+  const backgrounds = new Map<string, CanvasImageSource>()
+  for (const src of backgroundImageSrcs(project.set)) {
+    const img = state.images[backgroundIdFor(src)]
+    if (img) backgrounds.set(src, img)
+  }
+  return worstBackdropContrast(project, backgrounds, reused('paint'), slotIds)
+}
+
 /** `forge check` against what the editor holds: the images it loaded stand for the files. */
 export function editorCheck(state: EditorState): Issue[] {
   const project = state.project as Project
@@ -131,6 +146,11 @@ export function editorCheck(state: EditorState): Issue[] {
     nodesLookupOf(state.nodes),
     (src) => !!images[backgroundIdFor(src)],
     textBackdropChecker(project, backgrounds, reused('paint')),
+    (l, a) => {
+      const img = images[artworkIdFor(l, a)]
+      return img?.naturalWidth ? imageOpaqueBounds(img, reused('paint')) : null
+    },
+    headlineFitsChecker(project, measure),
   )
 }
 

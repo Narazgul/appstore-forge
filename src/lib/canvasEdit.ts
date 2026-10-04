@@ -374,7 +374,9 @@ export class GestureSession {
   }
 }
 
-/** One arrow-key step for the selected part: `NUDGE` of the tile, `NUDGE_BIG` with Shift. */
+/** One arrow-key step for the selected part: `NUDGE` of the tile, `NUDGE_BIG` with Shift. Null when
+ *  the part is already at the limit in that direction: a step that moves nothing writes nothing,
+ *  or a pin equal to the set-wide value would resolve to "drop it". */
 export function nudgeEdit(
   t: SceneTarget,
   effective: Settings,
@@ -382,15 +384,18 @@ export function nudgeEdit(
   dir: Pt,
   big: boolean,
   { span }: Pick<Dims, 'span'>,
-): CanvasEdit {
+): CanvasEdit | null {
   const step = big ? NUDGE_BIG : NUDGE
   // `x`/`dx` count in composition widths; a step is a fraction of one tile.
   const ddx = (dir.x * step) / span
   const ddy = dir.y * step
-  if (t.kind === 'element')
-    return { kind: 'element', id: t.id, fields: placeElement(element!.x + ddx, element!.y + ddy) }
+  if (t.kind === 'element') {
+    const fields = placeElement(element!.x + ddx, element!.y + ddy)
+    return fields.x === element!.x && fields.y === element!.y ? null : { kind: 'element', id: t.id, fields }
+  }
   const off = offsetOf(effective, t.kind)
   const next = limitOffset(off.dx + ddx, off.dy + ddy)
+  if (sameOffset(next, off)) return null
   return { kind: 'settings', fields: t.kind === 'device' ? { deviceOffset: next } : { textOffset: next } }
 }
 

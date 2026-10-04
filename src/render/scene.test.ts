@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyShadow, blobPoints, drawShape, drawSticker, type Box } from './frames'
+import { applyShadow, blobPoints, shadowBlurScale, drawShape, drawSticker, type Box } from './frames'
 import {
   composeDevices,
   LIST_GAP,
@@ -673,6 +673,14 @@ describe('renderScene with shapes', () => {
     const [call] = calls.filter((c) => c.fn === 'ellipse')
     const W = TILE.w * layout.span
     expect(call.args[0]).toBeCloseTo(0.75 * W, 5)
+  })
+})
+
+describe('shadowBlurScale', () => {
+  it('widens the blur only in a browser, so the CLI renders what it always did', () => {
+    expect(shadowBlurScale(false)).toBe(1)
+    expect(shadowBlurScale(true)).toBeGreaterThan(1)
+    expect(shadowBlurScale()).toBe(1)
   })
 })
 

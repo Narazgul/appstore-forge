@@ -376,13 +376,15 @@ describe('validateProject: marks', () => {
     const project = markProject([])
     project.set.settings = { browserUrl: 'getalife.app', backBlur: true, deviceFade: 'dark' }
     expect(errorsOf(project)).toEqual([])
+    project.set.slots[0].overrides = { deviceFade: 'none' }
+    expect(errorsOf(project)).toEqual([])
     project.set.settings = { browserUrl: 'a\nb', backBlur: 'yes', deviceFade: 'fog' } as never
     project.set.slots[0].overrides = { deviceFade: 'up' } as never
     expect(errorsOf(project)).toEqual([
       'browserUrl must be one line of text',
       'backBlur must be true or false',
-      'deviceFade must be one of dark, background',
-      'deviceFade must be one of dark, background',
+      'deviceFade must be one of dark, background, none',
+      'deviceFade must be one of dark, background, none',
     ])
   })
 })
@@ -655,6 +657,7 @@ describe('renderScene: marks, browser frame and depth', () => {
     const faded = render(400, 800, { ...solid, deviceFade: 'background' })
     expect(pixel(faded, 400, 260, 799)).toEqual([0x33, 0x66, 0x99])
     expect(pixel(faded, 400, 260, 400)).toEqual(pixel(render(400, 800, solid), 400, 260, 400))
+    expect(render(400, 800, { ...duo, deviceFade: 'none' })).toEqual(sharp)
   }, 60_000)
 })
 

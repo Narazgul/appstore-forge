@@ -102,7 +102,53 @@ describe('load resolves sticker artwork like a slot`s own', () => {
   it('resolves the sticker artwork url even before the gallery lists it', async () => {
     const store = firestoreProjectStore({ setId: 'default', firebase: firebaseFor({ set: stickerProject }) })
     await store.load()
+    expect(store.artworkUrl?.('en', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/dot.png')
+  })
+
+  it('keeps a locale folder when the artwork path names one', async () => {
+    const perLocale = { ...stickerProject, artworkSources: 'art/{locale}/{artwork}.png' }
+    const store = firestoreProjectStore({ setId: 'default', firebase: firebaseFor({ set: perLocale }) })
+    await store.load()
     expect(store.artworkUrl?.('en', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/en/dot.png')
+  })
+
+  it('asks Storage once for an artwork shared by all languages and serves it to each', async () => {
+    const requested: string[] = []
+    const firebase = {
+      ...firebaseFor({}),
+      firestore: () => ({
+        collection: () => ({
+          doc: () => ({
+            get: () =>
+              Promise.resolve({
+                exists: true,
+                data: () => ({
+                  set: {
+                    ...stickerProject,
+                    locales: [
+                      { id: 'de', store: {} },
+                      { id: 'en', store: {} },
+                    ],
+                  },
+                }),
+              }),
+          }),
+        }),
+      }),
+      storage: () => ({
+        ref: (path: string) => {
+          requested.push(path)
+          return { getDownloadURL: () => Promise.resolve(`https://cdn/${path}`) }
+        },
+      }),
+    } as unknown as CompatFirebase
+    const store = firestoreProjectStore({ setId: 'default', firebase })
+    await store.load()
+    expect(requested.filter((p) => p.includes('/artwork/'))).toEqual([
+      'backoffice/aso/artwork/default/dot.png',
+    ])
+    expect(store.artworkUrl?.('de', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/dot.png')
+    expect(store.artworkUrl?.('en', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/dot.png')
   })
 
   it('never asks Storage to resolve a shape, which has no image at all', async () => {
@@ -140,7 +186,7 @@ describe('load resolves sticker artwork like a slot`s own', () => {
     const store = firestoreProjectStore({ setId: 'default', firebase })
     await store.load()
     expect(requested.some((p) => p.includes('kreis'))).toBe(false)
-    expect(store.artworkUrl?.('en', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/en/dot.png')
+    expect(store.artworkUrl?.('en', 'dot')).toBe('https://cdn/backoffice/aso/artwork/default/dot.png')
   })
 })
 
@@ -343,7 +389,7 @@ describe('sourcesFrom resolves images under the original set', () => {
     const store = firestoreProjectStore({ setId: 'copy1', firebase })
     await store.load()
     expect(store.sourceUrl('en', 'shot')).toBe('https://cdn/backoffice/aso/sources/original/en/shot.png')
-    expect(store.artworkUrl?.('en', 'badge')).toBe('https://cdn/backoffice/aso/artwork/original/en/badge.png')
+    expect(store.artworkUrl?.('en', 'badge')).toBe('https://cdn/backoffice/aso/artwork/original/badge.png')
     expect(requestedPaths).toContain('backoffice/aso/sources/original/en/shot.png')
     expect(requestedPaths.some((p) => p.includes('/copy1/'))).toBe(false)
   })

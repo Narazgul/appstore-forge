@@ -109,16 +109,26 @@ const MOSAIC_MAX_EXTRA = 5
  * when `aspect` (width/height in pixels) is passed in, so an unknown image falls back to treating
  * the sticker as a square — good enough for a warning, not for a pixel claim.
  */
-/** `tileAspect` is tile width / height: `width` counts in tile widths, the box height in tile heights. */
-function stickerBox(el: SlotSticker, span: number, aspect: number | null, tileAspect: number) {
-  const halfWidthOfW = el.width / (2 * span)
+/**
+ * `tileAspect` is tile width / height: `width` counts in tile widths, the box height in tile heights.
+ * `opaque` is the part of the image that is not transparent, as fractions of the image: a mascot
+ * with a wide empty margin covers only what it draws, not its whole square.
+ */
+function stickerBox(
+  el: SlotSticker,
+  span: number,
+  aspect: number | null,
+  tileAspect: number,
+  opaque: Band | null = null,
+) {
+  const widthOfW = el.width / span
   const heightFraction = (aspect ? el.width / aspect : el.width) * tileAspect
-  return {
-    left: el.x - halfWidthOfW,
-    right: el.x + halfWidthOfW,
-    top: el.y - heightFraction / 2,
-    bottom: el.y + heightFraction / 2,
-  }
+  const own = opaque ?? TILE
+  const centreX = el.x + ((own.left + own.right) / 2 - 0.5) * widthOfW
+  const centreY = el.y + ((own.top + own.bottom) / 2 - 0.5) * heightFraction
+  const halfW = ((own.right - own.left) * widthOfW) / 2
+  const halfH = ((own.bottom - own.top) * heightFraction) / 2
+  return { left: centreX - halfW, right: centreX + halfW, top: centreY - halfH, bottom: centreY + halfH }
 }
 
 /**
@@ -220,6 +230,10 @@ export function validateProject(
   /** The mean colour behind a slot's text block, one per locale and target, for a slot whose
    *  background carries an image; absent or empty, the contrast checks read `background` alone. */
   textBackdrops: ((slotId: string) => string[]) | null = null,
+  /** The part of a sticker's image that is drawn (not transparent), as fractions of the image. */
+  elementOpaque: (localeId: string, artwork: string) => Band | null = () => null,
+  /** Whether a slot's copy fits its box above the shrink floor at the final render size, per locale. */
+  headlineFits: (localeId: string, slotId: string) => boolean = () => true,
 ): Issue[] {
   const { set, copies } = project
   const issues: Issue[] = []
@@ -346,7 +360,7 @@ export function validateProject(
     if (slot.kind !== 'artwork' && layout.deviceless)
       issues.push({
         level: 'warn',
-        message: 'Quellbild wird nicht gezeichnet, Slot-Art artwork verwenden',
+        message: 'The source image is not drawn on a deviceless layout, use slot kind artwork',
         slot: slot.id,
       })
     const position = positionOf(set, slot)
@@ -591,6 +605,11 @@ export function validateProject(
       // one. A studio picture may be the screen alone.
       if (slot.kind !== 'artwork' && !studio && !copy[slot.id]?.headline?.trim())
         error('Headline missing', { slot: slot.id, locale: locale.id })
+      if (!headlineFits(locale.id, slot.id))
+        error('Headline does not fit: shorten the copy or lower headlineScale', {
+          slot: slot.id,
+          locale: locale.id,
+        })
       if (copy[slot.id]?.eyebrow && !eyebrowFits(locale.id, slot.id))
         error('Eyebrow does not fit on one line', { slot: slot.id, locale: locale.id })
 
@@ -738,14 +757,15 @@ export function validateProject(
         : tileAspects.map((tileAspect) => ({ tileAspect, box: approxTextBlock(layout, offset) }))
       for (const el of frontStickers) {
         const aspect = elementAspect(set.locales[0]?.id ?? '', el.artwork)
+        const opaque = aspect ? elementOpaque(set.locales[0]?.id ?? '', el.artwork) : null
         if (
           blocks.some(({ tileAspect, box }) =>
-            boxesOverlap(stickerBox(el, layout.span, aspect, tileAspect), box),
+            boxesOverlap(stickerBox(el, layout.span, aspect, tileAspect, opaque), box),
           )
         )
           issues.push({
             level: 'warn',
-            message: `Sticker "${el.id}" may cover the headline (box approximated from width${aspect ? " and the image's aspect ratio" : ' as a square, since the image size is not known here'})`,
+            message: `Sticker "${el.id}" may cover the headline (box approximated from width${aspect ? (opaque ? " and the image's drawn part" : " and the image's aspect ratio") : ' as a square, since the image size is not known here'})`,
             slot: slot.id,
           })
       }

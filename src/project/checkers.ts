@@ -1,3 +1,4 @@
+import { contrastAgainstColors } from '../lib/contrast'
 import { effectiveSettings } from '../lib/settings'
 import { getLayout } from '../presets/layouts'
 import { getSize } from '../presets/sizes'
@@ -11,6 +12,7 @@ import {
   type TextMeasurer,
 } from '../render/text'
 import { meanColorIn, paintBackground } from '../render/textBackdrop'
+import { DEFAULT_SETTINGS } from '../store'
 import type { Screen } from '../types'
 import { screensFor, settingsFor } from './bridge'
 import type { Project } from './types'
@@ -54,6 +56,40 @@ export function eyebrowFitsChecker(
         )
         const key = `${locale.id}:${screen.id}`
         fits.set(key, (fits.get(key) ?? true) && (!block || block.eyebrowFits))
+      }
+    }
+  }
+  return (localeId, slotId) => fits.get(`${localeId}:${slotId}`) ?? true
+}
+
+/**
+ * Whether each slot's copy fits its box without shrinking below `MIN_TEXT_SIZE`, per locale and
+ * for every target: the same measurement `forge render` aborts on, so `forge check` can say so first.
+ */
+export function headlineFitsChecker(
+  project: Project,
+  context: ContextFactory,
+): (localeId: string, slotId: string) => boolean {
+  const fits = new Map<string, boolean>()
+  for (const target of project.set.targets) {
+    const settings = settingsFor(project, target.id)
+    const size = getSize(settings.sizeId)
+    for (const locale of project.set.locales) {
+      for (const screen of screensFor(project, locale.id)) {
+        const resolved = effectiveSettings(screen, settings)
+        const span = sceneSpan(screen, settings)
+        const ctx = context(size.w * span, size.h) as unknown as TextMeasurer
+        const block = measureTextBlock(
+          ctx,
+          size.w * span,
+          size.w,
+          size.h,
+          getLayout(resolved.layout),
+          screen,
+          resolved,
+        )
+        const key = `${locale.id}:${screen.id}`
+        fits.set(key, (fits.get(key) ?? true) && (!block || block.fits))
       }
     }
   }
@@ -183,4 +219,33 @@ export function textBackdropChecker(
     measured.set(slotId, colors)
     return colors
   }
+}
+
+/**
+ * How the headline reads against the picture behind it, for the slots whose background carries an
+ * image (all of them, or just `slotIds`): the lowest ratio and the slot it belongs to, the same
+ * mean colours `forge check` judges the headline by. Null when no such slot has a picture loaded.
+ */
+export function worstBackdropContrast(
+  project: Project,
+  images: Map<string, CanvasImageSource>,
+  context: ContextFactory,
+  slotIds?: string[],
+): { slotId: string; ratio: number } | null {
+  const colorsOf = textBackdropChecker(project, images, context)
+  const global = { ...DEFAULT_SETTINGS, ...project.set.settings }
+  let worst: { slotId: string; ratio: number } | null = null
+  for (const slot of project.set.slots) {
+    if (slotIds && !slotIds.includes(slot.id)) continue
+    const effective = effectiveSettings(
+      { id: slot.id, headline: '', subhead: '', imageId: null, overrides: slot.overrides },
+      global,
+    )
+    if (!effective.background.image) continue
+    const colors = colorsOf(slot.id)
+    if (!colors.length) continue
+    const ratio = contrastAgainstColors(effective.textColor, colors)
+    if (!worst || ratio < worst.ratio) worst = { slotId: slot.id, ratio }
+  }
+  return worst
 }

@@ -167,7 +167,36 @@ export function wrap(ctx: TextMeasurer, words: Word[], maxWidth: number, lang?: 
     }
   }
   lines.push(line)
+  const last = all[all.length - 1]
+  if (last.glue && lines.length > 1) pullDownPrevious(lines, last, measure)
   return lines
+}
+
+const LONE_CJK = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}][、。，．！？」』）…]*$/u
+
+/**
+ * A line that ends up holding one CJK character cut from the word before it ("に" alone) reads
+ * as a mistake: the character before it comes down too, as long as that leaves a word behind and
+ * does not tear a marker band or a joined chain in two.
+ */
+function pullDownPrevious(lines: Line[], lastPiece: Word, measure: (ws: Word[], wd: number[]) => number) {
+  const tail = lines[lines.length - 1]
+  const prev = lines[lines.length - 2]
+  if (tail.words.length !== 1 || !LONE_CJK.test(tail.words[0].text) || prev.words.length < 2) return
+  const mover = prev.words[prev.words.length - 1]
+  if (mover.join || mover.break || tail.words[0].break) return
+  if (mover.span >= 0 && prev.words.some((w) => w !== mover && w.span === mover.span)) return
+  if (!lastPiece.glue) return
+  const width = prev.widths[prev.widths.length - 1]
+  prev.words.pop()
+  prev.widths.pop()
+  prev.width = measure(prev.words, prev.widths)
+  tail.words = [
+    { ...mover, glue: false },
+    { ...tail.words[0], glue: true },
+  ]
+  tail.widths = [width, tail.widths[0]]
+  tail.width = measure(tail.words, tail.widths)
 }
 
 /**

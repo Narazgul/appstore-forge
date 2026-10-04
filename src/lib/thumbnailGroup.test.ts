@@ -16,9 +16,9 @@ describe('groupLeadingTiles', () => {
     expect(searchResultLabel(rows)).toBe('These 3 tiles appear in the search result')
   })
 
-  it('fences a span-2 item whole when it starts inside the boundary, even past groupSize', () => {
-    // Tiles: [0-1] span2, [2] span1, [3] span1 — groupSize 3 falls inside the span-2 item's own
-    // second tile, so it is kept whole rather than split.
+  it('counts a span-2 item as two tiles, so the group ends after the second item', () => {
+    // Tiles: [0-1] span2, [2] span1, [3] span1 — the first two items fill groupSize 3 exactly,
+    // the third starts at tile 3 and stays outside.
     const rows = groupLeadingTiles([2, 1, 1], spanOf, 3)
     expect(rows.map((r) => r.inGroup)).toEqual([true, true, false])
     const groupedTileCount = rows.filter((r) => r.inGroup).reduce((n, r) => n + r.span, 0)

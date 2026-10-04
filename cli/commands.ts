@@ -5,15 +5,17 @@ import { join } from 'node:path'
 import { artworkPath, nodesPath, sourcePath } from '../src/project/bridge'
 import {
   eyebrowFitsChecker,
+  headlineFitsChecker,
   listFitsChecker,
   textBackdropChecker,
   textBlockChecker,
   type ContextFactory,
 } from '../src/project/checkers'
+import { imageOpaqueBounds } from '../src/lib/opaqueBounds'
 import { approvalHash } from '../src/project/hash'
 import { backgroundImageSrcs, isSlotSticker, isStudioSet } from '../src/project/types'
 import type { Approval, Project } from '../src/project/types'
-import { validateProject, type Issue } from '../src/project/validate'
+import { validateProject, type Band, type Issue } from '../src/project/validate'
 import { CliError } from './errors'
 import { registerFonts } from './fonts'
 import { readProject, repoRootOf, writeProject } from './project-io'
@@ -41,8 +43,12 @@ async function backgroundImages(project: Project, repoRoot: string) {
 async function elementAspectChecker(
   project: Project,
   repoRoot: string,
-): Promise<(localeId: string, artwork: string) => number | null> {
+): Promise<{
+  aspect: (localeId: string, artwork: string) => number | null
+  opaque: (localeId: string, artwork: string) => Band | null
+}> {
   const aspects = new Map<string, number>()
+  const drawn = new Map<string, Band | null>()
   for (const locale of project.set.locales) {
     for (const slot of project.set.slots) {
       // A hand-edited project file may give `elements` the wrong JSON shape; `validateProject`
@@ -55,10 +61,40 @@ async function elementAspectChecker(
         if (!existsSync(path)) continue
         const img = await loadImage(path)
         aspects.set(key, img.width / img.height)
+        drawn.set(key, imageOpaqueBounds(img as unknown as CanvasImageSource & Size, skia))
       }
     }
   }
-  return (localeId, artwork) => aspects.get(`${localeId}:${artwork}`) ?? null
+  return {
+    aspect: (localeId, artwork) => aspects.get(`${localeId}:${artwork}`) ?? null,
+    opaque: (localeId, artwork) => drawn.get(`${localeId}:${artwork}`) ?? null,
+  }
+}
+
+type Size = { width: number; height: number }
+
+async function validateLoaded(
+  project: Project,
+  repoRoot: string,
+  exists: (locale: string, screen: string) => boolean,
+  artExists: (locale: string, artwork: string) => boolean,
+  bgExists: (src: string) => boolean,
+) {
+  const art = await elementAspectChecker(project, repoRoot)
+  return validateProject(
+    project,
+    exists,
+    artExists,
+    eyebrowFitsChecker(project, skia),
+    art.aspect,
+    listFitsChecker(project, skia),
+    textBlockChecker(project, skia),
+    nodesLookup(repoRoot, project.set),
+    bgExists,
+    textBackdropChecker(project, await backgroundImages(project, repoRoot), skia),
+    art.opaque,
+    headlineFitsChecker(project, skia),
+  )
 }
 
 export function formatIssue(i: Issue): string {
@@ -109,18 +145,7 @@ export async function checkCommand(opts: { projectDir: string; setId: string; re
     opts.projectDir,
     opts.setId,
   )
-  const issues = validateProject(
-    project,
-    exists,
-    artExists,
-    eyebrowFitsChecker(project, skia),
-    await elementAspectChecker(project, repoRoot),
-    listFitsChecker(project, skia),
-    textBlockChecker(project, skia),
-    nodesLookup(repoRoot, project.set),
-    bgExists,
-    textBackdropChecker(project, await backgroundImages(project, repoRoot), skia),
-  )
+  const issues = await validateLoaded(project, repoRoot, exists, artExists, bgExists)
   // A studio set carries no stamp: there is nothing to approve it for.
   const approvalOk =
     opts.requireApproval && !isStudioSet(project.set) && !issues.some((i) => i.level === 'error')
@@ -140,20 +165,7 @@ export async function renderCommand(opts: {
     opts.projectDir,
     opts.setId,
   )
-  assertValid(
-    validateProject(
-      project,
-      exists,
-      artExists,
-      eyebrowFitsChecker(project, skia),
-      await elementAspectChecker(project, repoRoot),
-      listFitsChecker(project, skia),
-      textBlockChecker(project, skia),
-      nodesLookup(repoRoot, project.set),
-      bgExists,
-      textBackdropChecker(project, await backgroundImages(project, repoRoot), skia),
-    ),
-  )
+  assertValid(await validateLoaded(project, repoRoot, exists, artExists, bgExists))
   if (
     opts.requireApproval &&
     !isStudioSet(project.set) &&
@@ -179,20 +191,7 @@ export async function approveCommand(opts: {
     opts.setId,
   )
   if (isStudioSet(project.set)) throw new CliError('A studio set carries no approval; render it directly.', 1)
-  assertValid(
-    validateProject(
-      project,
-      exists,
-      artExists,
-      eyebrowFitsChecker(project, skia),
-      await elementAspectChecker(project, repoRoot),
-      listFitsChecker(project, skia),
-      textBlockChecker(project, skia),
-      nodesLookup(repoRoot, project.set),
-      bgExists,
-      textBackdropChecker(project, await backgroundImages(project, repoRoot), skia),
-    ),
-  )
+  assertValid(await validateLoaded(project, repoRoot, exists, artExists, bgExists))
   const approval: Approval = {
     hash: await approvalHash(project, bytes, artBytes, nodesBytes, bgBytes),
     by: opts.by,

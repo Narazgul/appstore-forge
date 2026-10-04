@@ -22,3 +22,10 @@ export function isRedoShortcut(e: KeyLike): boolean {
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && key === 'z') return true
   return e.ctrlKey && !e.metaKey && key === 'y'
 }
+
+/** The popovers that own Escape while they are open: it closes them and must not also reach the canvas. */
+export const ESCAPE_OVERLAY_SELECTOR = '.ideas-popover'
+
+export function isEscapeOverlayOpen(doc: Pick<Document, 'querySelector'>): boolean {
+  return doc.querySelector(ESCAPE_OVERLAY_SELECTOR) !== null
+}

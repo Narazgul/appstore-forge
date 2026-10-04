@@ -384,8 +384,9 @@ export type OverridableKey = Exclude<keyof Settings, 'sizeId'>
 /** The settings with no entry in `DEFAULT_SETTINGS`: absent is their own, meaningful default. */
 export type OptionalSettingKey = 'deviceOffset' | 'textOffset' | 'browserUrl' | 'backBlur' | 'deviceFade'
 
-/** How the device runs out at the bottom: into black, or into whatever is behind it. */
-export type DeviceFade = 'dark' | 'background'
+/** How the device runs out at the bottom: into black, or into whatever is behind it. `none` on a
+ *  slot switches an inherited fade off. */
+export type DeviceFade = 'dark' | 'background' | 'none'
 export type ScreenOverrides = Partial<Pick<Settings, OverridableKey>>
 
 export type TextAlign = 'center' | 'left'

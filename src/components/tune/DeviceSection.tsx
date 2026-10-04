@@ -10,7 +10,7 @@ const SHADOW_OPTIONS: { id: DeviceShadow; label: string }[] = [
   { id: 'hard', label: 'Hard' },
 ]
 
-const FADE_OPTIONS: { id: DeviceFade | 'off'; label: string }[] = [
+const FADE_OPTIONS: { id: Exclude<DeviceFade, 'none'> | 'off'; label: string }[] = [
   { id: 'off', label: 'Off' },
   { id: 'dark', label: 'Dark' },
   { id: 'background', label: 'Background' },
@@ -92,11 +92,11 @@ export function DeviceSection({ settings, put, turnOff }: SectionProps) {
           <select
             className="field"
             data-control="deviceFade"
-            value={settings.deviceFade ?? 'off'}
+            value={settings.deviceFade && settings.deviceFade !== 'none' ? settings.deviceFade : 'off'}
             onChange={(e) =>
               e.target.value === 'off'
                 ? turnOff?.('deviceFade')
-                : put({ deviceFade: e.target.value as DeviceFade })
+                : put({ deviceFade: e.target.value as Exclude<DeviceFade, 'none'> })
             }
           >
             {FADE_OPTIONS.map((o) => (

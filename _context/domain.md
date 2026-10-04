@@ -151,7 +151,7 @@ partly or entirely off the tile. A shape is deco, not
 content, and is exempt: it may sit under the headline on purpose, which is
 exactly what the feature graphic's background circle does. A chip is exempt
 from the same warning for a different reason: its real box depends on the
-shrunk font size, which the check has no canvas to measure — see "A slot's
+shrunk font size, which only `forge render` measures (`fitChipText`; the check measures the headline block, not a chip) — see "A slot's
 chips" in the README for what it checks instead (a chip must have non-blank,
 single-line text for every locale in the set).
 

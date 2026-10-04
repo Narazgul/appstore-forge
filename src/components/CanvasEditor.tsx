@@ -13,7 +13,7 @@ import {
   type Guides,
   type Pt,
 } from '../lib/canvasEdit'
-import { isEditableTarget, isRedoShortcut, isUndoShortcut } from '../lib/keyboard'
+import { isEditableTarget, isEscapeOverlayOpen, isRedoShortcut, isUndoShortcut } from '../lib/keyboard'
 import { effectiveSettings } from '../lib/settings'
 import type { SceneSources } from '../render/scene'
 import { orientedCorners, sceneTargets, targetKey, type SceneTarget } from '../render/targets'
@@ -177,6 +177,7 @@ export function CanvasEditor({
       }
       if (!now.active || !now.selected || isEditableTarget(e.target)) return
       if (e.key === 'Escape') {
+        if (isEscapeOverlayOpen(document)) return
         setPicked(null)
         return
       }
@@ -191,6 +192,7 @@ export function CanvasEditor({
           : undefined
       if (t.kind === 'element' && !element) return
       const edit = nudgeEdit(t, effective, element, dir, e.shiftKey, { span: now.span })
+      if (!edit) return
       const resolved: CanvasEdit =
         edit.kind === 'settings'
           ? { kind: 'settings', fields: resolveOverrides(edit.fields, now.settings) }

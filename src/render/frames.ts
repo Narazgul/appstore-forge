@@ -2,6 +2,10 @@ import type { DeviceShadow, DeviceSpec, FrameColor, ShapeKind } from '../types'
 
 export type Box = { x: number; y: number; w: number; h: number }
 
+/** Chrome blurs a canvas shadow with sigma = blur / 2, the Skia build the CLI renders with about
+ *  1.35 times wider for the same number; the editor widens its blur to look like the stored image. */
+export const shadowBlurScale = (browser = typeof document !== 'undefined') => (browser ? 1.35 : 1)
+
 /**
  * The one place that sets a shadow on the context — a device frame and (via `drawSticker`) a
  * sticker both cast the same 'soft' shadow, and a future frameless element can reuse this
@@ -23,7 +27,7 @@ export function applyShadow(
     return
   }
   ctx.shadowColor = 'rgba(15, 23, 42, 0.30)'
-  ctx.shadowBlur = frameW * 0.09
+  ctx.shadowBlur = frameW * 0.09 * shadowBlurScale()
   ctx.shadowOffsetY = frameW * 0.035
 }
 

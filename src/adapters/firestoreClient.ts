@@ -2,6 +2,7 @@ import type { BackgroundChoice, Gallery, ProjectStore } from '../project/store'
 import { EMPTY_GALLERY } from '../project/store'
 import { backgroundImageSrcs, isSlotSticker, slotScreens } from '../project/types'
 import type { Project, ProjectCopies, ProjectSet } from '../project/types'
+import { artworkIsShared } from '../project/bridge'
 
 /**
  * The slice of the compat SDK the adapter touches, handed over by the host page as
@@ -32,8 +33,11 @@ export const SETS_COLLECTION = 'backoffice/aso/sets'
 export const sourceObjectPath = (setId: string, localeId: string, screen: string) =>
   `backoffice/aso/sources/${setId}/${localeId}/${screen}.png`
 
-export const artworkObjectPath = (setId: string, localeId: string, artwork: string) =>
-  `backoffice/aso/artwork/${setId}/${localeId}/${artwork}.png`
+/** `shared` (see `artworkIsShared`): one file for all languages, so no locale folder. */
+export const artworkObjectPath = (setId: string, localeId: string, artwork: string, shared = false) =>
+  shared
+    ? `backoffice/aso/artwork/${setId}/${artwork}.png`
+    : `backoffice/aso/artwork/${setId}/${localeId}/${artwork}.png`
 
 export const nodesObjectPath = (setId: string, localeId: string, screen: string) =>
   `backoffice/aso/nodes/${setId}/${localeId}/${screen}.json`
@@ -164,10 +168,11 @@ export function firestoreProjectStore({
           (a): a is string => !!a,
         ),
       )
+      const sharedArtwork = artworkIsShared(project.set)
       const artworkKeys = project.set.locales.flatMap((l) =>
         unique([...referencedArtwork, ...(galleries[l.id]?.artwork ?? [])]).map((artwork) => ({
           key: `${l.id}/${artwork}`,
-          path: artworkObjectPath(imagesFrom, l.id, artwork),
+          path: artworkObjectPath(imagesFrom, l.id, artwork, sharedArtwork),
         })),
       )
       backgrounds = parseBackgroundsDoc(data)
@@ -181,12 +186,18 @@ export function firestoreProjectStore({
         { rows: backgroundKeys, into: backgroundUrls },
       ]
       const rows = groups.flatMap(({ rows, into }) => rows.map((row) => ({ ...row, into })))
+      const paths = unique(rows.map(({ path }) => path))
       const resolved = await Promise.allSettled(
-        rows.map(({ path }) => firebase.storage().ref(path).getDownloadURL()),
+        paths.map((path) => firebase.storage().ref(path).getDownloadURL()),
       )
+      const urlOf = new Map<string, string>()
       resolved.forEach((r, i) => {
-        if (r.status === 'fulfilled') rows[i].into.set(rows[i].key, r.value)
+        if (r.status === 'fulfilled') urlOf.set(paths[i], r.value)
       })
+      for (const { key, path, into } of rows) {
+        const url = urlOf.get(path)
+        if (url) into.set(key, url)
+      }
       return project
     },
     async save(project) {

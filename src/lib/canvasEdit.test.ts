@@ -33,7 +33,7 @@ import {
 } from './canvasEdit'
 import { DEFAULT_SETTINGS } from '../store'
 import type { OrientedBox, SceneTarget } from '../render/targets'
-import { turnsVisibly } from '../types'
+import { OFFSET_LIMIT, turnsVisibly } from '../types'
 import type { ChipElement, Screen, Settings, StickerElement } from '../types'
 
 /** A 210 px wide preview of a 1320 × 2868 store tile — the Screenshots step's card. */
@@ -370,11 +370,13 @@ describe('gestureEdit: move', () => {
     const { edit } = gestureEdit(g, { x: g.origin.x + 500, y: g.origin.y - 500 }, {}, dims())
     expect(edit.fields).toEqual({ x: ELEMENT_POSITION_RANGE.max, y: ELEMENT_POSITION_RANGE.min })
     const t = elementTarget('kevin', box(0, 0, 1, 1))
-    const edge = sticker({ x: ELEMENT_POSITION_RANGE.max, y: ELEMENT_POSITION_RANGE.min })
-    expect(nudgeEdit(t, settings(), edge, { x: 1, y: -1 }, true, { span: 1 }).fields).toEqual({
+    const edge = sticker({ x: ELEMENT_POSITION_RANGE.max - 0.01, y: ELEMENT_POSITION_RANGE.min + 0.01 })
+    expect(nudgeEdit(t, settings(), edge, { x: 1, y: -1 }, true, { span: 1 })!.fields).toEqual({
       x: ELEMENT_POSITION_RANGE.max,
       y: ELEMENT_POSITION_RANGE.min,
     })
+    const atEdge = sticker({ x: ELEMENT_POSITION_RANGE.max, y: ELEMENT_POSITION_RANGE.min })
+    expect(nudgeEdit(t, settings(), atEdge, { x: 1, y: -1 }, true, { span: 1 })).toBeNull()
   })
 
   it('adds a device drag to the offset it already had', () => {
@@ -598,11 +600,11 @@ describe('nudgeEdit', () => {
   it('steps an element by half a percent of the tile, five with Shift', () => {
     const t = elementTarget('kevin', box(0, 0, 1, 1))
     const el = sticker({ x: 0.5, y: 0.5 })
-    expect(nudgeEdit(t, settings(), el, { x: 1, y: 0 }, false, { span: 1 }).fields).toEqual({
+    expect(nudgeEdit(t, settings(), el, { x: 1, y: 0 }, false, { span: 1 })!.fields).toEqual({
       x: 0.505,
       y: 0.5,
     })
-    expect(nudgeEdit(t, settings(), el, { x: 0, y: -1 }, true, { span: 1 }).fields).toEqual({
+    expect(nudgeEdit(t, settings(), el, { x: 0, y: -1 }, true, { span: 1 })!.fields).toEqual({
       x: 0.5,
       y: 0.45,
     })
@@ -611,10 +613,12 @@ describe('nudgeEdit', () => {
 
   it('keeps the step one tile-percent on a panorama, where x counts in composition widths', () => {
     const t = elementTarget('kevin', box(0, 0, 1, 1))
-    expect(nudgeEdit(t, settings(), sticker({ x: 0.5 }), { x: 1, y: 0 }, false, { span: 2 }).fields).toEqual({
-      x: 0.5025,
-      y: 0.5,
-    })
+    expect(nudgeEdit(t, settings(), sticker({ x: 0.5 }), { x: 1, y: 0 }, false, { span: 2 })!.fields).toEqual(
+      {
+        x: 0.5025,
+        y: 0.5,
+      },
+    )
   })
 
   it('steps the copy through its offset', () => {
@@ -630,6 +634,14 @@ describe('nudgeEdit', () => {
       },
     )
     expect(edit).toEqual({ kind: 'settings', fields: { textOffset: { dx: 0, dy: 0.005 } } })
+  })
+
+  it('writes nothing at the offset limit, so a pin equal to the set-wide value is not dropped', () => {
+    const f = box(0, 0, 1, 1)
+    const t = { kind: 'text' as const, frame: f, parts: [f] }
+    const limit = settings({ textOffset: { dx: OFFSET_LIMIT, dy: 0 } })
+    expect(nudgeEdit(t, limit, undefined, { x: 1, y: 0 }, true, { span: 1 })).toBeNull()
+    expect(nudgeEdit(t, limit, undefined, { x: -1, y: 0 }, false, { span: 1 })).not.toBeNull()
   })
 })
 

@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react'
+import { editorBackdropContrast } from '../../ai/editorHost'
+import { AA_LARGE_TEXT } from '../../lib/contrast'
 import { imageAverageColor } from '../../lib/averageColor'
 import type { BackgroundChoice } from '../../project/store'
 import { backgroundImageSrcs } from '../../project/types'
@@ -89,6 +92,34 @@ function useBackgroundChoices(): BackgroundChoice[] {
   return [...offered, ...used.filter((src) => !seen.has(src)).map((src) => ({ src }))]
 }
 
+/** Below this the render stops (`validateProject`); the hint says so before the CLI does. */
+function BackdropContrastHint() {
+  const project = useStore((s) => s.project)
+  const images = useStore((s) => s.images)
+  const selectedId = useStore((s) => s.selectedId)
+  const [report, setReport] = useState<{ slotId: string; ratio: number } | null>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setReport(editorBackdropContrast(useStore.getState(), selectedId ? [selectedId] : undefined))
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [project, images, selectedId])
+
+  if (!report) return null
+  const low = report.ratio < AA_LARGE_TEXT
+  return (
+    <p
+      className="text-[11px] leading-snug"
+      data-control="backdrop-contrast"
+      style={{ color: low ? 'var(--warn)' : 'var(--muted)' }}
+    >
+      Headline on the picture: {report.ratio.toFixed(1)}:1
+      {low ? ` in tile ${report.slotId}, below ${AA_LARGE_TEXT}:1 forge will not render it` : ''}
+    </p>
+  )
+}
+
 /**
  * The picture under the background colour and its framing. Picking one makes the background solid in
  * the picture's mean colour, the fallback the contrast checks use when the picture itself is missing.
@@ -151,6 +182,7 @@ export function BackgroundImageControls({ settings, put }: SectionProps) {
           ))}
         </div>
       )}
+      {bg.image && <BackdropContrastHint />}
       {bg.image &&
         IMAGE_CONTROLS.map(({ key, label, min, max, step }) => {
           const value = bg.image![key] ?? IMAGE_DEFAULTS[key]

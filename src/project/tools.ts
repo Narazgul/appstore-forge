@@ -625,7 +625,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'update_settings',
     description:
-      'Changes the set-wide look every tile inherits (background, textColor, highlights, fontId, layout, positionId, deviceScale, ...; browserUrl is the address-field text of the browser device, backBlur: true blurs the back devices of a duo or trio, deviceFade "dark" or "background" lets the device run out at the bottom); background may carry image { src, focusX, focusY, zoom, blur, brightness } and finish [{ kind: grain|motion|halftone|newsprint|dither|riso|duotone|reeded, ... }], see list_presets and bg_fetch). null drops a key back to its default.',
+      'Changes the set-wide look every tile inherits (background, textColor, highlights, fontId, layout, positionId, deviceScale, ...; browserUrl is the address-field text of the browser device, backBlur: true blurs the back devices of a duo or trio, deviceFade "dark" or "background" lets the device run out at the bottom, "none" on a tile switches an inherited fade off); background may carry image { src, focusX, focusY, zoom, blur, brightness } and finish [{ kind: grain|motion|halftone|newsprint|dither|riso|duotone|reeded, ... }], see list_presets and bg_fetch). null drops a key back to its default.',
     input: object('', { set: SET, settings: freeObject('Patch over the set settings.') }, ['settings']),
     async run(host, input) {
       const project = await host.load(setIdOf(input))

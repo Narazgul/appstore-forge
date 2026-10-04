@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AA_LARGE_TEXT, AA_NORMAL_TEXT, contrastAgainstBackground, contrastRatio } from '../lib/contrast'
-import { validateProject } from './validate'
+import { validateProject, type Band } from './validate'
 import type { Project, ProjectLocale, SlotChip, SlotCopy, SlotElement, SlotShape } from './types'
 
 /** Mirrors the message/level branching in validate.ts, for fixtures built to land in one branch. */
@@ -600,6 +600,55 @@ describe('stickers', () => {
         'Sticker "s" may cover the headline (box approximated from width and the image\'s aspect ratio)',
       slot: 'a',
     })
+  })
+
+  it('errors on a headline the checker says does not fit', () => {
+    const p = base()
+    const issues = (fits: boolean) =>
+      validateProject(
+        p,
+        always,
+        always,
+        () => true,
+        () => null,
+        () => true,
+        null,
+        () => null,
+        () => true,
+        null,
+        () => null,
+        () => fits,
+      )
+    expect(issues(true).filter((i) => i.message.startsWith('Headline does not fit'))).toEqual([])
+    expect(issues(false)).toContainEqual({
+      level: 'error',
+      message: 'Headline does not fit: shorten the copy or lower headlineScale',
+      slot: 'a',
+      locale: 'en',
+    })
+  })
+
+  it('judges a sticker by the part of its image that is drawn, not by the transparent margin', () => {
+    const p = base()
+    p.set.slots[0].elements = [sticker({ y: 0.1, width: 0.5, layer: 'front' })]
+    const covers = (opaque: Band | null) =>
+      validateProject(
+        p,
+        always,
+        always,
+        () => true,
+        () => 1,
+        () => true,
+        null,
+        () => null,
+        () => true,
+        null,
+        () => opaque,
+      ).filter((i) => i.message.includes('may cover'))
+    expect(covers(null)).toHaveLength(1)
+    expect(covers({ left: 0, right: 1, top: 0, bottom: 1 })).toHaveLength(1)
+    expect(covers({ left: 0, right: 1, top: 0.6, bottom: 1 })).toHaveLength(1)
+    expect(covers({ left: 0, right: 1, top: 0, bottom: 0.3 })).toEqual([])
   })
 
   it('measures the box height in tile heights, so a square sticker below the band on a tall tile stays quiet', () => {
@@ -1495,7 +1544,7 @@ describe('deviceless layouts', () => {
     p.set.settings = { layout: 'text-only' }
     expect(validateProject(p, always)).toContainEqual({
       level: 'warn',
-      message: 'Quellbild wird nicht gezeichnet, Slot-Art artwork verwenden',
+      message: 'The source image is not drawn on a deviceless layout, use slot kind artwork',
       slot: 'a',
     })
   })
@@ -1505,9 +1554,9 @@ describe('deviceless layouts', () => {
     p.set.settings = { layout: 'text-only' }
     p.set.slots = [{ id: 'a', kind: 'artwork', overrides: {} }]
     p.copies.en.a = { headline: 'Hi', subhead: '' }
-    expect(
-      validateProject(p, always).some((i) => i.message.includes('Quellbild wird nicht gezeichnet')),
-    ).toBe(false)
+    expect(validateProject(p, always).some((i) => i.message.includes('The source image is not drawn'))).toBe(
+      false,
+    )
   })
 
   it('does not demand an artwork for an arrangement that would need one on an ordinary layout', () => {

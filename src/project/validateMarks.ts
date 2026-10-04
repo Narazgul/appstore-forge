@@ -104,7 +104,7 @@ export const markNodes = (el: SlotMark) =>
     t && typeof t === 'object' && isNodeTarget(t.node) && !t.rect ? [t.node] : [],
   )
 
-const FADES = ['dark', 'background']
+const FADES = ['dark', 'background', 'none']
 
 /** What is wrong with the frame and depth settings of a set or a slot's overrides. */
 export function frameSettingProblems(s: {

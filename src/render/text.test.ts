@@ -435,6 +435,33 @@ describe('wrap with a language', () => {
   })
 })
 
+describe('a lone CJK character on the last line', () => {
+  const texts = (src: string, width: number, lang: string) =>
+    wrap(measurer(10), parseMarkup(src), width, lang).map((l) => l.words.map((w) => w.text).join(''))
+
+  it('takes the piece before it down, so the last line is never one character', () => {
+    const plain = wrap(measurer(10), parseMarkup('見證財富增長每一天'), 90, 'zh')
+    expect(plain).toHaveLength(1)
+    const lines = wrap(measurer(10), parseMarkup('見證財富增長每一天に'), 90, 'ja')
+    const rows = lines.map((l) => l.words.map((w) => w.text).join(''))
+    expect(rows.join('')).toBe('見證財富增長每一天に')
+    for (const row of rows) expect(row.length).toBeGreaterThan(1)
+    for (const line of lines) expect(line.width).toBeLessThanOrEqual(90)
+  })
+
+  it('leaves a line alone that has more than one character, and Latin text', () => {
+    expect(texts('見證財富增長每一天に', 100, 'ja')).toHaveLength(1)
+    expect(texts('budget a', 60, 'de')).toEqual(['budget', 'a'])
+  })
+
+  it('keeps a marker band whole instead of tearing it', () => {
+    const lines = wrap(measurer(10), parseMarkup('*見證財富增長每一天*に'), 90, 'ja')
+    const spans = lines.map((l) => l.words.map((w) => w.span))
+    expect(spans.flat().filter((s) => s === 0).length).toBeGreaterThan(0)
+    expect(lines.map((l) => l.words.map((w) => w.text).join('')).join('')).toBe('見證財富增長每一天に')
+  })
+})
+
 /** A canvas stand-in: 10 units per character, and it writes down where things landed. Shared by
  *  every `drawTextBlock` describe block below. */
 const recorder = () => {

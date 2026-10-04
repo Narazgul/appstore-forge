@@ -400,7 +400,7 @@ A chip adds no bytes to the approval hash beyond its own JSON and its copy
 entry — there is no image to read — so a set naming no chips hashes exactly as
 it did before this feature existed. `forge check` does not warn about a chip
 covering the headline the way it does for a sticker: the real box depends on
-the shrunk font size, which the check has no canvas to measure, so guessing
+the shrunk font size, which only `forge render` measures (the check measures the headline block, not a chip), so guessing
 would as often be wrong as right.
 
 In the GUI, "Add chip" sits next to "Add sticker" and "Add circle" in the same

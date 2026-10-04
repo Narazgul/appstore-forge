@@ -351,6 +351,10 @@ export function settingsFor(project: Project, targetId: string): Settings {
 export const sourcePath = (set: ProjectSet, localeId: string, screen: string) =>
   set.sources.replaceAll('{locale}', localeId).replaceAll('{screen}', screen)
 
+/** An artwork path with no `{locale}` names one file for every language: it is stored and fetched once. */
+export const artworkIsShared = (set: ProjectSet) =>
+  !(set.artworkSources ?? DEFAULT_ARTWORK_SOURCES).includes('{locale}')
+
 export const artworkPath = (set: ProjectSet, localeId: string, artwork: string) =>
   (set.artworkSources ?? DEFAULT_ARTWORK_SOURCES)
     .replaceAll('{locale}', localeId)

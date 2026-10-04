@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { isEditableTarget, isRedoShortcut, isUndoShortcut } from './keyboard'
+import {
+  ESCAPE_OVERLAY_SELECTOR,
+  isEditableTarget,
+  isEscapeOverlayOpen,
+  isRedoShortcut,
+  isUndoShortcut,
+} from './keyboard'
 
 const tag = (tagName: string, contentEditable = false) =>
   ({ tagName, isContentEditable: contentEditable }) as unknown as EventTarget
@@ -53,5 +59,17 @@ describe('isRedoShortcut', () => {
   it('does not match plain Ctrl+Z or an unmodified key', () => {
     expect(isRedoShortcut(key('z', { ctrlKey: true }))).toBe(false)
     expect(isRedoShortcut(key('y'))).toBe(false)
+  })
+})
+
+describe('isEscapeOverlayOpen', () => {
+  it('is true only while an Escape-owning popover is in the document', () => {
+    const asked: string[] = []
+    const doc = (found: unknown) => ({
+      querySelector: (sel: string) => (asked.push(sel), found),
+    })
+    expect(isEscapeOverlayOpen(doc({}) as unknown as Document)).toBe(true)
+    expect(isEscapeOverlayOpen(doc(null) as unknown as Document)).toBe(false)
+    expect(asked).toEqual([ESCAPE_OVERLAY_SELECTOR, ESCAPE_OVERLAY_SELECTOR])
   })
 })
