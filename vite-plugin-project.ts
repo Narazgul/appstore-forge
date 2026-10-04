@@ -4,6 +4,7 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname, join, normalize, sep } from 'node:path'
 import type { Plugin } from 'vite'
+import { listBackgroundChoices } from './cli/background'
 import { copyDir, listSets, readGallery, readProject, repoRootOf, writeProject } from './cli/project-io'
 import { SET_ID_RE } from './src/project/duplicate'
 import { artworkPath, nodesPath, sourcePath } from './src/project/bridge'
@@ -34,6 +35,7 @@ const isProjectRoute = (url: string) => {
   return (
     path === '/api/project' ||
     path === '/api/gallery' ||
+    path === '/api/backgrounds' ||
     path === '/api/sets' ||
     path.startsWith('/sources/') ||
     path.startsWith('/artwork/') ||
@@ -282,6 +284,11 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
       const project = await readProject(projectDir, resolveSetId(url, currentSetId))
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify(await readGallery(repoRoot, project.set)))
+      return true
+    }
+    if (path === '/api/backgrounds' && req.method === 'GET') {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify(await listBackgroundChoices(projectDir)))
       return true
     }
     if (path === '/api/project' && req.method === 'PUT') {

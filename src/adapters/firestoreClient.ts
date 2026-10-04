@@ -1,6 +1,6 @@
-import type { Gallery, ProjectStore } from '../project/store'
+import type { BackgroundChoice, Gallery, ProjectStore } from '../project/store'
 import { EMPTY_GALLERY } from '../project/store'
-import { isSlotSticker, slotScreens } from '../project/types'
+import { backgroundImageSrcs, isSlotSticker, slotScreens } from '../project/types'
 import type { Project, ProjectCopies, ProjectSet } from '../project/types'
 
 /**
@@ -35,6 +35,13 @@ export const sourceObjectPath = (setId: string, localeId: string, screen: string
 export const artworkObjectPath = (setId: string, localeId: string, artwork: string) =>
   `backoffice/aso/artwork/${setId}/${localeId}/${artwork}.png`
 
+export const nodesObjectPath = (setId: string, localeId: string, screen: string) =>
+  `backoffice/aso/nodes/${setId}/${localeId}/${screen}.json`
+
+/** Keyed by the path from the repo root alone, not by set: a picture is the same file whichever set
+ *  draws it, and a duplicated set needs no copy of its own. */
+export const backgroundObjectPath = (src: string) => `backoffice/aso/backgrounds/${src}`
+
 export function parseSetDoc(data: unknown): Project {
   const d = data as { set?: ProjectSet; copies?: ProjectCopies } | undefined
   if (!d?.set) throw new Error('Document has no set')
@@ -49,6 +56,15 @@ export function parseGalleryDoc(data: unknown): Record<string, Gallery> {
     galleries[localeId] = { screens: entry?.screens ?? [], artwork: entry?.artwork ?? [] }
   }
   return galleries
+}
+
+/** The background images `build:aso` uploaded for the picker; absent on sets synced before it did. */
+export function parseBackgroundsDoc(data: unknown): BackgroundChoice[] {
+  const raw = (data as { backgrounds?: unknown } | undefined)?.backgrounds
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((b): b is BackgroundChoice => !!b && typeof (b as BackgroundChoice).src === 'string')
+    .map((b) => (typeof b.average === 'string' ? { src: b.src, average: b.average } : { src: b.src }))
 }
 
 // An image URL that can never load: the store then logs "source screenshot missing" for the
@@ -80,7 +96,9 @@ export function firestoreProjectStore({
   const doc = (id: string = setId) => collection().doc(id)
   const urls = new Map<string, string>()
   const artworkUrls = new Map<string, string>()
+  const backgroundUrls = new Map<string, string>()
   let galleries: Record<string, Gallery> = {}
+  let backgrounds: BackgroundChoice[] = []
   let ownWrite = ''
   // The set THIS set's images actually live under: itself, unless it is a duplicate that has
   // never had its own screenshots synced — set by `load`, read by `createSet`.
@@ -120,13 +138,22 @@ export function firestoreProjectStore({
           path: artworkObjectPath(imagesFrom, l.id, artwork),
         })),
       )
+      backgrounds = parseBackgroundsDoc(data)
+      const backgroundKeys = unique([
+        ...backgroundImageSrcs(project.set),
+        ...backgrounds.map((b) => b.src),
+      ]).map((src) => ({ key: src, path: backgroundObjectPath(src) }))
+      const groups = [
+        { rows: keys, into: urls },
+        { rows: artworkKeys, into: artworkUrls },
+        { rows: backgroundKeys, into: backgroundUrls },
+      ]
+      const rows = groups.flatMap(({ rows, into }) => rows.map((row) => ({ ...row, into })))
       const resolved = await Promise.allSettled(
-        [...keys, ...artworkKeys].map(({ path }) => firebase.storage().ref(path).getDownloadURL()),
+        rows.map(({ path }) => firebase.storage().ref(path).getDownloadURL()),
       )
       resolved.forEach((r, i) => {
-        if (r.status !== 'fulfilled') return
-        if (i < keys.length) urls.set(keys[i].key, r.value)
-        else artworkUrls.set(artworkKeys[i - keys.length].key, r.value)
+        if (r.status === 'fulfilled') rows[i].into.set(rows[i].key, r.value)
       })
       return project
     },
@@ -173,6 +200,30 @@ export function firestoreProjectStore({
       if (!res.ok) throw new Error(`Artwork fetch failed: ${localeId}/${artwork}`)
       return new Uint8Array(await res.arrayBuffer())
     },
+    async nodesBytes(localeId, screen) {
+      const url = await firebase
+        .storage()
+        .ref(nodesObjectPath(imagesFrom, localeId, screen))
+        .getDownloadURL()
+        .catch(() => null)
+      if (!url) throw new Error(`Nodes missing: ${localeId}/${screen}`)
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`Nodes fetch failed: ${localeId}/${screen}`)
+      return new Uint8Array(await res.arrayBuffer())
+    },
+    backgroundUrl(src) {
+      return backgroundUrls.get(src) ?? MISSING_SOURCE
+    },
+    async backgroundBytes(src) {
+      const url = backgroundUrls.get(src)
+      if (!url) throw new Error(`Background missing: ${src}`)
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`Background fetch failed: ${src}`)
+      return new Uint8Array(await res.arrayBuffer())
+    },
+    backgroundGallery() {
+      return backgrounds
+    },
     gallery(localeId) {
       return galleries[localeId] ?? EMPTY_GALLERY
     },
@@ -197,6 +248,7 @@ export function firestoreProjectStore({
         // A copy of the set it was duplicated from, not a live reference — the new doc starts
         // with whatever that set's images looked like the moment it was duplicated.
         gallery: galleries,
+        backgrounds,
         // Never chained: a duplicate of a duplicate still points at the original that actually
         // has images in Storage.
         sourcesFrom: imagesFrom,

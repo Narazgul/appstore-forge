@@ -12,7 +12,16 @@ import { validateProject } from '../project/validate'
 import { DEVICES, frameAspect, getDevice } from '../presets/devices'
 import type { ArrowMark, MarkElement, SceneElement, Screen, Settings } from '../types'
 import { deviceScreen } from './frames'
-import { arrowPath, edgeToward, markColor, readableOn, screenFrame, sidePoint, type Frame } from './marks'
+import {
+  arrowPath,
+  drawMarks,
+  edgeToward,
+  markColor,
+  readableOn,
+  screenFrame,
+  sidePoint,
+  type Frame,
+} from './marks'
 import { renderScene } from './scene'
 
 const sha = (data: Uint8ClampedArray) => createHash('sha256').update(data).digest('hex')
@@ -646,5 +655,53 @@ describe('renderScene: marks, browser frame and depth', () => {
     const faded = render(400, 800, { ...solid, deviceFade: 'background' })
     expect(pixel(faded, 400, 260, 799)).toEqual([0x33, 0x66, 0x99])
     expect(pixel(faded, 400, 260, 400)).toEqual(pixel(render(400, 800, solid), 400, 260, 400))
+  }, 60_000)
+})
+
+describe('highlight on a dark page', () => {
+  const scene = (w: number, h: number) => ({
+    W: w,
+    w,
+    h,
+    unit: Math.min(w, h),
+    screen: null,
+    textBox: () => null,
+    settings: DEFAULT_SETTINGS,
+  })
+  const mark: MarkElement = {
+    id: 'h',
+    mark: 'highlight',
+    at: { on: 'tile', x: 0.5, y: 0.5, w: 0.6, h: 0.1 },
+    opacity: 0.85,
+    color: '#ffe27a',
+  }
+  const draw = (page: string) => {
+    const ctx = createCanvas(200, 200).getContext('2d') as unknown as CanvasRenderingContext2D
+    ctx.fillStyle = page
+    ctx.fillRect(0, 0, 200, 200)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(90, 96, 20, 8)
+    drawMarks(ctx, [mark], scene(200, 200))
+    const at = (x: number, y: number) => Array.from(ctx.getImageData(x, y, 1, 1).data.slice(0, 3))
+    return { at, data: ctx.getImageData(0, 0, 200, 200).data }
+  }
+
+  it('lifts the band behind the text in the marker colour and leaves light text the lightest', () => {
+    const { at } = draw('#1c1c1e')
+    const band = at(70, 100)
+    expect(band[0]).toBeGreaterThan(80)
+    expect(band[0]).toBeGreaterThan(band[2] + 20)
+    expect(Math.min(...at(100, 100))).toBeGreaterThanOrEqual(245)
+    expect(at(100, 20)).toEqual([28, 28, 30])
+  })
+
+  it('is deterministic', () => {
+    expect(sha(draw('#1c1c1e').data)).toBe(sha(draw('#1c1c1e').data))
+  })
+
+  it('still multiplies on a light page', () => {
+    const [r, g, b] = draw('#f0f0f0').at(100, 100)
+    expect(r).toBe(255)
+    expect(b).toBeLessThan(g - 60)
   })
 })

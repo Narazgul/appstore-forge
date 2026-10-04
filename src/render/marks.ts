@@ -40,6 +40,7 @@ const STRONG_RED = '#ff4b2b'
 const DARK = '#111114'
 const LIGHT = '#ffffff'
 const MARK_SHADOW = 'rgba(15, 23, 42, 0.28)'
+const DARK_BAND_ALPHA = 0.4
 
 const opaque = (hex: string) =>
   hex.length === 9 ? hex.slice(0, 7) : hex.length === 5 ? hex.slice(0, 4) : hex
@@ -268,21 +269,40 @@ function drawHighlight(ctx: CanvasRenderingContext2D, el: HighlightMark, scene: 
   const f = targetFrame(el.at, scene)
   if (!f || f.w <= 0 || f.h <= 0) return
   const color = el.color ?? scene.settings.highlights[0] ?? '#ffe27a'
-  // Multiplied over a light page the marker leaves the text readable; over a dark one it would
-  // vanish, so there it underlines instead of covering.
-  const light = (brightnessUnder(ctx, f) ?? 1) >= 0.45
   const ext = f.h * 0.14
-  const top = light ? -f.h / 2 + f.h * 0.04 : f.h * 0.4
-  const height = light ? f.h : f.h * 0.22
+  const light = (brightnessUnder(ctx, f) ?? 1) >= 0.45
   ctx.save()
   ctx.translate(f.cx, f.cy)
   if (f.angle) ctx.rotate(f.angle)
-  if (light) ctx.globalCompositeOperation = 'multiply'
-  ctx.globalAlpha = el.opacity
-  ctx.fillStyle = color
-  ctx.beginPath()
-  ctx.roundRect(-f.w / 2 - ext, top, f.w + ext * 2, height, Math.min(f.h * 0.2, height / 2))
-  ctx.fill()
+  if (light) {
+    // Multiplied over a light page the marker darkens the paper, never the text.
+    ctx.globalCompositeOperation = 'multiply'
+    ctx.globalAlpha = el.opacity
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.roundRect(-f.w / 2 - ext, -f.h / 2 + f.h * 0.04, f.w + ext * 2, f.h, Math.min(f.h * 0.2, f.h / 2))
+    ctx.fill()
+  } else {
+    // Multiply would vanish on a dark page; screen only lightens, so light text stays the lightest
+    // thing in the band, and a glowing rim marks the edge.
+    const padY = f.h * 0.18
+    const w = f.w + ext * 2
+    const h = f.h + padY * 2
+    const r = Math.min(f.h * 0.3, h / 2)
+    ctx.beginPath()
+    ctx.roundRect(-w / 2, -h / 2, w, h, r)
+    ctx.globalCompositeOperation = 'screen'
+    ctx.globalAlpha = el.opacity * DARK_BAND_ALPHA
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.globalAlpha = el.opacity
+    ctx.shadowColor = color
+    ctx.shadowBlur = f.h * 0.6
+    ctx.strokeStyle = color
+    ctx.lineWidth = Math.max(1.5, f.h * 0.08)
+    ctx.stroke()
+  }
   ctx.restore()
 }
 

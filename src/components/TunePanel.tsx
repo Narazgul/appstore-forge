@@ -6,6 +6,7 @@ import { BackgroundSection } from './tune/BackgroundSection'
 import { Section } from './tune/Controls'
 import { DeviceSection } from './tune/DeviceSection'
 import { LayoutSection } from './tune/LayoutSection'
+import type { SwitchableKey } from './tune/shared'
 import { StickersSection } from './tune/StickersSection'
 import { TypeSection } from './tune/TypeSection'
 
@@ -37,6 +38,14 @@ export function TunePanel() {
     selected ? selected.overrides[key] !== undefined : global[key] !== undefined
   const clear = (key: OptionalSettingKey) =>
     selected ? clearOverrides(selected.id, [key]) : clearSettings([key])
+  // `deviceFade` has no "off" value a screen could set, so a screen can only go back to inheriting it.
+  const turnOff = (key: SwitchableKey) => {
+    if (!selected) return clearSettings([key])
+    const off = key === 'browserUrl' ? '' : key === 'backBlur' ? false : undefined
+    if (off === undefined || global[key] === undefined || global[key] === off)
+      return clearOverrides(selected.id, [key])
+    setOverride(selected.id, { [key]: off })
+  }
   const sectionOverridden = (key: string) =>
     !!selected && SECTION_KEYS[key]?.some((k) => selected.overrides[k] !== undefined)
   const resetSection = (key: string) =>
@@ -82,7 +91,7 @@ export function TunePanel() {
 
       {selected?.kind !== 'artwork' && (
         <Section id="device" title="Device frame" {...scope('device')}>
-          <DeviceSection settings={settings} put={put} />
+          <DeviceSection settings={settings} put={put} turnOff={turnOff} />
         </Section>
       )}
 

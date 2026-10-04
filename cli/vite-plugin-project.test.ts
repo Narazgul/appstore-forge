@@ -217,6 +217,32 @@ describe('createProjectHandlers', () => {
     expect(res.statusCode).toBe(400)
   })
 
+  it('GET /api/backgrounds lists the images of the background folder with their recorded mean colour', async () => {
+    const dir = await scaffold()
+    await mkdir(join(dir, 'hintergruende'))
+    for (const file of ['wiese.jpg', 'eigenes.png', 'notiz.txt'])
+      await writeFile(join(dir, 'hintergruende', file), 'x')
+    await writeFile(
+      join(dir, 'hintergruende', 'credits.json'),
+      JSON.stringify({ 'wiese.jpg': { average: '#5a665e' } }),
+    )
+    const handlers = createProjectHandlers({ projectDir: dir, setId: 'default' })
+    const res = fakeRes()
+    expect(await handlers.serve(fakeReq('GET', '/api/backgrounds'), res)).toBe(true)
+    expect(JSON.parse(res.body)).toEqual([
+      { src: 'aso/hintergruende/eigenes.png' },
+      { src: 'aso/hintergruende/wiese.jpg', average: '#5a665e' },
+    ])
+  })
+
+  it('GET /api/backgrounds is an empty list without a background folder', async () => {
+    const dir = await scaffold()
+    const handlers = createProjectHandlers({ projectDir: dir, setId: 'default' })
+    const res = fakeRes()
+    await handlers.serve(fakeReq('GET', '/api/backgrounds'), res)
+    expect(JSON.parse(res.body)).toEqual([])
+  })
+
   it('GET /api/project?set=<id> reads that set instead of the startup default', async () => {
     const dir = await scaffold()
     await writeFile(join(dir, 'promo.json'), JSON.stringify({ ...SET, id: 'promo' }))

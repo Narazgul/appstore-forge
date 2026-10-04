@@ -20,7 +20,7 @@ import {
   wrap,
   type TextMeasurer,
 } from './text'
-import { getLayout } from '../presets/layouts'
+import { LAYOUTS, getLayout } from '../presets/layouts'
 import { DEFAULT_SETTINGS } from '../store'
 import type { Screen } from '../types'
 
@@ -539,6 +539,44 @@ describe('drawTextBlock geometry', () => {
     const fallback = recorder()
     drawTextBlock(fallback.ctx, W, 250, 1000, layout, s, left)
     expect(fallback.texts[0].color).toBe(left.textColor)
+  })
+})
+
+describe('textColumn (landscape-left/right)', () => {
+  const s = screen('Budget erstellen mit der Regel heute', 'So planst du')
+  const firstX = (rec: ReturnType<typeof recorder>, word: string) => rec.texts.find((t) => t.text === word)!.x
+
+  it('puts a short subhead under the headline edge when the block is centred', () => {
+    const rec = recorder()
+    drawTextBlock(rec.ctx, 1200, 1200, 630, getLayout('landscape-left'), s, DEFAULT_SETTINGS)
+    expect(DEFAULT_SETTINGS.textAlign).toBe('center')
+    expect(firstX(rec, 'So')).toBeCloseTo(firstX(rec, 'Budget'), 6)
+  })
+
+  it('aligns RTL rows on the right edge of the column', () => {
+    const rec = recorder()
+    drawTextBlock(
+      rec.ctx,
+      1200,
+      1200,
+      630,
+      getLayout('landscape-right'),
+      { ...s, lang: 'ar' },
+      DEFAULT_SETTINGS,
+    )
+    const right = (word: string, width: number) => firstX(rec, word) + width
+    expect(right('So', 20)).toBeCloseTo(right('Budget', 60), 6)
+  })
+
+  it('leaves every other layout aligning row by row', () => {
+    expect(LAYOUTS.filter((l) => l.textColumn).map((l) => l.id)).toEqual([
+      'landscape-left',
+      'landscape-right',
+    ])
+    const rec = recorder()
+    const plain = { ...getLayout('landscape-left'), textColumn: undefined }
+    drawTextBlock(rec.ctx, 1200, 1200, 630, plain, s, DEFAULT_SETTINGS)
+    expect(firstX(rec, 'So')).toBeGreaterThan(firstX(rec, 'Budget'))
   })
 })
 

@@ -483,6 +483,9 @@ type State = {
   setSlotRole: (slotId: string, role: TileRole | undefined) => void
   /** put a gallery image into one frame of a slot; null clears an optional one */
   setSlotSource: (slotId: string, role: SlotRole, name: string | null) => Promise<void>
+  /** a background image by its path from the repo root, loaded into the registry once; null when
+   *  the backend serves none or the file does not load */
+  loadBackgroundImage: (src: string) => Promise<HTMLImageElement | null>
   /** replace a slot's sticker list; an empty list removes the key */
   setSlotElements: (slotId: string, elements: SlotElement[]) => Promise<void>
   /** replace a slot's mosaic extra-screen list; an empty list removes the key */
@@ -1226,6 +1229,22 @@ export const useStore = create<State>((set, get) => ({
     if (!name) return
     const fresh = await loadNewSources(project, store, get().images, name, role)
     if (Object.keys(fresh).length) set({ images: { ...get().images, ...fresh } })
+  },
+
+  loadBackgroundImage: async (src) => {
+    const id = backgroundIdFor(src)
+    const have = get().images[id]
+    if (have) return have
+    const url = get().projectStore?.backgroundUrl?.(src)
+    if (!url) return null
+    try {
+      const img = await loadImageUrl(url)
+      set({ images: { ...get().images, [id]: img } })
+      return img
+    } catch (error) {
+      console.warn(`background image missing for ${src}`, error)
+      return null
+    }
   },
 
   setSlotElements: async (slotId, elements) => {

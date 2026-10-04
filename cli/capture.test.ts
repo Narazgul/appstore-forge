@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +12,7 @@ import {
   parseCaptureArgs,
   parseNodes,
   runCapture,
+  topResumedPackage,
   stepsFor,
   type Adb,
 } from './capture'
@@ -41,6 +42,16 @@ describe('parseNodes', () => {
   })
 })
 
+describe('topResumedPackage', () => {
+  it('reads the package of the top resumed activity, falling back to mResumedActivity', () => {
+    expect(topResumedPackage(resumed('app.a'))).toBe('app.a')
+    expect(topResumedPackage('    mResumedActivity: ActivityRecord{9 u0 com.launcher/.Home t1}\n')).toBe(
+      'com.launcher',
+    )
+    expect(topResumedPackage('nothing here')).toBeUndefined()
+  })
+})
+
 describe('parseCaptureArgs', () => {
   it('reads the flags and pairs each --args with the --call before it', () => {
     const { projectDir, opts } = parseCaptureArgs([
@@ -65,6 +76,9 @@ describe('parseCaptureArgs', () => {
       'dev_check_in',
       '--settle',
       '800',
+      '--hide-ime',
+      '--package',
+      'app.x',
     ])
     expect(projectDir).toBe('/p')
     expect(opts).toEqual({
@@ -76,6 +90,8 @@ describe('parseCaptureArgs', () => {
       store: 'google',
       calls: [{ tool: 'dev_set_format', args: { a: 1 } }, { tool: 'dev_check_in' }],
       settleMs: 800,
+      hideIme: true,
+      package: 'app.x',
     })
   })
   it('refuses missing out, a stray --args, a store without seed and non-object args', () => {
@@ -108,12 +124,24 @@ describe('stepsFor', () => {
 
 const pngOf = (w: number, h: number) => PNG.sync.write(new PNG({ width: w, height: h }))
 
-function fakeAdb(log: string[][], fail?: (args: string[]) => boolean): Adb {
+const APP = 'app.tinygiants.getalife.debug'
+const resumed = (pkg: string) =>
+  `  ResumedActivity: ActivityRecord{1 u0 ${pkg}/x.Y t2}\n  topResumedActivity=ActivityRecord{1 u0 ${pkg}/app.tinygiants.androidapp.MainActivity t2}\n`
+
+type DeviceState = { wake?: string; front?: string; ime?: boolean[] }
+
+function fakeAdb(log: string[][], fail?: (args: string[]) => boolean, state: DeviceState = {}): Adb {
+  const ime = [...(state.ime ?? [false])]
   return async (args) => {
     log.push(args)
     if (fail?.(args)) throw new Error('boom')
+    const cmd = args.join(' ')
     if (args.includes('screencap')) return pngOf(1080, 2400)
     if (args.includes('cat')) return Buffer.from(XML)
+    if (cmd.endsWith('dumpsys power')) return Buffer.from(`  mWakefulness=${state.wake ?? 'Awake'}\n`)
+    if (cmd.endsWith('dumpsys activity activities')) return Buffer.from(resumed(state.front ?? APP))
+    if (cmd.endsWith('dumpsys input_method'))
+      return Buffer.from(`  mInputShown=${(ime.length > 1 ? ime.shift() : ime[0]) ?? false}\n`)
     return Buffer.alloc(0)
   }
 }
@@ -185,6 +213,132 @@ describe('runCapture', () => {
     ).rejects.toThrow('boom')
     expect(log.at(-1)!.join(' ')).toContain('command exit')
     expect(log.some((a) => a.includes('forward'))).toBe(false)
+  })
+
+  const shot = (log: string[][]) => log.some((a) => a.includes('screencap'))
+  const fresh = () => mkdtemp(join(tmpdir(), 'forge-capture-'))
+  const nothingWritten = async (dir: string) => expect(await readdir(dir)).toEqual([])
+
+  it('refuses a dark screen and writes nothing', async () => {
+    const dir = await fresh()
+    const log: string[][] = []
+    await expect(
+      runCapture(
+        dir,
+        { out: 'a', serial: 'd' },
+        { adb: fakeAdb(log, undefined, { wake: 'Asleep' }), sleep: noSleep },
+      ),
+    ).rejects.toThrow(/Screen is not on \(wakefulness Asleep\)/)
+    expect(shot(log)).toBe(false)
+    await nothingWritten(dir)
+  })
+
+  it('refuses when another app (the launcher) is in front', async () => {
+    const dir = await fresh()
+    const log: string[][] = []
+    await expect(
+      runCapture(
+        dir,
+        { out: 'a', serial: 'd' },
+        { adb: fakeAdb(log, undefined, { front: 'com.sec.android.app.launcher' }), sleep: noSleep },
+      ),
+    ).rejects.toThrow(/app.tinygiants.getalife.debug is not in front \(com.sec.android.app.launcher\)/)
+    expect(shot(log)).toBe(false)
+    await nothingWritten(dir)
+  })
+
+  it('checks the package given with --package', async () => {
+    const dir = await fresh()
+    const log: string[][] = []
+    await runCapture(
+      dir,
+      { out: 'a', serial: 'd', package: 'app.x' },
+      {
+        adb: fakeAdb(log, undefined, { front: 'app.x' }),
+        sleep: noSleep,
+      },
+    )
+    expect(shot(log)).toBe(true)
+  })
+
+  it('refuses when a step reports a locked vault', async () => {
+    const dir = await fresh()
+    const log: string[][] = []
+    const lockedConnect = async () => ({
+      callTool: async () => ({ screen: 'budget', vaultUnlockRequired: true }),
+      close: () => undefined,
+    })
+    await expect(
+      runCapture(
+        dir,
+        { out: 'a', serial: 'd', screen: 'budget' },
+        { adb: fakeAdb(log), connect: lockedConnect, sleep: noSleep },
+      ),
+    ).rejects.toThrow(/Tresor gesperrt: in der App entsperren/)
+    expect(shot(log)).toBe(false)
+    await nothingWritten(dir)
+  })
+
+  it('hideIme sends Back only while the keyboard is shown', async () => {
+    const log: string[][] = []
+    await runCapture(
+      await fresh(),
+      { out: 'a', serial: 'd', hideIme: true },
+      {
+        adb: fakeAdb(log, undefined, { ime: [false] }),
+        sleep: noSleep,
+      },
+    )
+    expect(log.some((a) => a.join(' ').includes('keyevent'))).toBe(false)
+
+    const open: string[][] = []
+    await runCapture(
+      await fresh(),
+      { out: 'a', serial: 'd', hideIme: true },
+      {
+        adb: fakeAdb(open, undefined, { ime: [true, false] }),
+        sleep: noSleep,
+      },
+    )
+    const flat = open.map((a) => a.slice(2).join(' '))
+    expect(flat.filter((c) => c === 'shell input keyevent 4')).toHaveLength(1)
+    expect(flat.indexOf('shell input keyevent 4')).toBeLessThan(flat.indexOf('exec-out screencap -p'))
+    expect(flat.lastIndexOf('shell dumpsys activity activities')).toBeGreaterThan(
+      flat.indexOf('shell input keyevent 4'),
+    )
+  })
+
+  it('without hideIme an open keyboard is left alone', async () => {
+    const log: string[][] = []
+    await runCapture(
+      await fresh(),
+      { out: 'a', serial: 'd' },
+      {
+        adb: fakeAdb(log, undefined, { ime: [true] }),
+        sleep: noSleep,
+      },
+    )
+    expect(log.some((a) => a.join(' ').includes('keyevent') || a.join(' ').includes('input_method'))).toBe(
+      false,
+    )
+  })
+
+  it('fails when the keyboard stays open after one Back, and writes nothing', async () => {
+    const dir = await fresh()
+    const log: string[][] = []
+    await expect(
+      runCapture(
+        dir,
+        { out: 'a', serial: 'd', hideIme: true },
+        {
+          adb: fakeAdb(log, undefined, { ime: [true, true] }),
+          sleep: noSleep,
+        },
+      ),
+    ).rejects.toThrow(/keyboard is still open/)
+    expect(log.filter((a) => a.join(' ').includes('keyevent'))).toHaveLength(1)
+    expect(shot(log)).toBe(false)
+    await nothingWritten(dir)
   })
 
   it('needs a device', async () => {

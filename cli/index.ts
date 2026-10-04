@@ -4,7 +4,7 @@ import { approveCommand, checkCommand, formatIssue, renderCommand } from './comm
 import { CliError } from './errors'
 
 const USAGE = `forge <check|render|approve|dev> --project <dir> [--set default] [--target id]... [--locale id]... [--require-approval] [--by name]
-forge capture --project <dir> --out <path.png> --serial <adb serial> [--port 8765] [--screen name] [--seed [--store apple|google]] [--call tool [--args '<json>']]... [--settle ms]
+forge capture --project <dir> --out <path.png> --serial <adb serial> [--port 8765] [--screen name] [--seed [--store apple|google]] [--call tool [--args '<json>']]... [--settle ms] [--hide-ime] [--package app.id]
 forge tool [name] --project <dir> [--json '<input>' | --json @file]   (no name: every tool with its input schema)
 forge bg fetch <unsplash|met|aic> <query | id:<id>> --project <dir> [--list] [--pick n] [--name file] [--orientation portrait|landscape|squarish]
 forge bg paint <file> --style <oil|watercolor|ink|gouache> --project <dir> [--seed n] [--name file] [--dry-run]`

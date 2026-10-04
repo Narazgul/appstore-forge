@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   blendOverBackground,
   contrastAgainstBackground,
+  contrastAgainstColors,
   contrastRatio,
   mix,
   parseHexColor,
@@ -118,5 +119,14 @@ describe('contrastAgainstBackground', () => {
     const opaque = contrastAgainstBackground('#111114', { kind: 'solid', color: '#eaf2ff' })
     const translucent = contrastAgainstBackground('#111114', { kind: 'solid', color: '#eaf2ff' }, 0.72)
     expect(translucent).toBeLessThan(opaque)
+  })
+})
+
+describe('contrastAgainstColors', () => {
+  it('takes the worst colour and blends a translucent fg into each', () => {
+    expect(contrastAgainstColors('#000000', ['#ffffff', '#777777'])).toBe(contrastRatio('#000000', '#777777'))
+    expect(contrastAgainstColors('#000000', ['#ffffff'], 0.72)).toBe(
+      contrastRatio(blendOverBackground('#000000', 0.72, '#ffffff'), '#ffffff'),
+    )
   })
 })

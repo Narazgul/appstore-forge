@@ -578,8 +578,27 @@ function placeTextBlock(
     block,
     top: bandTop + (bandHeight - blockHeight(block)) / 2,
     rtl,
-    startX: alignedStart(settings.textAlign, rtl, boxLeft, maxWidth),
+    startX:
+      layout.textColumn && settings.textAlign === 'center'
+        ? columnStart(rtl, boxLeft, maxWidth, Math.max(0, ...rowWidths(block)))
+        : alignedStart(settings.textAlign, rtl, boxLeft, maxWidth),
   }
+}
+
+const columnStart = (rtl: boolean, boxLeft: number, maxWidth: number, columnWidth: number) => {
+  const left = boxLeft + (maxWidth - columnWidth) / 2
+  return (lineWidth: number) => (rtl ? left + columnWidth - lineWidth : left)
+}
+
+/** The width of every row the block inks: accent bar, eyebrow, headline lines, subhead lines or label boxes. */
+const rowWidths = (block: TextLayout) => {
+  const labelPad = block.subSize * LABEL_PAD_X * 2
+  return [
+    ...(block.hasAccentBar ? [block.headSize * ACCENT_BAR_WIDTH] : []),
+    ...(block.eyebrowLine ? [block.eyebrowLine.width] : []),
+    ...block.headLines.map((l) => l.width),
+    ...block.subLines.map((l) => (block.subheadStyle === 'label' ? l.width + labelPad : l.width)),
+  ]
 }
 
 /** Axis-aligned bounds of everything `drawTextBlock` inks, in canvas pixels; null when it draws nothing. */
@@ -615,13 +634,7 @@ export function textBlockBox(
   const placed = placeTextBlock(ctx, W, tileW, h, layout, screen, settings, shift)
   if (!placed) return null
   const { block } = placed
-  const labelPad = block.subSize * LABEL_PAD_X * 2
-  const widths = [
-    ...(block.hasAccentBar ? [block.headSize * ACCENT_BAR_WIDTH] : []),
-    ...(block.eyebrowLine ? [block.eyebrowLine.width] : []),
-    ...block.headLines.map((l) => l.width),
-    ...block.subLines.map((l) => (block.subheadStyle === 'label' ? l.width + labelPad : l.width)),
-  ]
+  const widths = rowWidths(block)
   if (!widths.length) return null
   return spanBox(placed, widths, placed.top, blockHeight(block))
 }

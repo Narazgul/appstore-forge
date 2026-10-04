@@ -20,6 +20,9 @@ const DEFAULT_SETTLE_MS = 1500
 const SEED_TIMEOUT_MS = 5 * 60_000
 const CALL_TIMEOUT_MS = 60_000
 const DUMP_PATH = '/sdcard/forge-nodes.xml'
+const DEFAULT_APP_PACKAGE = 'app.tinygiants.getalife.debug'
+const IME_SETTLE_MS = 600
+const KEYCODE_BACK = '4'
 
 export const execAdb: Adb = (args) =>
   new Promise((done, fail) => {
@@ -223,6 +226,57 @@ export type CaptureDeps = {
   sleep?: (ms: number) => Promise<void>
 }
 
+const shell = async (adb: Adb, ...args: string[]) => (await adb(['shell', ...args])).toString('utf8')
+
+export const isAwake = (dumpsysPower: string) => /mWakefulness=Awake\b/.test(dumpsysPower)
+
+export const topResumedPackage = (dumpsysActivities: string) => {
+  const line =
+    /topResumedActivity[=:][^\n]*/.exec(dumpsysActivities)?.[0] ??
+    /mResumedActivity[=:][^\n]*/.exec(dumpsysActivities)?.[0]
+  return line ? (/ ([\w.]+)\/[\w.$]+/.exec(line)?.[1] ?? undefined) : undefined
+}
+
+export const isImeShown = (dumpsysInputMethod: string) => /\bmInputShown=true\b/.test(dumpsysInputMethod)
+
+const vaultLocked = (result: unknown) =>
+  typeof result === 'object' &&
+  result !== null &&
+  ((result as Record<string, unknown>).vaultUnlockRequired === true ||
+    (result as Record<string, unknown>).unlockRequired === true)
+
+/** Refuses the shot unless the screen is on, the vault open and the app in front: a capture after
+ *  standby once wrote the launcher of a private phone into the set. */
+export async function assertReadyToShoot(
+  adb: Adb,
+  appPackage: string,
+  steps: { tool: string; result: unknown }[],
+) {
+  const power = await shell(adb, 'dumpsys', 'power')
+  if (!isAwake(power)) {
+    const state = /mWakefulness=(\w+)/.exec(power)?.[1] ?? 'unknown'
+    throw new CliError(`Screen is not on (wakefulness ${state}): wake and unlock the device first`, 1)
+  }
+  const locked = steps.find((s) => vaultLocked(s.result))
+  if (locked) throw new CliError(`Tresor gesperrt: in der App entsperren (reported by ${locked.tool})`, 1)
+  const top = topResumedPackage(await shell(adb, 'dumpsys', 'activity', 'activities'))
+  if (top !== appPackage)
+    throw new CliError(
+      `${appPackage} is not in front (${top ?? 'no resumed activity'}); open the app, then capture again (--package for another app)`,
+      1,
+    )
+}
+
+/** Back only while the keyboard is up: without it, Back leaves the app. Escape does nothing on Samsung. */
+export async function hideIme(adb: Adb, sleep: (ms: number) => Promise<void>) {
+  if (!isImeShown(await shell(adb, 'dumpsys', 'input_method'))) return false
+  await adb(['shell', 'input', 'keyevent', KEYCODE_BACK])
+  await sleep(IME_SETTLE_MS)
+  if (isImeShown(await shell(adb, 'dumpsys', 'input_method')))
+    throw new CliError('The keyboard is still open after Back; close it by hand and capture again', 1)
+  return true
+}
+
 export type DevStep = { tool: string; args: object; timeoutMs?: number }
 
 export const stepsFor = (opts: CaptureOptions): DevStep[] => [
@@ -272,6 +326,10 @@ export async function runCapture(
   }
   await sleep(opts.settleMs ?? DEFAULT_SETTLE_MS)
 
+  const appPackage = opts.package ?? process.env.FORGE_APP_PACKAGE ?? DEFAULT_APP_PACKAGE
+  await assertReadyToShoot(adb, appPackage, steps)
+  if (opts.hideIme && (await hideIme(adb, sleep))) await assertReadyToShoot(adb, appPackage, steps)
+
   let png: Buffer
   let xml: string
   try {
@@ -307,6 +365,8 @@ export function parseCaptureArgs(argv: string[]): { projectDir: string; opts: Ca
       call: { type: 'string', multiple: true },
       args: { type: 'string', multiple: true },
       settle: { type: 'string' },
+      'hide-ime': { type: 'boolean', default: false },
+      package: { type: 'string' },
     },
   })
   if (!values.project) throw new CliError('--project <dir> is required', 1)
@@ -349,6 +409,8 @@ export function parseCaptureArgs(argv: string[]): { projectDir: string; opts: Ca
       store: values.store as 'apple' | 'google' | undefined,
       calls: calls.length ? calls : undefined,
       settleMs: number('settle', values.settle),
+      hideIme: values['hide-ime'] || undefined,
+      package: values.package,
     },
   }
 }

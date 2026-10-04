@@ -1,7 +1,8 @@
 /**
  * A photo or painting under everything else, cover-fitted to the composition. `src` is a path from
  * the repo root, like a set's `sources`; the colour or gradient it sits on shows while the image
- * loads and is what the contrast checks read, so it should match the image's overall tone.
+ * loads, so it should match the image's overall tone; `forge check` measures the image itself
+ * behind the text block.
  */
 export type BackgroundImage = {
   src: string
@@ -330,6 +331,12 @@ export type Layout = {
    * layout carries no list, as every layout but `feature-wall` does.
    */
   list?: { top: number; height: number; left?: number; width?: number }
+  /**
+   * `true` = the rows of the text block share one edge and `textAlign: 'center'` centres the block
+   * as a whole, so a short subhead lines up under a headline that fills its box instead of sitting
+   * centred beneath it. Absent: every row is aligned on its own.
+   */
+  textColumn?: true
 }
 
 export type ExportSize = {

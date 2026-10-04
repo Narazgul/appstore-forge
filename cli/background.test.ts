@@ -376,7 +376,7 @@ describe('approval with a background image', () => {
     await writeFile(
       join(projectDir, 'hintergruende', 'wiese.jpg'),
       pngBytes(300, 400, (ctx) => {
-        ctx.fillStyle = '#000'
+        ctx.fillStyle = '#f4f4f4'
         ctx.fillRect(0, 0, 300, 400)
       }),
     )

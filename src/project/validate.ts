@@ -2,6 +2,7 @@ import {
   AA_LARGE_TEXT,
   AA_NORMAL_TEXT,
   contrastAgainstBackground,
+  contrastAgainstColors,
   contrastRatio,
   parseHexColor,
 } from '../lib/contrast'
@@ -216,6 +217,9 @@ export function validateProject(
   nodes: NodesLookup = () => null,
   /** Whether a background image (a path from the repo root) is there. */
   backgroundExists: (src: string) => boolean = () => true,
+  /** The mean colour behind a slot's text block, one per locale and target, for a slot whose
+   *  background carries an image; absent or empty, the contrast checks read `background` alone. */
+  textBackdrops: ((slotId: string) => string[]) | null = null,
 ): Issue[] {
   const { set, copies } = project
   const issues: Issue[] = []
@@ -757,13 +761,14 @@ export function validateProject(
       }
     }
 
-    push(
-      contrastIssue(
-        'Headline',
-        contrastAgainstBackground(effective.textColor, effective.background),
-        'background',
-      ),
-    )
+    const backdrops = effective.background.image ? (textBackdrops?.(slot.id) ?? []) : []
+    const surface = backdrops.length ? 'background image behind the text' : 'background'
+    const againstBackground = (fg: string, alpha = 1) =>
+      backdrops.length
+        ? contrastAgainstColors(fg, backdrops, alpha)
+        : contrastAgainstBackground(fg, effective.background, alpha)
+
+    push(contrastIssue('Headline', againstBackground(effective.textColor), surface))
 
     // 'label' falls back to 'plain' with no highlights to draw the box in — same rule the
     // renderer applies (`layoutText` in `render/text.ts`), so `forge check` and the export agree.
@@ -782,17 +787,14 @@ export function validateProject(
         // the background.
         push(contrastIssue('Subhead', contrastRatio(effective.textColor, effective.highlights[0]), 'label'))
       } else {
-        const ratio = contrastAgainstBackground(effective.textColor, effective.background, SUBHEAD_ALPHA)
-        push(contrastIssue('Subhead', ratio, 'background'))
+        push(contrastIssue('Subhead', againstBackground(effective.textColor, SUBHEAD_ALPHA), surface))
       }
     }
 
     const hasEyebrow = set.locales.some((l) => copies[l.id]?.[slot.id]?.eyebrow?.trim())
     if (hasEyebrow) {
       const eyebrowColor = effective.eyebrowColor ?? effective.textColor
-      push(
-        contrastIssue('Eyebrow', contrastAgainstBackground(eyebrowColor, effective.background), 'background'),
-      )
+      push(contrastIssue('Eyebrow', againstBackground(eyebrowColor), surface))
     }
 
     // Every span a `*starred*` headline or feature-wall list entry actually uses, in any locale —

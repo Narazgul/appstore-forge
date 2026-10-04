@@ -286,3 +286,44 @@ describe('malformed slot or copy fields', () => {
     await failing.catch((err) => expect((err as CliError).exitCode).toBe(2))
   })
 })
+
+describe('contrast over a background image', () => {
+  async function withImage(topColor: string, image: Record<string, unknown> = {}) {
+    const { repo, dir } = await scaffold()
+    const c = createCanvas(400, 800)
+    const ctx = c.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, 400, 800)
+    ctx.fillStyle = topColor
+    ctx.fillRect(0, 0, 400, 300)
+    await mkdir(join(repo, 'bg'), { recursive: true })
+    await writeFile(join(repo, 'bg', 'top.png'), c.toBuffer('image/png'))
+    const project = await readProject(dir, 'default')
+    project.set.settings = {
+      textColor: '#111111',
+      background: { kind: 'solid', color: '#ffffff', image: { src: 'bg/top.png', ...image } },
+    }
+    await writeFile(join(dir, 'default.json'), JSON.stringify(project.set))
+    return dir
+  }
+  const contrastIssues = async (dir: string) =>
+    (await checkCommand({ projectDir: dir, setId: 'default', requireApproval: false })).issues.filter((i) =>
+      i.message.includes('contrast'),
+    )
+
+  it('measures the image behind the headline, not the background colour', async () => {
+    const issues = await contrastIssues(await withImage('#000000'))
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatchObject({ level: 'error', slot: 'a' })
+    expect(issues[0].message).toMatch(/^Headline contrast 1\.\d:1 on background image behind the text/)
+  })
+
+  it('is quiet when the image is light where the text sits', async () => {
+    expect(await contrastIssues(await withImage('#f4f4f4'))).toEqual([])
+  })
+
+  it('reads the image after brightness', async () => {
+    const issues = await contrastIssues(await withImage('#ffffff', { brightness: 0.3 }))
+    expect(issues.map((i) => i.message)).toEqual([expect.stringMatching(/background image behind the text/)])
+  })
+})

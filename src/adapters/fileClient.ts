@@ -1,4 +1,4 @@
-import type { Gallery, ProjectStore } from '../project/store'
+import type { BackgroundChoice, Gallery, ProjectStore } from '../project/store'
 import { EMPTY_GALLERY } from '../project/store'
 import type { Project } from '../project/types'
 
@@ -14,6 +14,7 @@ export function fileProjectStore(): ProjectStore {
     `/artwork/${encodeURIComponent(localeId)}/${encodeURIComponent(artwork)}.png`
   const backgroundUrl = (src: string) => `/backgrounds/${src.split('/').map(encodeURIComponent).join('/')}`
   let galleries: Record<string, Gallery> = {}
+  let backgrounds: BackgroundChoice[] = []
   // `undefined` until `load()` names the set authoritatively — the URL may carry none at all,
   // in which case the server's own `forge dev --set` default decides.
   let setId: string | undefined = setIdFromLocation(location.search)
@@ -31,6 +32,10 @@ export function fileProjectStore(): ProjectStore {
       galleries = await fetch('/api/gallery')
         .then((r) => (r.ok ? (r.json() as Promise<Record<string, Gallery>>) : {}))
         .catch(() => ({}))
+      backgrounds = await fetch('/api/backgrounds')
+        .then((r) => (r.ok ? (r.json() as Promise<unknown>) : []))
+        .then((list) => (Array.isArray(list) ? (list as BackgroundChoice[]) : []))
+        .catch(() => [])
       return project
     },
     async save(project) {
@@ -58,6 +63,9 @@ export function fileProjectStore(): ProjectStore {
       const res = await fetch(backgroundUrl(src))
       if (!res.ok) throw new Error(`Background missing: ${src}`)
       return new Uint8Array(await res.arrayBuffer())
+    },
+    backgroundGallery() {
+      return backgrounds
     },
     async nodesBytes(localeId, screen) {
       const res = await fetch(`/nodes/${encodeURIComponent(localeId)}/${encodeURIComponent(screen)}.json`)

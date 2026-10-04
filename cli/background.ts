@@ -1,7 +1,7 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
   PAINT_MODEL,
@@ -10,6 +10,7 @@ import {
   paintPrompt,
   type PaintStyle,
 } from '../src/presets/paintStyles'
+import type { BackgroundChoice } from '../src/project/store'
 import { CliError } from './errors'
 import { repoRootOf } from './project-io'
 
@@ -69,6 +70,25 @@ export function creditsFor(repoRoot: string, srcs: string[]): Record<string, Cre
     if (credit) out[src] = credit
   }
   return out
+}
+
+export const BACKGROUND_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp']
+
+/** Every image in the project's background folder, by its path from the repo root, with the mean
+ *  colour its credits record. */
+export async function listBackgroundChoices(projectDir: string): Promise<BackgroundChoice[]> {
+  const dir = join(projectDir, BACKGROUND_DIR)
+  const files = await readdir(dir).catch(() => [] as string[])
+  const credits = readCreditsFile(dir)
+  const root = repoRootOf(projectDir)
+  return files
+    .filter((file) => BACKGROUND_EXTENSIONS.includes(extname(file).toLowerCase()))
+    .sort()
+    .map((file) => {
+      const src = relative(root, join(dir, file)).split(sep).join('/')
+      const average = credits[file]?.average
+      return average ? { src, average } : { src }
+    })
 }
 
 export async function writeOutputCredits(dir: string, credits: Record<string, Credit>) {

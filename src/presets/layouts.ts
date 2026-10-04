@@ -87,6 +87,7 @@ export const LAYOUTS: Layout[] = [
     device: { top: 0.08, bottom: 0.92, cx: 0.76 },
     padX: 0.06,
     textScale: 2,
+    textColumn: true,
   },
   {
     id: 'landscape-right',
@@ -96,6 +97,7 @@ export const LAYOUTS: Layout[] = [
     device: { top: 0.08, bottom: 0.92, cx: 0.24 },
     padX: 0.06,
     textScale: 2,
+    textColumn: true,
   },
   // Headline across the top, the device centred below it and running off the bottom edge.
   {

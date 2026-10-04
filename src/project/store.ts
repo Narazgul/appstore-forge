@@ -5,6 +5,10 @@ export type Gallery = { screens: string[]; artwork: string[] }
 
 export const EMPTY_GALLERY: Gallery = { screens: [], artwork: [] }
 
+/** A background image the backend can serve, by its path from the repo root; `average` is its mean
+ *  colour when the credits name one. */
+export type BackgroundChoice = { src: string; average?: string }
+
 export interface ProjectStore {
   load(): Promise<Project>
   save(project: Project): Promise<void>
@@ -20,6 +24,8 @@ export interface ProjectStore {
    *  background's colour shows instead */
   backgroundUrl?(src: string): string
   backgroundBytes?(src: string): Promise<Uint8Array>
+  /** every background image the backend offers for picking, filled by `load`; absent: no picker */
+  backgroundGallery?(): BackgroundChoice[]
   /**
    * Everything the backend has for a locale, so the GUI can offer a choice per frame instead of
    * only the images a slot already names. Filled by `load`; absent means no picker.

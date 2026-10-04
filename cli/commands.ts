@@ -7,7 +7,7 @@ import { getLayout } from '../src/presets/layouts'
 import { getSize } from '../src/presets/sizes'
 import { artworkPath, nodesPath, screensFor, settingsFor, sourcePath } from '../src/project/bridge'
 import { approvalHash } from '../src/project/hash'
-import { isSlotSticker, isStudioSet } from '../src/project/types'
+import { backgroundImageSrcs, isSlotSticker, isStudioSet } from '../src/project/types'
 import type { Approval, Project } from '../src/project/types'
 import { validateProject, type Issue, type TextBlockProbe } from '../src/project/validate'
 import { sceneSpan, textShifts } from '../src/render/scene'
@@ -19,6 +19,7 @@ import {
   textBlockBox,
   type TextMeasurer,
 } from '../src/render/text'
+import { meanColorIn, paintBackground } from '../src/render/textBackdrop'
 import type { Screen } from '../src/types'
 import { CliError } from './errors'
 import { registerFonts } from './fonts'
@@ -131,6 +132,67 @@ function textBlockChecker(project: Project): (localeId: string, slotId: string) 
 }
 
 /**
+ * The mean colour of the background behind each slot's text block, per locale and target, for the
+ * slots whose background carries an image: the background is painted the way `renderScene` paints
+ * it (image, blur, brightness, finishes), the text block placed by the renderer's own functions.
+ * A missing image is reported by `validateProject` itself; such a slot falls back to the colour.
+ */
+async function textBackdropChecker(
+  project: Project,
+  repoRoot: string,
+): Promise<(slotId: string) => string[]> {
+  const images = new Map<string, Awaited<ReturnType<typeof loadImage>>>()
+  for (const src of backgroundImageSrcs(project.set)) {
+    const path = join(repoRoot, src)
+    if (existsSync(path)) images.set(src, await loadImage(path))
+  }
+  if (!images.size) return () => []
+  registerFonts()
+  const screens = new Map(project.set.locales.map((l) => [l.id, screensFor(project, l.id)]))
+  const measured = new Map<string, string[]>()
+  return (slotId) => {
+    const known = measured.get(slotId)
+    if (known) return known
+    const colors: string[] = []
+    for (const target of project.set.targets) {
+      const settings = settingsFor(project, target.id)
+      const size = getSize(settings.sizeId)
+      const painted = { key: '', ctx: undefined as CanvasRenderingContext2D | undefined }
+      for (const locale of project.set.locales) {
+        const screen = screens.get(locale.id)!.find((s) => s.id === slotId)
+        if (!screen) continue
+        const resolved = effectiveSettings(screen, settings)
+        const image = resolved.background.image && images.get(resolved.background.image.src)
+        if (!image) continue
+        const layout = getLayout(resolved.layout)
+        const W = size.w * layout.span
+        const key = `${W}:${JSON.stringify(resolved.background)}`
+        if (!painted.ctx || painted.key !== key) {
+          painted.ctx = createCanvas(W, size.h).getContext('2d') as unknown as CanvasRenderingContext2D
+          painted.key = key
+          paintBackground(
+            painted.ctx,
+            W,
+            size.w,
+            size.h,
+            resolved.background,
+            image as unknown as CanvasImageSource,
+          )
+        }
+        const ctx = painted.ctx
+        const measurer = ctx as unknown as TextMeasurer
+        const shifts = textShifts(measurer, W, size.w, size.h, layout, screen, resolved)
+        const box = textBlockBox(measurer, W, size.w, size.h, layout, screen, resolved, shifts.text)
+        const color = box && meanColorIn(ctx, box)
+        if (color) colors.push(color)
+      }
+    }
+    measured.set(slotId, colors)
+    return colors
+  }
+}
+
+/**
  * A sticker's real aspect ratio, per locale, when the file is on disk — the check then draws its
  * text-band overlap warning from the actual image instead of assuming a square. A missing file is
  * already reported by `validateProject` itself, so this stays silent about it.
@@ -216,6 +278,7 @@ export async function checkCommand(opts: { projectDir: string; setId: string; re
     textBlockChecker(project),
     nodesLookup(repoRoot, project.set),
     bgExists,
+    await textBackdropChecker(project, repoRoot),
   )
   // A studio set carries no stamp: there is nothing to approve it for.
   const approvalOk =
@@ -247,6 +310,7 @@ export async function renderCommand(opts: {
       textBlockChecker(project),
       nodesLookup(repoRoot, project.set),
       bgExists,
+      await textBackdropChecker(project, repoRoot),
     ),
   )
   if (
@@ -285,6 +349,7 @@ export async function approveCommand(opts: {
       textBlockChecker(project),
       nodesLookup(repoRoot, project.set),
       bgExists,
+      await textBackdropChecker(project, repoRoot),
     ),
   )
   const approval: Approval = {

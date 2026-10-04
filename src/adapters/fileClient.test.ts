@@ -84,6 +84,27 @@ describe('fileProjectStore', () => {
     expect(store.currentSetId).toBe('default')
   })
 
+  it('load() fills the background picker from /api/backgrounds, and an old server costs only the picker', async () => {
+    const choices = [{ src: 'studio/hintergruende/wiese.jpg', average: '#5a665e' }]
+    const answer = (backgrounds: Response) =>
+      vi.fn((url: string) =>
+        url.startsWith('/api/project')
+          ? Promise.resolve(new Response(JSON.stringify(project('default')), { status: 200 }))
+          : url === '/api/backgrounds'
+            ? Promise.resolve(backgrounds)
+            : Promise.resolve(new Response('{}', { status: 200 })),
+      )
+    vi.stubGlobal('fetch', answer(new Response(JSON.stringify(choices), { status: 200 })))
+    const store = fileProjectStore()
+    expect(store.backgroundGallery!()).toEqual([])
+    await store.load()
+    expect(store.backgroundGallery!()).toEqual(choices)
+    vi.stubGlobal('fetch', answer(new Response('', { status: 404 })))
+    const old = fileProjectStore()
+    await old.load()
+    expect(old.backgroundGallery!()).toEqual([])
+  })
+
   it('save() PUTs to /api/project with the set id query', async () => {
     vi.stubGlobal('location', new URL('http://localhost:4324/?set=promo'))
     const calls: { url: string; init?: RequestInit }[] = []

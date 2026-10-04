@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { firestoreProjectStore, parseGalleryDoc, parseSetDoc, sourceObjectPath } from './firestoreClient'
+import {
+  backgroundObjectPath,
+  firestoreProjectStore,
+  nodesObjectPath,
+  parseBackgroundsDoc,
+  parseGalleryDoc,
+  parseSetDoc,
+  sourceObjectPath,
+} from './firestoreClient'
 import type { CompatFirebase } from './firestoreClient'
+import { approvalHash } from '../project/hash'
 import type { Project, ProjectSet } from '../project/types'
 
 const set = {
@@ -455,5 +464,177 @@ describe('the canvas offsets through Firestore', () => {
     const back = await firestoreProjectStore({ setId: 'default', firebase }).load()
     expect(back.set.slots[0].overrides).toEqual({ layout: 'hero', textOffset: { dx: -0.03, dy: 0 } })
     expect(back.set.settings).toEqual({})
+  })
+})
+
+describe('nodes and background images', () => {
+  const withImage = {
+    ...set,
+    locales: [{ id: 'en', store: {} }],
+    settings: {
+      background: { kind: 'solid', color: '#5a665e', image: { src: 'aso/hintergruende/wiese.jpg' } },
+    },
+    slots: [{ id: 'a', kind: 'screen' as const, screen: 'shot', overrides: {} }],
+  }
+
+  const firebaseFor = (data: unknown, requested: string[] = []) =>
+    ({
+      firestore: () => ({
+        collection: () => ({
+          doc: () => ({ get: () => Promise.resolve({ exists: true, data: () => data }) }),
+        }),
+      }),
+      storage: () => ({
+        ref: (path: string) => {
+          requested.push(path)
+          return {
+            getDownloadURL: () =>
+              path.includes('fehlt')
+                ? Promise.reject(new Error('404'))
+                : Promise.resolve(`https://cdn/${path}`),
+          }
+        },
+      }),
+      auth: () => ({ currentUser: null }),
+    }) as unknown as CompatFirebase
+
+  it('names the storage paths after what aso-sync uploads', () => {
+    expect(nodesObjectPath('default', 'de', 'budget')).toBe('backoffice/aso/nodes/default/de/budget.json')
+    expect(backgroundObjectPath('aso/hintergruende/wiese.jpg')).toBe(
+      'backoffice/aso/backgrounds/aso/hintergruende/wiese.jpg',
+    )
+  })
+
+  it('reads the picker list, dropping entries without a src', () => {
+    expect(
+      parseBackgroundsDoc({
+        backgrounds: [{ src: 'a.jpg', average: '#000000' }, { average: '#fff' }, { src: 'b.png' }],
+      }),
+    ).toEqual([{ src: 'a.jpg', average: '#000000' }, { src: 'b.png' }])
+    expect(parseBackgroundsDoc({ set })).toEqual([])
+  })
+
+  it('resolves the set’s own background and every listed one, each once', async () => {
+    const requested: string[] = []
+    const store = firestoreProjectStore({
+      setId: 'default',
+      firebase: firebaseFor(
+        {
+          set: withImage,
+          backgrounds: [{ src: 'aso/hintergruende/wiese.jpg' }, { src: 'aso/hintergruende/feld.jpg' }],
+        },
+        requested,
+      ),
+    })
+    await store.load()
+    expect(store.backgroundUrl!('aso/hintergruende/wiese.jpg')).toBe(
+      'https://cdn/backoffice/aso/backgrounds/aso/hintergruende/wiese.jpg',
+    )
+    expect(store.backgroundUrl!('aso/hintergruende/feld.jpg')).toBe(
+      'https://cdn/backoffice/aso/backgrounds/aso/hintergruende/feld.jpg',
+    )
+    expect(requested.filter((p) => p.endsWith('wiese.jpg'))).toHaveLength(1)
+    expect(store.backgroundGallery!()).toHaveLength(2)
+  })
+
+  it('fetches background and nodes bytes, nodes from the set the images live under', async () => {
+    const fetched: string[] = []
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = ((url: string) => {
+      fetched.push(url)
+      return Promise.resolve(new Response(new Uint8Array([1, 2, 3])))
+    }) as typeof fetch
+    try {
+      const store = firestoreProjectStore({
+        setId: 'kopie',
+        firebase: firebaseFor({ set: withImage, sourcesFrom: 'default' }),
+      })
+      await store.load()
+      expect(await store.backgroundBytes!('aso/hintergruende/wiese.jpg')).toEqual(new Uint8Array([1, 2, 3]))
+      expect(await store.nodesBytes!('en', 'shot')).toEqual(new Uint8Array([1, 2, 3]))
+      expect(fetched).toEqual([
+        'https://cdn/backoffice/aso/backgrounds/aso/hintergruende/wiese.jpg',
+        'https://cdn/backoffice/aso/nodes/default/en/shot.json',
+      ])
+      await expect(store.nodesBytes!('en', 'fehlt')).rejects.toThrow(/Nodes missing/)
+      await expect(store.backgroundBytes!('aso/hintergruende/andere.jpg')).rejects.toThrow(
+        /Background missing/,
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+
+describe('approval hash through Firestore', () => {
+  it('equals the hash the CLI computes from the files, for a set with a background image and a node effect', async () => {
+    const project: Project = {
+      set: {
+        ...set,
+        locales: [{ id: 'en', store: {} }],
+        sources: 'studio/aufnahmen/{locale}/{screen}.png',
+        settings: {
+          background: { kind: 'solid', color: '#5a665e', image: { src: 'studio/hintergruende/wiese.jpg' } },
+        },
+        slots: [
+          {
+            id: 'a',
+            kind: 'screen',
+            screen: 'budget',
+            overrides: {},
+            elements: [{ id: 'l', effect: 'lift', node: 'Miete' }],
+          },
+        ],
+      } as ProjectSet,
+      copies: { en: { a: { headline: 'Hi', subhead: '' } } },
+    }
+    const files: Record<string, Uint8Array> = {
+      'studio/aufnahmen/en/budget.png': new Uint8Array([1, 1]),
+      'studio/aufnahmen/en/budget.nodes.json': new Uint8Array([2, 2]),
+      'studio/hintergruende/wiese.jpg': new Uint8Array([3, 3]),
+    }
+    const storage: Record<string, Uint8Array> = {
+      [sourceObjectPath('default', 'en', 'budget')]: files['studio/aufnahmen/en/budget.png'],
+      [nodesObjectPath('default', 'en', 'budget')]: files['studio/aufnahmen/en/budget.nodes.json'],
+      [backgroundObjectPath('studio/hintergruende/wiese.jpg')]: files['studio/hintergruende/wiese.jpg'],
+    }
+    const firebase = {
+      firestore: () => ({
+        collection: () => ({
+          doc: () => ({ get: () => Promise.resolve({ exists: true, data: () => project }) }),
+        }),
+      }),
+      storage: () => ({
+        ref: (path: string) => ({
+          getDownloadURL: () =>
+            storage[path] ? Promise.resolve(`mem://${path}`) : Promise.reject(new Error('404')),
+        }),
+      }),
+      auth: () => ({ currentUser: null }),
+    } as unknown as CompatFirebase
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = ((url: string) =>
+      Promise.resolve(new Response(storage[url.slice('mem://'.length)] as BodyInit))) as typeof fetch
+    try {
+      const store = firestoreProjectStore({ setId: 'default', firebase })
+      await store.load()
+      const viaFirestore = await approvalHash(
+        project,
+        (l, s) => store.sourceBytes(l, s),
+        store.artworkBytes!.bind(store),
+        (l, s) => store.nodesBytes!(l, s).catch(() => new Uint8Array()),
+        store.backgroundBytes!.bind(store),
+      )
+      const fromFiles = await approvalHash(
+        project,
+        async (l, s) => files[`studio/aufnahmen/${l}/${s}.png`],
+        async () => new Uint8Array(),
+        async (l, s) => files[`studio/aufnahmen/${l}/${s}.nodes.json`] ?? new Uint8Array(),
+        async (src) => files[src],
+      )
+      expect(viaFirestore).toBe(fromFiles)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

@@ -670,7 +670,13 @@ Storage yet — only `default` (or whichever set `build:aso` actually synced) do
 document therefore carries a `sourcesFrom: <original set id>` field (never chained: duplicating a
 duplicate still points at the set that actually has images), and the adapter resolves every source,
 artwork and sticker URL under `sourcesFrom` instead of the new set's own id until the backoffice's
-sync gives it real images. **The backoffice's `build:aso`/`pull:aso` scripts need to learn about
+sync gives it real images. Capture nodes follow the same rule
+(`backoffice/aso/nodes/<set>/<locale>/<screen>.json`, fetched on demand); background pictures are
+keyed by their path from the repo root alone (`backoffice/aso/backgrounds/<src>`, a duplicate needs
+no copy), resolved at load for every picture the set draws and every one in the document's
+`backgrounds` list (`[{ src, average }]`, the picker). So `node` effects and marks and background
+pictures draw in the backoffice too, and a stamp set there hashes the same bytes as `forge approve`.
+**The backoffice's `build:aso`/`pull:aso` scripts need to learn about
 this**: they must sync images (and update `gallery`) for every set id found in
 `backoffice/aso/sets`, not only `default`, or a duplicated set stays on its source's screenshots
 forever even after someone means to replace them.
@@ -689,7 +695,9 @@ A studio target may write **WebP** (`out` ending `.webp`, quality 90); a store s
 any `out` must end in `.png` or `.webp`. The studio sizes are `studio-4x5` (1080×1350),
 `studio-square` (1080×1080), `studio-16x9` (1920×1080), `open-graph` (1200×630) and `story`
 (1080×1920), and three landscape layouts give the copy room beside or above an upright device:
-`landscape-left`, `landscape-right` and `landscape-center`.
+`landscape-left`, `landscape-right` and `landscape-center`. In `landscape-left` and `landscape-right`
+the rows of the copy share one edge: with `textAlign: "center"` the block as a whole is centred in its
+half, and a short subhead starts where the headline starts instead of sitting centred beneath it.
 
 A store set has no `purpose` key at all, so its approval hash is exactly what it was before studio
 sets existed.
@@ -741,19 +749,33 @@ forge capture --project ./studio --serial emulator-5554 --out aufnahmen/de/liga 
 Steps, in this order: forward the dev MCP port (`adb forward tcp:<port> tcp:8765`), run the dev
 MCP calls (`--seed` = `dev_seed_screenshot_data` with a five minute limit, `--screen` =
 `dev_goto_screen`, then every `--call <tool> [--args '<json>']`), wait `--settle` ms (default 1500),
-put the status bar into demo mode (9:41, full battery, full Wi-Fi and mobile signal, no
+check that the device is ready (below), with `--hide-ime` close the keyboard, put the status bar into demo mode (9:41, full battery, full Wi-Fi and mobile signal, no
 notification icons), `adb exec-out screencap -p` to `<out>.png`, `uiautomator dump` to
 `<out>.nodes.json`, leave demo mode (also when something failed). Every adb call carries `-s <serial>`.
 
-| Option                    | Meaning                                                                   |
-| ------------------------- | ------------------------------------------------------------------------- |
-| `--out <path>`            | PNG path relative to the project folder; `.png` is added. Required.       |
-| `--serial <id>`           | adb serial. Required, or set `FORGE_ADB_SERIAL`.                          |
-| `--port <n>`              | Local dev MCP port, default 8765 (or `FORGE_DEV_MCP_PORT`).               |
-| `--screen <name>`         | `dev_goto_screen`.                                                        |
-| `--seed`, `--store <s>`   | `dev_seed_screenshot_data`, optionally `apple` or `google`.               |
-| `--call`, `--args <json>` | Any dev MCP tool; `--args` belongs to the `--call` before it. Repeatable. |
-| `--settle <ms>`           | Wait before the shot. Default 1500.                                       |
+| Option                    | Meaning                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------- |
+| `--out <path>`            | PNG path relative to the project folder; `.png` is added. Required.                           |
+| `--serial <id>`           | adb serial. Required, or set `FORGE_ADB_SERIAL`.                                              |
+| `--port <n>`              | Local dev MCP port, default 8765 (or `FORGE_DEV_MCP_PORT`).                                   |
+| `--screen <name>`         | `dev_goto_screen`.                                                                            |
+| `--seed`, `--store <s>`   | `dev_seed_screenshot_data`, optionally `apple` or `google`.                                   |
+| `--call`, `--args <json>` | Any dev MCP tool; `--args` belongs to the `--call` before it. Repeatable.                     |
+| `--settle <ms>`           | Wait before the shot. Default 1500.                                                           |
+| `--hide-ime`              | Close the on-screen keyboard before the shot (see below).                                     |
+| `--package <id>`          | App that must be in front. Default `FORGE_APP_PACKAGE`, else `app.tinygiants.getalife.debug`. |
+
+Before the shot the capture refuses, with an error and without writing a file, when the screen is
+not on (`dumpsys power`, `mWakefulness` other than `Awake`), when a dev MCP step answered
+`vaultUnlockRequired: true` ("Tresor gesperrt: in der App entsperren") or when another app is in front
+(`dumpsys activity activities`, `topResumedActivity`): after standby a capture once wrote the launcher
+of a private phone into the set. `--hide-ime` (tool: `hideIme: true`) reads `dumpsys input_method`
+and sends Back (`input keyevent 4`) only while `mInputShown=true`, then checks again and fails if the
+keyboard is still up; Back without a keyboard would leave the app, and Escape does nothing on Samsung.
+
+```bash
+forge capture --project ./studio --serial R5CX… --out aufnahmen/de/sprache --call dev_voice_stage --args '{"stage":"result"}' --hide-ime
+```
 
 `<out>.nodes.json`:
 
@@ -854,7 +876,8 @@ and on 16:9. Colours default to the set's accent (`accentBar`, else `eyebrowColo
 red that reads on light and dark screens; numbers and label text are white, or near-black on a light
 colour. Steps, arrows and outlines get a thin contrasting rim and a soft shadow, so they hold up
 over the screenshot and over the background alike. The highlighter multiplies over a light page;
-over a dark one (measured under the target) it underlines instead, so the text stays readable.
+over a dark one (measured under the target) it lays a translucent band in its colour behind the text
+with a lightening blend (`screen`) and a glowing rim, so light text stays the lightest thing in it.
 
 A label's text is copy, one line per locale, stored under `chips` with the label's id like a chip's
 (`set_copy` and `add_element`'s `chipText` take it; a missing one is an error). Mark fields are part
@@ -876,7 +899,11 @@ handles for them.
   same band, so the background shows through. Mosaic tiles take neither.
 
 All three are optional settings; absent, a tile draws exactly as before and the approval hash is
-unchanged. Blur and fade work on a layer in integer steps (premultiplied), so the CLI and the
+unchanged. In the editor they sit in the Device frame panel, for all screens or one: an Address
+field (only with the browser device), Back blur (only for an arrangement with more than one frame)
+and Fade out (Off, Dark, Background; not on mosaic). Switching one off on a single screen writes
+`false` or an empty address over an inherited value; a fade has no "off" value of its own, so there
+Off only returns the screen to the set-wide fade. Blur and fade work on a layer in integer steps (premultiplied), so the CLI and the
 editor draw them identically on every run.
 
 ### Background pictures and finishes
@@ -896,9 +923,12 @@ picture and a list of finishes on top of its colour or gradient:
 `image.src` is a path from the repo root, like `sources`. The picture is cover-fitted to the whole
 composition (both tiles of a panorama), `focusX`/`focusY` (0–1, 0.5) are the point kept nearest the
 centre, `zoom` (1–4, 1) crops further in around it, `blur` (0–0.1 of the tile width, 0) softens it
-and `brightness` (0–2, 1) multiplies it. The colour underneath shows while the picture loads and is
-what the contrast checks read, so set it to the picture's mean colour (`forge bg fetch` prints it as
-`average`).
+and `brightness` (0–2, 1) multiplies it. The colour underneath shows while the picture loads, so set
+it to the picture's mean colour (`forge bg fetch` prints it as `average`). The contrast checks of
+`forge check` (headline, subhead, eyebrow) read the picture itself: the background is painted as the
+render paints it (blur, brightness, finishes) and the mean colour of the area behind the text block is
+measured for every locale and target; the worst one counts ("on background image behind the text").
+Without the image file the checks fall back to the colour.
 
 Finishes work on the background alone, before anything else is drawn: never on a device, the copy,
 a sticker or a shape. Lengths are fractions of the tile width, so a finish looks the same at every
@@ -916,8 +946,16 @@ export size; noise comes from `seed` only, so every render is byte-identical.
 | `reeded`    | fluted glass                                            | `rib` 0.005–0.2 (0.04), `strength` 0–1 (0.6), `direction` vertical/horizontal (vertical)           |
 
 Finishes run in list order, so `[{ "kind": "duotone" }, { "kind": "grain" }]` grains the duotone.
-They also work without a picture (grain on a gradient). The editor's Background panel shows the
-picture's path (Remove) and picks one finish; several finishes are edited in the file.
+They also work without a picture (grain on a gradient).
+
+**In the editor.** The Background panel shows every picture in `<project>/hintergruende/` (the dev
+server lists them at `/api/backgrounds`, with the `average` from `credits.json`) plus any the set
+already draws, as thumbnails. Picking one makes the background solid in the picture's mean colour
+(from the credits, or measured on 16 × 16 for a picture without one), because that colour is what
+shows while it loads; Remove image keeps the colour. Sliders set focus, zoom, blur and brightness
+within the limits `forge check` allows. Finish picks one finish and shows its fields (sizes, angle,
+colours, mono, direction) with the defaults from the table; several finishes are shown by name and
+edited in the file.
 
 **Getting pictures: `forge bg fetch`.** Loads a picture once into `<project>/hintergruende/` and
 records where it came from in `hintergruende/credits.json`, so every render uses the same bytes:
@@ -1049,8 +1087,6 @@ pnpm typecheck && pnpm lint && pnpm test
   `background` is still only a solid colour or a gradient
 - A marker band under the _subhead_; `*starred*` highlighting only ever
   applies to the headline
-- A Firestore adapter. `ProjectStore` is the seam a remote backend would plug
-  into; the file adapter behind `forge dev` is the only implementation
 - Two editors on one project. There is no locking, so the last write wins
 - A placement-aware text floor. The lift that keeps a device out of the copy is
   measured from the base frame, not from each placement, so a duo or trio

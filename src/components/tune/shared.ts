@@ -12,7 +12,11 @@ export type SectionProps = {
   owns?: (key: OptionalSettingKey) => boolean
   /** drops `key` from the active scope — the screen's override, or the set-wide value */
   clear?: (key: OptionalSettingKey) => void
+  /** switches an optional look off for the active scope — on a screen, against an inherited value too */
+  turnOff?: (key: SwitchableKey) => void
 }
+
+export type SwitchableKey = 'browserUrl' | 'backBlur' | 'deviceFade'
 
 export const gradientCss = (g: Extract<Background, { kind: 'gradient' }>) =>
   `linear-gradient(${g.angle}deg, ${g.from}, ${g.to})`

@@ -62,6 +62,8 @@ export type CaptureOptions = {
   store?: 'apple' | 'google'
   calls?: { tool: string; args?: Record<string, unknown> }[]
   settleMs?: number
+  hideIme?: boolean
+  package?: string
 }
 
 export type CaptureResult = {
@@ -843,6 +845,14 @@ export const TOOLS: Tool[] = [
           type: 'integer',
           description: 'Wait before the shot so the screen is calm. Default 1500.',
         },
+        hideIme: {
+          type: 'boolean',
+          description:
+            'Close the on-screen keyboard before the shot: sends Back only while the keyboard is shown, fails if it stays open.',
+        },
+        package: str(
+          'App package that must be in front; default FORGE_APP_PACKAGE or app.tinygiants.getalife.debug. The capture refuses (and writes nothing) when the screen is off, another app is in front or a step reports vaultUnlockRequired.',
+        ),
       },
       ['out'],
     ),
@@ -855,7 +865,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'bg_fetch',
     description:
-      'Loads a background picture once into the project folder (hintergruende/<name>.jpg) and records its credit in hintergruende/credits.json: a photo from Unsplash (needs UNSPLASH_ACCESS_KEY; demo keys allow 50 requests an hour, a fetch costs two, a list one) or a public-domain (CC0) painting from The Met or the Art Institute of Chicago. Answers with src (path from the repo root) and average (the mean colour). Use it as settings.background = { kind: "solid", color: <average>, image: { src, focusX, focusY, zoom, blur, brightness }, finish: [...] }; the colour is what the contrast checks read. list: true only shows candidates.',
+      'Loads a background picture once into the project folder (hintergruende/<name>.jpg) and records its credit in hintergruende/credits.json: a photo from Unsplash (needs UNSPLASH_ACCESS_KEY; demo keys allow 50 requests an hour, a fetch costs two, a list one) or a public-domain (CC0) painting from The Met or the Art Institute of Chicago. Answers with src (path from the repo root) and average (the mean colour). Use it as settings.background = { kind: "solid", color: <average>, image: { src, focusX, focusY, zoom, blur, brightness }, finish: [...] }; the colour shows while the picture loads, the contrast checks measure the picture behind the text. list: true only shows candidates.',
     input: object(
       '',
       {

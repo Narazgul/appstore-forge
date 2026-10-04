@@ -74,7 +74,13 @@ export const AA_NORMAL_TEXT = 4.5
  */
 export function contrastAgainstBackground(fg: string, background: Background, alpha = 1): number {
   const stops = background.kind === 'solid' ? [background.color] : [background.from, background.to]
+  return contrastAgainstColors(fg, stops, alpha)
+}
+
+/** `fg` against the worst of several colours it may sit on — the stops of a gradient, or the mean
+ *  colour of a background image behind the text block in each locale and target. */
+export function contrastAgainstColors(fg: string, colors: string[], alpha = 1): number {
   return Math.min(
-    ...stops.map((stop) => contrastRatio(alpha < 1 ? blendOverBackground(fg, alpha, stop) : fg, stop)),
+    ...colors.map((color) => contrastRatio(alpha < 1 ? blendOverBackground(fg, alpha, color) : fg, color)),
   )
 }
