@@ -1,4 +1,4 @@
-import { isChipElement, isEffectElement, isShapeElement } from '../types'
+import { isChipElement, isEffectElement, isMarkElement, isShapeElement } from '../types'
 import type {
   Background,
   ChipElement,
@@ -26,6 +26,7 @@ import {
   fitChipText,
   headlineBaseSize,
   listBlockBox,
+  setSubFont,
   textBlockBox,
   type ChipFit,
   type TextMeasurer,
@@ -33,8 +34,21 @@ import {
   type Line,
   type Shift,
 } from './text'
-import { drawArtwork, drawDevice, drawMosaicCell, drawPill, drawShape, drawSticker, type Box } from './frames'
+import {
+  drawArtwork,
+  drawDevice,
+  drawMosaicCell,
+  drawPill,
+  drawShape,
+  drawSticker,
+  imageSize,
+  type BrowserBar,
+  type Box,
+} from './frames'
 import { drawEffectOverlays, prepareScreen } from './effects'
+import { BACK_BLUR, drawBlurred, drawFaded, fadeBand, turnedBounds } from './depth'
+import { drawMarks, type ScreenPlacement } from './marks'
+import { drawLayeredBackground, hasBackgroundLayers } from './finishes'
 
 export function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, bg: Background) {
   if (bg.kind === 'solid') {
@@ -88,6 +102,8 @@ export type SceneSources = Partial<Record<PlacementSource, CanvasImageSource | n
   elements?: Record<string, CanvasImageSource | null>
   /** the mosaic layout's cells after the first (which draws `self`), in `Screen.extraIds` order */
   extra?: (CanvasImageSource | null)[]
+  /** background images, keyed by `BackgroundImage.src` */
+  backgrounds?: Record<string, CanvasImageSource | null>
 }
 
 export type DeviceBox = { box: Box; source: PlacementSource; angle: number; frameless: boolean }
@@ -400,7 +416,7 @@ function drawElements(
 ) {
   if (!elements) return
   for (const el of elements) {
-    if (isEffectElement(el) || el.layer !== layer) continue
+    if (isEffectElement(el) || isMarkElement(el) || el.layer !== layer) continue
     if (isChipElement(el)) {
       drawChipElement(ctx, W, w, h, el, settings, lang)
       continue
@@ -478,7 +494,10 @@ export function renderScene(
   const layout = getLayout(settings.layout)
   const W = w * layout.span
   ctx.clearRect(0, 0, W, h)
-  drawBackground(ctx, W, h, settings.background)
+  const bg = settings.background
+  if (hasBackgroundLayers(bg))
+    drawLayeredBackground(ctx, W, w, h, bg, bg.image && sources.backgrounds?.[bg.image.src], drawBackground)
+  else drawBackground(ctx, W, h, bg)
 
   // A backdrop is a card behind the device band; a deviceless layout has none to sit behind.
   if (settings.backdropColor && !layout.deviceless) drawBackdrop(ctx, W, w, h, layout, settings.backdropColor)
@@ -489,6 +508,7 @@ export function renderScene(
     drawListBlock(ctx, W, w, h, layout, screen, settings, listCapSize(h, settings, layout), shifts.list)
 
   const device = getDevice(settings.deviceId)
+  let placement: ScreenPlacement | null = null
 
   if (layout.id === 'mosaic') {
     drawMosaicGrid(ctx, w, h, layout, screen, settings, device.screenAspect, sources)
@@ -515,33 +535,78 @@ export function renderScene(
         ? boxes.find((b) => b.source === 'self' && !b.frameless)
         : undefined
     const prepared = effectBox ? prepareScreen(ctx, sources.self!, effects) : null
-    for (const deviceBox of boxes) {
-      const { box, source, angle, frameless } = deviceBox
-      if (isArtworkScreen && source !== 'artwork') continue
-      // A multi-device arrangement falls back to the current screenshot when there is no
-      // neighbour, so a single-screen project still renders every frame. Artwork gets no such
-      // fallback: an unframed screenshot in that slot would be wrong, not merely a stand-in.
-      const img =
-        deviceBox === effectBox
-          ? prepared!.base
-          : source === 'artwork'
-            ? (sources.artwork ?? null)
-            : (sources[source] ?? sources.self ?? null)
-      if (!img && (frameless || source === 'artwork')) continue
-
-      ctx.save()
-      if (angle !== 0) {
-        ctx.translate(box.x + box.w / 2, box.y + box.h / 2)
-        ctx.rotate((angle * Math.PI) / 180)
-        ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2))
+    const bar: BrowserBar | undefined = device.toolbar
+      ? { url: settings.browserUrl, font: (c, size) => setSubFont(c, size, settings, screen.lang) }
+      : undefined
+    const drawn = boxes.filter(
+      ({ source, frameless }) =>
+        !(isArtworkScreen && source !== 'artwork') &&
+        !((frameless || source === 'artwork') && !imageFor(source, sources)),
+    )
+    const front = drawn[drawn.length - 1]
+    const drawDevices = (target: CanvasRenderingContext2D) => {
+      for (const deviceBox of drawn) {
+        const { box, source, angle, frameless } = deviceBox
+        // A multi-device arrangement falls back to the current screenshot when there is no
+        // neighbour, so a single-screen project still renders every frame. Artwork gets no such
+        // fallback: an unframed screenshot in that slot would be wrong, not merely a stand-in.
+        const img = deviceBox === effectBox ? prepared!.base : imageFor(source, sources)
+        const drawOne = (c: CanvasRenderingContext2D) => {
+          c.save()
+          if (angle !== 0) {
+            c.translate(box.x + box.w / 2, box.y + box.h / 2)
+            c.rotate((angle * Math.PI) / 180)
+            c.translate(-(box.x + box.w / 2), -(box.y + box.h / 2))
+          }
+          if (frameless) drawArtwork(c, box, img!)
+          else drawDevice(c, box, device, color, img, settings.deviceShadow, settings.textColor, bar)
+          c.restore()
+        }
+        if (settings.backBlur && deviceBox !== front)
+          drawBlurred(target, turnedBounds(box, angle), BACK_BLUR * w, drawOne)
+        else drawOne(target)
       }
-      if (frameless) drawArtwork(ctx, box, img!)
-      else drawDevice(ctx, box, device, color, img, settings.deviceShadow, settings.textColor)
-      ctx.restore()
+      if (effectBox && prepared)
+        drawEffectOverlays(target, effectBox.box, effectBox.angle, device, prepared, effects, w)
     }
-    if (effectBox && prepared)
-      drawEffectOverlays(ctx, effectBox.box, effectBox.angle, device, prepared, effects, w)
+    if (settings.deviceFade)
+      drawFaded(
+        ctx,
+        W,
+        h,
+        settings.deviceFade,
+        fadeBand(
+          drawn.map((b) => turnedBounds(b.box, b.angle)),
+          h,
+        ),
+        drawDevices,
+      )
+    else drawDevices(ctx)
+
+    const own = isArtworkScreen ? undefined : boxes.find((b) => b.source === 'self' && !b.frameless)
+    if (own && sources.self) {
+      const { w: iw, h: ih } = imageSize(sources.self)
+      if (iw && ih) placement = { box: own.box, angle: own.angle, device, iw, ih }
+    }
   }
 
   drawElements(ctx, W, w, h, screen.elements, sources, 'front', settings, screen.lang)
+  const marks = (screen.elements ?? []).filter(isMarkElement)
+  if (marks.length)
+    drawMarks(ctx, marks, {
+      W,
+      w,
+      h,
+      unit: Math.min(w, h),
+      screen: placement,
+      textBox: () => textBlockBox(ctx, W, w, h, layout, screen, settings, shifts.text),
+      settings,
+      lang: screen.lang,
+    })
+}
+
+/** The image a placement draws, before any effect: an artwork placement takes only the slot's own
+ *  artwork; a framed one falls back to the slot's own screenshot. */
+function imageFor(source: PlacementSource, sources: SceneSources): CanvasImageSource | null {
+  return source === 'artwork' ? (sources.artwork ?? null) : (sources[source] ?? sources.self ?? null)
 }

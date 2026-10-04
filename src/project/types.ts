@@ -1,4 +1,5 @@
-import type { SceneElementLayer, ScreenOverrides, ShapeKind, Settings } from '../types'
+import type { MarkSide, SceneElementLayer, ScreenOverrides, ShapeKind, Settings } from '../types'
+import type { Background } from '../types'
 
 export type ProjectTarget = { id: string; sizeId: string; deviceId: string; out: string }
 /** `store` maps a target id to the store's own locale code; a studio set may leave it out and
@@ -148,18 +149,108 @@ export type SlotEffect = SlotLift | SlotLoupe | SlotFocus | SlotRedact
 export type EffectKind = SlotEffect['effect']
 export const EFFECT_KINDS: EffectKind[] = ['lift', 'loupe', 'focus', 'redact']
 
-/** Exactly one of `artwork` (a sticker), `shape` (a deco shape), `chip` (a text pill) or `effect`
- *  — never more than one, never none; `validateProject` enforces it. */
-export type SlotElement = SlotSticker | SlotShape | SlotChip | SlotEffect
+/**
+ * Where a mark points, exactly one of: `rect` or `node` (a part of the slot's own screenshot,
+ * resolved like an effect's target, `pad` around it), `at` (a box on the tile: `x`/`w` fractions
+ * of the composition width, `y`/`h` of the tile height; without `w`/`h` a point), or `textBlock`
+ * (the tile's headline block). `side` picks the point beside the target a step or a label sits at,
+ * or the edge an arrow starts or ends on; absent, an arrow takes the edge facing its other end.
+ */
+export type SlotMarkTarget = {
+  rect?: EffectRect
+  node?: string | string[]
+  pad?: number
+  at?: { x: number; y: number; w?: number; h?: number }
+  textBlock?: true
+  side?: MarkSide
+}
 
-/** A placed element: everything but an effect, which has no place of its own on the tile. */
+/** A numbered circle. */
+export type SlotStep = SlotMarkTarget & {
+  id: string
+  mark: 'step'
+  /** a number, or up to three characters */
+  n: number | string
+  /** diameter, fraction of the tile's shorter side; default 0.062 */
+  size?: number
+  /** default: the set's accent (`accentBar`, else `eyebrowColor`), else a strong red */
+  color?: string
+  /** default: white or near-black, whichever reads better on `color` */
+  textColor?: string
+}
+
+/** A curved arrow from one target to another. */
+export type SlotArrow = {
+  id: string
+  mark: 'arrow'
+  from: SlotMarkTarget
+  to: SlotMarkTarget
+  /** bend, -1..1, as a fraction of the length; default 0.25 */
+  curve?: number
+  /** line width, fraction of the tile's shorter side; default 0.009 */
+  stroke?: number
+  color?: string
+}
+
+/** A highlighter stroke over the target. */
+export type SlotHighlight = SlotMarkTarget & {
+  id: string
+  mark: 'highlight'
+  /** default: the set's first highlight colour */
+  color?: string
+  /** 0.1–1; default 0.85 */
+  opacity?: number
+}
+
+/** A rounded frame around the target. */
+export type SlotOutline = SlotMarkTarget & {
+  id: string
+  mark: 'outline'
+  color?: string
+  /** line width, fraction of the tile's shorter side; default 0.008 */
+  stroke?: number
+}
+
+/** A short caption in a pill beside the target; its text is copy, keyed by the element id under
+ *  `chips` like a chip's. */
+export type SlotLabel = SlotMarkTarget & {
+  id: string
+  mark: 'label'
+  /** font size, fraction of the tile height; default 0.024 */
+  size?: number
+  color?: string
+  textColor?: string
+}
+
+export type SlotMark = SlotStep | SlotArrow | SlotHighlight | SlotOutline | SlotLabel
+export type MarkKind = SlotMark['mark']
+export const MARK_KINDS: MarkKind[] = ['step', 'arrow', 'highlight', 'outline', 'label']
+
+/** Exactly one of `artwork` (a sticker), `shape` (a deco shape), `chip` (a text pill), `effect` or
+ *  `mark` — never more than one, never none; `validateProject` enforces it. */
+export type SlotElement = SlotSticker | SlotShape | SlotChip | SlotEffect | SlotMark
+
+/** A placed element: everything but an effect or a mark, which have no place of their own. */
 export type SlotPlaced = SlotSticker | SlotShape | SlotChip
 
 export const isSlotShape = (el: SlotElement): el is SlotShape => 'shape' in el
 export const isSlotChip = (el: SlotElement): el is SlotChip => 'chip' in el
 export const isSlotSticker = (el: SlotElement): el is SlotSticker => 'artwork' in el
 export const isSlotEffect = (el: SlotElement): el is SlotEffect => 'effect' in el
-export const isSlotPlaced = (el: SlotElement): el is SlotPlaced => !('effect' in el)
+export const isSlotMark = (el: SlotElement): el is SlotMark => 'mark' in el
+export const isSlotPlaced = (el: SlotElement): el is SlotPlaced => !('effect' in el) && !('mark' in el)
+/** Elements whose text lives in the copy's `chips`, keyed by their id. */
+export const hasChipText = (el: SlotElement): el is SlotChip | SlotLabel =>
+  isSlotChip(el) || (isSlotMark(el) && el.mark === 'label')
+
+/** Every target of a mark: one, or an arrow's two ends. */
+export const markTargets = (el: SlotMark): SlotMarkTarget[] => (el.mark === 'arrow' ? [el.from, el.to] : [el])
+
+/** Whether an element is placed through a capture's nodes file. */
+export const usesNodes = (el: SlotElement): boolean =>
+  isSlotEffect(el)
+    ? el.node !== undefined
+    : isSlotMark(el) && markTargets(el).some((t) => t && t.node !== undefined)
 
 /** What a capture writes next to its screenshot: every node with its bounds in the capture's pixels. */
 export type CaptureNode = {
@@ -256,3 +347,19 @@ export const slotScreens = (slot: ProjectSlot): string[] =>
   [slot.screen, slot.pair, slot.pairPrev, ...(Array.isArray(slot.extra) ? slot.extra : [])].filter(
     (s): s is string => !!s,
   )
+
+/** Every background a set can draw: its own, its contrast pair's, and each slot's overrides. */
+export function setBackgrounds(set: ProjectSet): Background[] {
+  const all = [set.settings.background, set.settings.altColors?.background]
+  for (const slot of set.slots) all.push(slot.overrides?.background, slot.overrides?.altColors?.background)
+  return all.filter((bg): bg is Background => !!bg && typeof bg === 'object')
+}
+
+/** The background image files a set names, each once, in the order they first appear. */
+export const backgroundImageSrcs = (set: ProjectSet): string[] => [
+  ...new Set(
+    setBackgrounds(set)
+      .map((bg) => bg.image?.src)
+      .filter((src): src is string => typeof src === 'string' && !!src),
+  ),
+]

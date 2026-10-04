@@ -716,7 +716,7 @@ forge tool update_slot --project ./studio --json @patch.json
 | `add_slot`, `remove_slot`, `update_slot`              | tiles: source images, overrides (`null` = inherit again), note, role |
 | `update_settings`, `update_target`                    | the set-wide look; a target's size or device                         |
 | `set_copy`                                            | one locale's headline, subhead, eyebrow, list, chip texts            |
-| `add_element`, `update_element`, `remove_element`     | stickers, shapes, chips, screen effects (lift, loupe, focus, redact) |
+| `add_element`, `update_element`, `remove_element`     | stickers, shapes, chips, screen effects, marks (step, arrow, …)      |
 | `check`, `preview`, `render`                          | validate; PNGs into a scratch folder to look at; the real render     |
 | `guidelines`, `remember`                              | read `guidelines.md`; append a dated design rule to it               |
 
@@ -811,6 +811,152 @@ layout, on `mosaic` or in an arrangement without its own framed screen they draw
 as before; the effect fields are part of the approval hash, and so are the nodes file bytes of
 every slot whose effect aims at a `node`. In the editor effects render and are listed in the
 Stickers panel (reorder, remove); dragging them is not built yet.
+
+### Marks: steps, arrows, highlighter, outline, label
+
+Marks annotate a picture for a help article or a guide. They sit in `elements` with `mark`
+instead of `artwork`/`shape`/`chip`/`effect`, have no `x`, `y`, `width`, `rotate` or `layer`, and
+draw over everything else on the tile, in list order:
+
+```json
+"elements": [
+  { "id": "s1",  "mark": "step",      "n": 1, "node": ["🏠", "Rent", "$1,000"] },
+  { "id": "to",  "mark": "arrow",     "from": { "textBlock": true, "side": "bottom" }, "to": { "node": "$8,430" }, "curve": 0.3 },
+  { "id": "hl",  "mark": "highlight", "node": ["Rent", "$1,000"] },
+  { "id": "box", "mark": "outline",   "node": ["Available", "$8,430"], "pad": 0.02 },
+  { "id": "cap", "mark": "label",     "node": ["Available", "$8,430"], "side": "right" },
+  { "id": "one", "mark": "step",      "n": "A", "at": { "x": 0.08, "y": 0.5 } }
+]
+```
+
+| Mark        | Draws                                       | Own fields (default)                                                                                                           |
+| ----------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `step`      | a numbered circle beside the target         | `n` 0–999 or up to three characters, `size` diameter 0.02–0.3 (0.062), `color`, `textColor`                                    |
+| `arrow`     | a curved arrow from `from` to `to`          | `from`, `to` (each a target), `curve` −1–1 of its length, the sign picks the side (0.25), `stroke` 0.002–0.05 (0.009), `color` |
+| `highlight` | a highlighter stroke over the target        | `opacity` 0.1–1 (0.85), `color` (the set's first highlight)                                                                    |
+| `outline`   | a rounded frame around the target           | `stroke` 0.002–0.05 (0.008), `color`                                                                                           |
+| `label`     | a short caption in a pill beside the target | `size` font size 0.008–0.2 of the tile height (0.024), `color`, `textColor`; the text is copy (below)                          |
+
+**The target** (for an arrow: each of `from` and `to`) is exactly one of `rect` or `node` — a part
+of the slot's own screenshot, resolved exactly like an effect's, with `pad` — or `at` (a point or
+box on the tile: centre `x` as a fraction of the composition width, `y` of the tile height,
+optional `w` of the tile width and `h` of the tile height), or `textBlock: true` (the tile's
+headline block). `side` (`center`, `left`, `right`, `top`, `bottom`) puts a step or a label beside
+that edge of the target, or starts or ends an arrow there; without it a step sits left of a screen
+target, a label right of it (both centred on anything else), and an arrow leaves and enters each
+target on the edge facing the other one. A screen target follows the device: turned with it, cut
+to the visible screen. A node that does not resolve is an error in `forge check` and the mark is
+not drawn; on an artwork slot a screen target is an error, on a deviceless layout, `mosaic` or an
+arrangement without its own framed screen a warning, like an effect. A tile target works on any slot.
+
+Sizes and line widths are fractions of the tile's shorter side, so a mark reads the same on 4:5
+and on 16:9. Colours default to the set's accent (`accentBar`, else `eyebrowColor`), else a strong
+red that reads on light and dark screens; numbers and label text are white, or near-black on a light
+colour. Steps, arrows and outlines get a thin contrasting rim and a soft shadow, so they hold up
+over the screenshot and over the background alike. The highlighter multiplies over a light page;
+over a dark one (measured under the target) it underlines instead, so the text stays readable.
+
+A label's text is copy, one line per locale, stored under `chips` with the label's id like a chip's
+(`set_copy` and `add_element`'s `chipText` take it; a missing one is an error). Mark fields are part
+of the approval hash, and so are the nodes file bytes of every slot whose mark aims at a `node`. In
+the editor marks render and are listed in the Stickers panel (reorder, remove); there are no
+handles for them.
+
+### Frames and depth: browser window, blurred back device, fade-out
+
+- **Browser window.** The device `browser` (`deviceId` of a target, or a slot override) frames a
+  website screenshot (16:10 page, cover-fitted from the top like a phone screen) in a window with a
+  title bar, three window buttons and an address field. `browserUrl` (a setting, per slot as an
+  override) is the text in the field; absent leaves it empty. The bar is light; the frame colour
+  `black` makes it dark. Effects and marks aim into the page exactly as into a phone screen.
+- **`backBlur: true`** blurs every frame of a multi-device arrangement (duo, trio, wings, …) but
+  the front one (the last drawn), by 0.009 of the tile width. A single device stays sharp.
+- **`deviceFade`** lets the devices run out at the bottom of what they show: `"dark"` lays a black
+  gradient over the whole width (and keeps it dark below), `"background"` erases them along the
+  same band, so the background shows through. Mosaic tiles take neither.
+
+All three are optional settings; absent, a tile draws exactly as before and the approval hash is
+unchanged. Blur and fade work on a layer in integer steps (premultiplied), so the CLI and the
+editor draw them identically on every run.
+
+### Background pictures and finishes
+
+`background` (set-wide, per slot in `overrides`, or in a palette's contrast pair) may carry a
+picture and a list of finishes on top of its colour or gradient:
+
+```json
+"background": {
+  "kind": "solid",
+  "color": "#5a665e",
+  "image": { "src": "studio/hintergruende/wiese.jpg", "focusX": 0.5, "focusY": 0.55, "zoom": 1, "blur": 0, "brightness": 1 },
+  "finish": [{ "kind": "grain", "amount": 0.07, "seed": 1 }]
+}
+```
+
+`image.src` is a path from the repo root, like `sources`. The picture is cover-fitted to the whole
+composition (both tiles of a panorama), `focusX`/`focusY` (0–1, 0.5) are the point kept nearest the
+centre, `zoom` (1–4, 1) crops further in around it, `blur` (0–0.1 of the tile width, 0) softens it
+and `brightness` (0–2, 1) multiplies it. The colour underneath shows while the picture loads and is
+what the contrast checks read, so set it to the picture's mean colour (`forge bg fetch` prints it as
+`average`).
+
+Finishes work on the background alone, before anything else is drawn: never on a device, the copy,
+a sticker or a shape. Lengths are fractions of the tile width, so a finish looks the same at every
+export size; noise comes from `seed` only, so every render is byte-identical.
+
+| Finish      | Look                                                    | Fields (default)                                                                                   |
+| ----------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `grain`     | film grain                                              | `amount` 0–0.5 (0.08), `size` 0.0003–0.02 (0.0012), `mono` (true), `seed` (1)                      |
+| `motion`    | motion blur                                             | `length` 0.002–0.3 (0.05), `angle` degrees (0)                                                     |
+| `halftone`  | colour dots on paper                                    | `cell` 0.003–0.08 (0.014), `angle` (45), `paper` hex (#ffffff)                                     |
+| `newsprint` | one ink in dots on newsprint, a little grain            | `cell` (0.01), `angle` (45), `ink` (#1c1c1c), `paper` (#efe9dc), `seed` (1)                        |
+| `dither`    | 1-bit (Atkinson)                                        | `pixel` 0.0005–0.02 (0.0025), `dark` (#1b1b1f), `light` (#f2efe6)                                  |
+| `riso`      | two inks fitted to the picture, second one slightly off | `inks` two hex (#ff6c2f, #3255a4), `paper` (#f5f0e6), `offset` 0–0.05 (0.004), `grain` 0–0.5 (0.1) |
+| `duotone`   | shadows to one colour, highlights to another            | `dark` (#1f2a44), `light` (#f6d7a7)                                                                |
+| `reeded`    | fluted glass                                            | `rib` 0.005–0.2 (0.04), `strength` 0–1 (0.6), `direction` vertical/horizontal (vertical)           |
+
+Finishes run in list order, so `[{ "kind": "duotone" }, { "kind": "grain" }]` grains the duotone.
+They also work without a picture (grain on a gradient). The editor's Background panel shows the
+picture's path (Remove) and picks one finish; several finishes are edited in the file.
+
+**Getting pictures: `forge bg fetch`.** Loads a picture once into `<project>/hintergruende/` and
+records where it came from in `hintergruende/credits.json`, so every render uses the same bytes:
+
+```bash
+forge bg fetch unsplash meadow clouds --project studio --list --orientation portrait   # candidates only
+forge bg fetch unsplash id:v10lH6UUEGw --name wiese --project studio
+forge bg fetch met wheat field --pick 2 --project studio    # The Met, public domain (CC0) only
+forge bg fetch aic id:60755 --name ruisdael --project studio # Art Institute of Chicago, CC0 only
+```
+
+Unsplash needs `UNSPLASH_ACCESS_KEY` (a demo key allows 50 requests an hour: `--list` costs one, a
+fetch two, the photo search plus the download report the API guidelines require for every photo
+that is used). `UNSPLASH_APP_NAME` sets the `utm_source` of the credit links. Museum photographs
+lose a flat mount at their edges; anything longer than 3200 px is scaled down. The answer names
+`src` for `background.image` and the `average` colour.
+
+**Painted backgrounds: `forge bg paint`.** Repaints a picture once through fal.ai
+(`fal-ai/flux-pro/kontext`, image to image, $0.04 an image, key in `FAL_AI`) and keeps it next to
+the source as `<name>-<style>.jpg`, about one megapixel:
+
+```bash
+forge bg paint studio/hintergruende/wiese.jpg --style watercolor --seed 7 --project studio --dry-run
+```
+
+Styles: `oil`, `watercolor`, `ink`, `gouache`. Every call costs money; `--dry-run` shows the
+request and the price only. The credit records model, prompt and seed, and carries the source's
+own credit in `basedOn`: a painted photo still needs its photographer's name.
+
+**Credits.** `hintergruende/credits.json` is the record, keyed by file name. A studio set's render
+also writes `credits.json` next to its pictures with the credits of the backgrounds they use
+(path from the repo root as key, `attribution` the line the page shows), so whoever puts a picture
+on a page has its credit at hand. Store sets write none: a store listing has no place for it.
+
+A background without `image` and `finish` renders and hashes exactly as before. The image and
+finish fields are part of the set JSON and so of the approval hash, and every background picture's
+bytes are hashed after everything else, once each. The tools `bg_fetch` and `bg_paint` do the same
+through `forge tool` (CLI only); `list_presets` lists the finishes with their defaults and the
+paint styles.
 
 ### The four commands
 

@@ -9,6 +9,7 @@ import { checkCommand, renderCommand } from './commands'
 import { listSets, readGallery, readProject, repoRootOf, writeProject } from './project-io'
 import { renderProject } from './render'
 import { runCapture } from './capture'
+import { paintBackground, saveBackground, searchBackgrounds } from './background'
 
 export const GUIDELINES_FILE = 'guidelines.md'
 
@@ -72,6 +73,26 @@ export function fileHost(projectDir: string): ToolHost {
     render: (setId, { locales, targets, requireApproval }) =>
       renderCommand({ projectDir, setId, localeIds: locales, targetIds: targets, requireApproval }),
     capture: (opts) => runCapture(projectDir, opts),
+    async fetchBackground(opts) {
+      const pick = opts.pick ?? 1
+      const candidates = await searchBackgrounds({
+        source: opts.source,
+        query: opts.query,
+        orientation: opts.orientation,
+        count: opts.list ? 10 : pick,
+        unsplashKey: process.env.UNSPLASH_ACCESS_KEY,
+        unsplashApp: process.env.UNSPLASH_APP_NAME,
+      })
+      if (opts.list)
+        return candidates.map((c, i) => ({ pick: i + 1, id: c.id, title: c.title, author: c.author }))
+      const candidate = candidates[pick - 1]
+      if (!candidate) throw new Error(`No usable result ${pick} for "${opts.query}"`)
+      return saveBackground(projectDir, candidate, {
+        name: opts.name,
+        unsplashKey: process.env.UNSPLASH_ACCESS_KEY,
+      })
+    },
+    paintBackground: (opts) => paintBackground({ projectDir, ...opts, falKey: process.env.FAL_AI }),
     async readGuidelines() {
       return existsSync(guidelines) ? readFile(guidelines, 'utf8') : null
     },

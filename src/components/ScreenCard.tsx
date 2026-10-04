@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { effectiveSettings } from '../lib/settings'
 import { getLayout } from '../presets/layouts'
-import { isSlotChip } from '../project/types'
+import { hasChipText } from '../project/types'
 import { sceneSpan } from '../render/scene'
 import { useStore } from '../store'
 import type { Screen } from '../types'
@@ -86,7 +86,7 @@ export function ScreenCard({ screen, index, total, width, height, isSlot }: Prop
   const setChipText = useStore((s) => s.setChipText)
   const chips = useStore(
     useShallow(
-      (s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.elements?.filter(isSlotChip) ?? [],
+      (s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.elements?.filter(hasChipText) ?? [],
     ),
   )
   const note = useStore((s) => s.project?.set.slots.find((slot) => slot.id === screen.id)?.note ?? '')

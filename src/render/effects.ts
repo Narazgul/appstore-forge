@@ -1,14 +1,14 @@
 import type { DeviceSpec, EffectElement, LiftEffect, LoupeEffect, ScreenRect } from '../types'
 import { coverTop, deviceScreen, imageSize, type Box } from './frames'
 
-type Pixels = { data: Uint8ClampedArray; w: number; h: number }
+export type Pixels = { data: Uint8ClampedArray; w: number; h: number }
 type PixelRect = { x0: number; y0: number; x1: number; y1: number }
 
 /** `base` is what the device shows; `clean` is the screen after redaction only, which the lifted
  *  part and the loupe sample — sharp and undimmed, but never showing what was redacted. */
 export type PreparedScreen = { base: CanvasImageSource; clean: CanvasImageSource; w: number; h: number }
 
-function scratchCanvas(ctx: CanvasRenderingContext2D, w: number, h: number): HTMLCanvasElement {
+export function scratchCanvas(ctx: CanvasRenderingContext2D, w: number, h: number): HTMLCanvasElement {
   if (typeof document !== 'undefined') {
     const canvas = document.createElement('canvas')
     canvas.width = w
@@ -69,7 +69,7 @@ function boxPass(src: Uint8ClampedArray, w: number, h: number, r: number, horizo
 }
 
 // Three box passes each way come close to a Gaussian, in integers, so every run is byte-identical.
-function blurRegion(px: Pixels, region: PixelRect, radius: number) {
+export function blurRegion(px: Pixels, region: PixelRect, radius: number) {
   const w = region.x1 - region.x0
   const h = region.y1 - region.y0
   const r = Math.max(1, Math.round(radius))

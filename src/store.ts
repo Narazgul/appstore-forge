@@ -4,11 +4,18 @@ import type { CanvasEdit, CanvasOverrides } from './lib/canvasEdit'
 import { preloadScriptFonts } from './presets/fonts'
 import { getRhythm, rhythmStep } from './presets/rhythms'
 import { getTemplateSpec } from './presets/templates'
-import { artworkIdFor, imageIdFor, screensFor, settingsFor, type NodesLookup } from './project/bridge'
+import {
+  artworkIdFor,
+  backgroundIdFor,
+  imageIdFor,
+  screensFor,
+  settingsFor,
+  type NodesLookup,
+} from './project/bridge'
 import { approvalContent, approvalHash } from './project/hash'
 import { EMPTY_GALLERY } from './project/store'
 import type { Gallery, ProjectStore } from './project/store'
-import { isSlotChip, isSlotEffect, isSlotPlaced, isSlotSticker } from './project/types'
+import { backgroundImageSrcs, hasChipText, isSlotPlaced, isSlotSticker, usesNodes } from './project/types'
 import type {
   Approval,
   NodesFile,
@@ -295,7 +302,7 @@ export function projectAfterSlotSource(
  * `StickersSection.tsx` reuses `chip` once nothing still claims it).
  */
 export function projectAfterSlotElements(project: Project, slotId: string, elements: SlotElement[]): Project {
-  const keptChipIds = new Set(elements.filter(isSlotChip).map((el) => el.id))
+  const keptChipIds = new Set(elements.filter(hasChipText).map((el) => el.id))
   const copies: ProjectCopies = {}
   for (const [localeId, locale] of Object.entries(project.copies)) {
     const chips = locale[slotId]?.chips
@@ -534,6 +541,10 @@ async function loadProjectImages(
       return rows
     }),
   )
+  const backgroundUrl = store.backgroundUrl?.bind(store)
+  if (backgroundUrl)
+    for (const src of backgroundImageSrcs(project.set))
+      keys.push({ id: backgroundIdFor(src), url: backgroundUrl(src) })
   const results = await Promise.allSettled(keys.map(({ url }) => loadImageUrl(url)))
   const images: Record<string, HTMLImageElement> = {}
   results.forEach((result, i) => {
@@ -550,7 +561,7 @@ async function loadProjectNodes(project: Project, store: ProjectStore): Promise<
   if (!nodesBytes) return {}
   const rows = project.set.locales.flatMap((l) =>
     project.set.slots
-      .filter((s) => s.screen && (s.elements ?? []).some((el) => isSlotEffect(el) && el.node !== undefined))
+      .filter((s) => s.screen && (s.elements ?? []).some(usesNodes))
       .map((s) => ({ id: imageIdFor(l.id, s.screen!), localeId: l.id, screen: s.screen! })),
   )
   const results = await Promise.allSettled(
@@ -1301,6 +1312,7 @@ export const useStore = create<State>((set, get) => ({
       (l, s) => projectStore.sourceBytes(l, s),
       projectStore.artworkBytes?.bind(projectStore),
       nodesBytesOf(projectStore),
+      projectStore.backgroundBytes?.bind(projectStore),
     )
     // An edit while the hash was computing wins; approving the older project would be a lie.
     if (get().project !== project) return
@@ -1329,6 +1341,7 @@ export const useStore = create<State>((set, get) => ({
       (l, s) => projectStore.sourceBytes(l, s),
       projectStore.artworkBytes?.bind(projectStore),
       nodesBytesOf(projectStore),
+      projectStore.backgroundBytes?.bind(projectStore),
     )
     if (get().project !== project) return
     const ok = hash === project.set.approval.hash

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { GRADIENT_PRESETS, SOLID_PRESETS } from '../../presets/backgrounds'
 import { PALETTES } from '../../presets/palettes'
-import type { Background, PaletteColors } from '../../types'
+import { FINISH_KINDS } from '../../render/finishes'
+import type { Background, FinishKind, PaletteColors } from '../../types'
 import { Row } from './Controls'
 import { gradientCss, type SectionProps } from './shared'
 
@@ -32,6 +33,9 @@ export function BackgroundSection({ settings, put }: SectionProps) {
   // Switching to Custom on a solid background needs a gradient to start from.
   const custom: Extract<Background, { kind: 'gradient' }> =
     bg.kind === 'gradient' ? bg : { kind: 'gradient', from: '#6366f1', to: '#a855f7', angle: 135 }
+  // The colour under an image, and the finish over it, survive a colour change in Custom.
+  const layers = { ...(bg.image ? { image: bg.image } : {}), ...(bg.finish ? { finish: bg.finish } : {}) }
+  const finishes = bg.finish ?? []
 
   return (
     <>
@@ -110,7 +114,13 @@ export function BackgroundSection({ settings, put }: SectionProps) {
               className="seg"
               data-active={bg.kind === 'solid'}
               onClick={() =>
-                put({ background: { kind: 'solid', color: bg.kind === 'solid' ? bg.color : custom.from } })
+                put({
+                  background: {
+                    ...layers,
+                    kind: 'solid',
+                    color: bg.kind === 'solid' ? bg.color : custom.from,
+                  },
+                })
               }
             >
               Solid
@@ -118,7 +128,7 @@ export function BackgroundSection({ settings, put }: SectionProps) {
             <button
               className="seg"
               data-active={bg.kind === 'gradient'}
-              onClick={() => put({ background: custom })}
+              onClick={() => put({ background: { ...custom, ...layers } })}
             >
               Gradient
             </button>
@@ -129,12 +139,12 @@ export function BackgroundSection({ settings, put }: SectionProps) {
               <input
                 type="color"
                 value={bg.color}
-                onChange={(e) => put({ background: { kind: 'solid', color: e.target.value } })}
+                onChange={(e) => put({ background: { ...layers, kind: 'solid', color: e.target.value } })}
               />
               <input
                 className="field"
                 value={bg.color}
-                onChange={(e) => put({ background: { kind: 'solid', color: e.target.value } })}
+                onChange={(e) => put({ background: { ...layers, kind: 'solid', color: e.target.value } })}
               />
             </Row>
           ) : (
@@ -176,6 +186,51 @@ export function BackgroundSection({ settings, put }: SectionProps) {
           )}
         </div>
       )}
+
+      {bg.image && (
+        <Row label="Image">
+          <span className="min-w-0 flex-1 truncate text-[12px]" title={bg.image.src}>
+            {bg.image.src}
+          </span>
+          <button
+            className="seg shrink-0"
+            onClick={() => put({ background: { ...bg, image: undefined } as Background })}
+          >
+            Remove
+          </button>
+        </Row>
+      )}
+
+      <Row label="Finish">
+        {finishes.length > 1 ? (
+          <span className="flex-1 text-[12px]">{finishes.map((f) => f.kind).join(' + ')}</span>
+        ) : (
+          <select
+            className="field"
+            value={finishes[0]?.kind ?? ''}
+            onChange={(e) =>
+              put({
+                background: {
+                  ...bg,
+                  finish: e.target.value ? [{ kind: e.target.value as FinishKind }] : undefined,
+                },
+              })
+            }
+          >
+            <option value="">None</option>
+            {FINISH_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {kind}
+              </option>
+            ))}
+          </select>
+        )}
+        {finishes.length > 0 && (
+          <button className="seg shrink-0" onClick={() => put({ background: { ...bg, finish: undefined } })}>
+            Off
+          </button>
+        )}
+      </Row>
 
       {settings.altColors && (
         <Row label="Contrast">

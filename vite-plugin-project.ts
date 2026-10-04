@@ -2,7 +2,7 @@ import { watch } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { join, normalize, sep } from 'node:path'
+import { extname, join, normalize, sep } from 'node:path'
 import type { Plugin } from 'vite'
 import { copyDir, listSets, readGallery, readProject, repoRootOf, writeProject } from './cli/project-io'
 import { SET_ID_RE } from './src/project/duplicate'
@@ -19,6 +19,13 @@ const MAX_BODY_BYTES = 5 * 1024 * 1024
  *  page decides where the server writes. Only names that stay inside the project pass. */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/
 
+const BACKGROUND_TYPES: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+}
+
 /** The path a URL addresses, ignoring its query string. */
 const pathnameOf = (url: string) => url.split('?')[0]
 
@@ -30,7 +37,8 @@ const isProjectRoute = (url: string) => {
     path === '/api/sets' ||
     path.startsWith('/sources/') ||
     path.startsWith('/artwork/') ||
-    path.startsWith('/nodes/')
+    path.startsWith('/nodes/') ||
+    path.startsWith('/backgrounds/')
   )
 }
 
@@ -234,6 +242,31 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
     }
   }
 
+  /** A background image by its path from the repo root; nothing outside the repo, images only. */
+  async function sendBackground(url: string, res: ServerResponse): Promise<void> {
+    let path: string
+    try {
+      path = normalize(join(repoRoot, decodeURIComponent(url.slice('/backgrounds/'.length))))
+    } catch {
+      res.statusCode = 400
+      res.end('Malformed background path')
+      return
+    }
+    const type = BACKGROUND_TYPES[extname(path).toLowerCase()]
+    if (!path.startsWith(`${repoRoot}${sep}`) || !type) {
+      res.statusCode = 403
+      res.end()
+      return
+    }
+    try {
+      res.setHeader('content-type', type)
+      res.end(await readFile(path))
+    } catch {
+      res.statusCode = 404
+      res.end()
+    }
+  }
+
   async function serve(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = projectRoute(req)
     const path = pathnameOf(url)
@@ -270,6 +303,10 @@ export function createProjectHandlers({ projectDir, setId }: { projectDir: strin
     }
     if (path.startsWith('/artwork/')) {
       await sendImage(path, res, artworkPath)
+      return true
+    }
+    if (path.startsWith('/backgrounds/')) {
+      await sendBackground(path, res)
       return true
     }
     if (path.startsWith('/nodes/')) {

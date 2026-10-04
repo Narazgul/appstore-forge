@@ -4,6 +4,9 @@ import { stripMarkup } from '../render/text'
 import { getSize } from '../presets/sizes'
 import { isStickerElement } from '../types'
 import type { Screen, Settings } from '../types'
+import { backgroundIdFor } from '../project/bridge'
+
+const BACKGROUND_PREFIX = backgroundIdFor('')
 
 export type ExportResult = { kind: 'downloaded'; count: number }
 
@@ -69,6 +72,11 @@ export async function renderAll(
           .map((el) => [el.imageId, images[el.imageId] ?? null]),
       ),
       extra: screen.extraIds?.map((id) => images[id] ?? null),
+      backgrounds: Object.fromEntries(
+        Object.entries(images)
+          .filter(([key]) => key.startsWith(BACKGROUND_PREFIX))
+          .map(([key, img]) => [key.slice(BACKGROUND_PREFIX.length), img]),
+      ),
     })
     for (let part = 0; part < span; part++) {
       tileCtx.drawImage(canvas, -part * size.w, 0)

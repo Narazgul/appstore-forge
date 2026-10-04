@@ -26,7 +26,7 @@ export const isOverridden = (screen: Screen | null, key: OverridableKey): boolea
 /** Which controls belong to which sidebar section, for the per-section reset affordance. */
 export const SECTION_KEYS: Record<string, OverridableKey[]> = {
   background: ['background', 'backdropColor', 'altColors', 'inverted'],
-  device: ['deviceId', 'frameColorId', 'deviceShadow'],
+  device: ['deviceId', 'frameColorId', 'deviceShadow', 'browserUrl', 'backBlur', 'deviceFade'],
   layout: ['layout', 'positionId'],
   type: [
     'fontId',
@@ -45,4 +45,10 @@ export const SECTION_KEYS: Record<string, OverridableKey[]> = {
 }
 
 /** The overridable keys `DEFAULT_SETTINGS` has no entry for — see `OptionalSettingKey`. */
-export const OPTIONAL_SETTING_KEYS: OptionalSettingKey[] = ['deviceOffset', 'textOffset']
+export const OPTIONAL_SETTING_KEYS: OptionalSettingKey[] = [
+  'deviceOffset',
+  'textOffset',
+  'browserUrl',
+  'backBlur',
+  'deviceFade',
+]

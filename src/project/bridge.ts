@@ -1,6 +1,14 @@
 import { DEFAULT_SETTINGS } from '../store'
-import type { EffectElement, Screen, SceneElement, ScreenRect, Settings } from '../types'
-import { isSlotChip, isSlotEffect, isSlotShape } from './types'
+import type {
+  EffectElement,
+  MarkElement,
+  MarkTarget,
+  Screen,
+  SceneElement,
+  ScreenRect,
+  Settings,
+} from '../types'
+import { isSlotChip, isSlotEffect, isSlotMark, isSlotShape } from './types'
 import type {
   NodesFile,
   Project,
@@ -8,6 +16,8 @@ import type {
   ProjectSet,
   ProjectTarget,
   SlotEffect,
+  SlotMark,
+  SlotMarkTarget,
   SlotPlaced,
 } from './types'
 
@@ -108,10 +118,10 @@ export const isNodeTarget = (node: unknown): node is string | string[] =>
   (typeof node === 'string' && !!node.trim()) ||
   (Array.isArray(node) && node.length >= 2 && node.every((n) => typeof n === 'string' && !!n.trim()))
 
-/** An effect's target for one locale: its own `rect`, or its `node` looked up in that locale's
- *  capture. Null when it cannot be resolved — `validateProject` says why. */
+/** An effect's or a mark's target for one locale: its own `rect`, or its `node` looked up in that
+ *  locale's capture. Null when it cannot be resolved — `validateProject` says why. */
 export function effectRect(
-  el: SlotEffect,
+  el: Pick<SlotEffect, 'rect' | 'node'>,
   localeId: string,
   screen: string | undefined,
   nodes: NodesLookup | undefined,
@@ -158,6 +168,86 @@ function sceneEffect(el: SlotEffect, rect: ScreenRect): EffectElement {
         style: el.style ?? DEFAULT_REDACT.style,
         strength: el.strength ?? DEFAULT_REDACT.strength,
       }
+  }
+}
+
+export const DEFAULT_STEP = { size: 0.062 }
+export const DEFAULT_ARROW = { curve: 0.25, stroke: 0.009 }
+export const DEFAULT_HIGHLIGHT = { opacity: 0.85 }
+export const DEFAULT_OUTLINE = { stroke: 0.008 }
+export const DEFAULT_LABEL = { size: 0.024 }
+
+/** A mark target for one locale; null when it names the screen and that cannot be resolved. */
+export function markTarget(
+  t: SlotMarkTarget,
+  localeId: string,
+  screen: string | undefined,
+  nodes: NodesLookup | undefined,
+): MarkTarget | null {
+  const side = t.side ? { side: t.side } : {}
+  if (t.textBlock) return { on: 'text', ...side }
+  if (t.at) return { on: 'tile', x: t.at.x, y: t.at.y, w: t.at.w ?? 0, h: t.at.h ?? 0, ...side }
+  const rect = screen ? effectRect(t, localeId, screen, nodes) : null
+  return rect ? { on: 'screen', rect, pad: t.pad ?? 0, ...side } : null
+}
+
+function sceneMark(
+  el: SlotMark,
+  localeId: string,
+  screen: string | undefined,
+  nodes: NodesLookup | undefined,
+  caption: string | undefined,
+): MarkElement | null {
+  const target = (t: SlotMarkTarget) => markTarget(t, localeId, screen, nodes)
+  if (el.mark === 'arrow') {
+    const from = el.from && target(el.from)
+    const to = el.to && target(el.to)
+    if (!from || !to) return null
+    return {
+      id: el.id,
+      mark: 'arrow',
+      from,
+      to,
+      curve: el.curve ?? DEFAULT_ARROW.curve,
+      stroke: el.stroke ?? DEFAULT_ARROW.stroke,
+      color: el.color,
+    }
+  }
+  const at = target(el)
+  if (!at) return null
+  switch (el.mark) {
+    case 'step':
+      return {
+        id: el.id,
+        mark: 'step',
+        at,
+        n: String(el.n ?? ''),
+        size: el.size ?? DEFAULT_STEP.size,
+        color: el.color,
+        textColor: el.textColor,
+      }
+    case 'highlight':
+      return {
+        id: el.id,
+        mark: 'highlight',
+        at,
+        opacity: el.opacity ?? DEFAULT_HIGHLIGHT.opacity,
+        color: el.color,
+      }
+    case 'outline':
+      return { id: el.id, mark: 'outline', at, stroke: el.stroke ?? DEFAULT_OUTLINE.stroke, color: el.color }
+    case 'label':
+      return {
+        id: el.id,
+        mark: 'label',
+        at,
+        caption: caption ?? '',
+        size: el.size ?? DEFAULT_LABEL.size,
+        color: el.color,
+        textColor: el.textColor,
+      }
+    default:
+      return null
   }
 }
 
@@ -235,6 +325,11 @@ export function screensFor(project: Project, localeId: string, nodes?: NodesLook
               const rect = slot.kind === 'artwork' ? null : effectRect(el, localeId, slot.screen, nodes)
               return rect ? [sceneEffect(el, rect)] : []
             }
+            if (isSlotMark(el)) {
+              const screen = slot.kind === 'artwork' ? undefined : slot.screen
+              const mark = sceneMark(el, localeId, screen, nodes, copy[slot.id]?.chips?.[el.id])
+              return mark ? [mark] : []
+            }
             return [placedElement(el, localeId, copy[slot.id]?.chips?.[el.id])]
           })
         : undefined,
@@ -296,3 +391,6 @@ export function sourceListing(
   const re = new RegExp(`^${escape(file.slice(0, at))}(.+)${escape(file.slice(at + token.length))}$`)
   return { dir, match: (name: string) => re.exec(name)?.[1] ?? null }
 }
+
+/** Own prefix in the image registry, like `artworkIdFor`. */
+export const backgroundIdFor = (src: string) => `background/${src}`

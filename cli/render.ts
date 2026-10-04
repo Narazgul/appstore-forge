@@ -16,7 +16,7 @@ import {
   sourcePath,
   type NodesLookup,
 } from '../src/project/bridge'
-import { isSlotSticker, slotScreens } from '../src/project/types'
+import { backgroundImageSrcs, isSlotSticker, isStudioSet, slotScreens } from '../src/project/types'
 import type { NodesFile, Project, ProjectSet } from '../src/project/types'
 import { renderScene, sceneSpan } from '../src/render/scene'
 import { isChipElement, isStickerElement } from '../src/types'
@@ -26,6 +26,7 @@ import { getLayout } from '../src/presets/layouts'
 import { getSize } from '../src/presets/sizes'
 import { CliError } from './errors'
 import { registerFonts } from './fonts'
+import { creditsFor, writeOutputCredits } from './background'
 
 type Options = { project: Project; repoRoot: string; targetIds?: string[]; localeIds?: string[] }
 
@@ -106,6 +107,13 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
   // locale wrote whenever two locales or two targets share a directory.
   const cleared = new Set<string>()
   const nodes = nodesLookup(repoRoot, set)
+  const backgrounds: Record<string, Image> = {}
+  for (const src of backgroundImageSrcs(set)) {
+    const path = join(repoRoot, src)
+    if (!existsSync(path)) throw new Error(`Background image missing: ${path}`)
+    backgrounds[src] = await loadImage(path)
+  }
+  const usedBackgrounds = new Map<string, Set<string>>()
 
   for (const locale of locales) {
     const images: Record<string, Image> = {}
@@ -197,7 +205,9 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
               .map((el) => [el.imageId, (images[el.imageId] ?? null) as unknown as CanvasImageSource | null]),
           ),
           extra: screen.extraIds?.map((id) => (images[id] ?? null) as unknown as CanvasImageSource | null),
+          backgrounds: backgrounds as unknown as Record<string, CanvasImageSource | null>,
         })
+        const bgSrc = resolved.background.image?.src
         for (let part = 0; part < span; part++) {
           const rgba = ctx.getImageData(part * size.w, 0, size.w, size.h).data
           const file = join(repoRoot, outPath(target, storeLocale, ++n))
@@ -208,9 +218,14 @@ export async function renderProject({ project, repoRoot, targetIds, localeIds }:
           }
           await writeFile(file, encode(size.w, size.h, rgba))
           written.push(file)
+          if (!usedBackgrounds.has(dir)) usedBackgrounds.set(dir, new Set())
+          if (bgSrc) usedBackgrounds.get(dir)!.add(bgSrc)
         }
       }
     }
   }
+  // A studio picture goes on a page that has to name the photographer; the store has no such place.
+  if (isStudioSet(set))
+    for (const [dir, srcs] of usedBackgrounds) await writeOutputCredits(dir, creditsFor(repoRoot, [...srcs]))
   return written
 }

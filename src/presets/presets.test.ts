@@ -84,8 +84,14 @@ describe('devices', () => {
     }
   })
 
-  it('are all taller than they are wide, once the bezel is added', () => {
-    for (const d of DEVICES) expect(frameAspect(d)).toBeLessThan(1)
+  it('are all taller than they are wide, once the bezel is added — except a browser window', () => {
+    for (const d of DEVICES.filter((d) => !d.toolbar)) expect(frameAspect(d)).toBeLessThan(1)
+  })
+
+  it('give a browser window its title bar on top of the page', () => {
+    const browser = DEVICES.find((d) => d.id === 'browser')!
+    expect(browser.toolbar).toBeGreaterThan(0)
+    expect(frameAspect(browser)).toBeCloseTo(1 / (1 / browser.screenAspect + browser.toolbar!), 10)
   })
 })
 

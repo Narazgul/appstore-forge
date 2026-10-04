@@ -5,7 +5,9 @@ import { CliError } from './errors'
 
 const USAGE = `forge <check|render|approve|dev> --project <dir> [--set default] [--target id]... [--locale id]... [--require-approval] [--by name]
 forge capture --project <dir> --out <path.png> --serial <adb serial> [--port 8765] [--screen name] [--seed [--store apple|google]] [--call tool [--args '<json>']]... [--settle ms]
-forge tool [name] --project <dir> [--json '<input>' | --json @file]   (no name: every tool with its input schema)`
+forge tool [name] --project <dir> [--json '<input>' | --json @file]   (no name: every tool with its input schema)
+forge bg fetch <unsplash|met|aic> <query | id:<id>> --project <dir> [--list] [--pick n] [--name file] [--orientation portrait|landscape|squarish]
+forge bg paint <file> --style <oil|watercolor|ink|gouache> --project <dir> [--seed n] [--name file] [--dry-run]`
 
 export async function main(argv: string[]): Promise<number> {
   const [command, ...afterCommand] = argv
@@ -17,6 +19,10 @@ export async function main(argv: string[]): Promise<number> {
     if (command === 'capture') {
       const { captureCommand } = await import('./capture')
       return await captureCommand(afterCommand)
+    }
+    if (command === 'bg') {
+      const { bgCommand } = await import('./background')
+      return await bgCommand(afterCommand)
     }
     const { values } = parseArgs({
       args: rest,

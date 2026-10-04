@@ -2,9 +2,12 @@ import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SceneSources } from '../render/scene'
 import { placeholderScreenshot } from '../render/placeholder'
+import { backgroundIdFor } from '../project/bridge'
 import { useStore } from '../store'
 import { isStickerElement } from '../types'
 import type { Screen } from '../types'
+
+const BACKGROUND_PREFIX = backgroundIdFor('')
 
 /**
  * Neighbouring screenshots, wrapping around so multi-device arrangements never show a gap.
@@ -51,5 +54,18 @@ export function useSceneSources(screen: Screen, screens?: Screen[]): SceneSource
   // The mosaic layout's cells after the first — a dedicated selector for the same reason as
   // `elementImages`: an array is what `useShallow` compares entry by entry.
   const extra = useStore(useShallow((s) => (screen.extraIds ?? []).map((id) => s.images[id] ?? null)))
-  return useMemo(() => ({ ...base, elements, extra }), [base, elements, extra])
+  // Every background image the set has loaded; the renderer picks the one the screen's effective
+  // background names, which this hook cannot resolve without the settings.
+  const backgroundKeys = useStore(
+    useShallow((s) => Object.keys(s.images).filter((key) => key.startsWith(BACKGROUND_PREFIX))),
+  )
+  const backgroundImages = useStore(useShallow((s) => backgroundKeys.map((key) => s.images[key] ?? null)))
+  const backgrounds = useMemo(
+    () =>
+      Object.fromEntries(
+        backgroundKeys.map((key, i) => [key.slice(BACKGROUND_PREFIX.length), backgroundImages[i]]),
+      ),
+    [backgroundKeys, backgroundImages],
+  )
+  return useMemo(() => ({ ...base, elements, extra, backgrounds }), [base, elements, extra, backgrounds])
 }

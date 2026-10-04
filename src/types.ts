@@ -1,5 +1,71 @@
+/**
+ * A photo or painting under everything else, cover-fitted to the composition. `src` is a path from
+ * the repo root, like a set's `sources`; the colour or gradient it sits on shows while the image
+ * loads and is what the contrast checks read, so it should match the image's overall tone.
+ */
+export type BackgroundImage = {
+  src: string
+  /** the point of the image (fractions of its width / height) kept as close to the centre as the
+   *  crop allows; default 0.5 / 0.5 */
+  focusX?: number
+  focusY?: number
+  /** 1 (default) fills the composition exactly; above it crops further in around the focus */
+  zoom?: number
+  /** blur radius as a fraction of the tile width; default 0 */
+  blur?: number
+  /** multiplies every channel, like CSS brightness(); default 1 */
+  brightness?: number
+}
+
+export type GrainFinish = { kind: 'grain'; amount?: number; size?: number; mono?: boolean; seed?: number }
+export type MotionFinish = { kind: 'motion'; length?: number; angle?: number }
+export type HalftoneFinish = { kind: 'halftone'; cell?: number; angle?: number; paper?: string }
+export type NewsprintFinish = {
+  kind: 'newsprint'
+  cell?: number
+  angle?: number
+  ink?: string
+  paper?: string
+  seed?: number
+}
+export type DitherFinish = { kind: 'dither'; pixel?: number; dark?: string; light?: string }
+export type RisoFinish = {
+  kind: 'riso'
+  inks?: [string, string]
+  paper?: string
+  offset?: number
+  grain?: number
+  seed?: number
+}
+export type DuotoneFinish = { kind: 'duotone'; dark?: string; light?: string }
+export type ReededFinish = {
+  kind: 'reeded'
+  rib?: number
+  strength?: number
+  direction?: 'vertical' | 'horizontal'
+}
+
+/** A surface treatment of the background alone — never of a device, the copy or an element. Every
+ *  field is optional (defaults in `render/finishes.ts`); noise comes from `seed` only, so a finish
+ *  draws the same pixels on every run. */
+export type Finish =
+  | GrainFinish
+  | MotionFinish
+  | HalftoneFinish
+  | NewsprintFinish
+  | DitherFinish
+  | RisoFinish
+  | DuotoneFinish
+  | ReededFinish
+export type FinishKind = Finish['kind']
+
+/** `image` and `finish` are optional on either kind; a background without them draws exactly as
+ *  it did before they existed. */
+type BackgroundLayers = { image?: BackgroundImage; finish?: Finish[] }
+
 export type Background =
-  { kind: 'solid'; color: string } | { kind: 'gradient'; from: string; to: string; angle: number }
+  | ({ kind: 'solid'; color: string } & BackgroundLayers)
+  | ({ kind: 'gradient'; from: string; to: string; angle: number } & BackgroundLayers)
 
 export type NotchKind = 'island' | 'punch' | 'none'
 
@@ -18,6 +84,9 @@ export type DeviceSpec = {
   /** outer corner radius, as a fraction of the outer frame width */
   radius: number
   notch: NotchKind
+  /** a browser window instead of a phone: the height of its title bar with the address field, as a
+   *  fraction of the outer frame width; the screen sits below it */
+  toolbar?: number
 }
 
 export type FrameColor = {
@@ -143,15 +212,63 @@ export type FocusEffect = EffectBase & { effect: 'focus'; strength: number; dim:
 export type RedactEffect = EffectBase & { effect: 'redact'; style: 'pixelate' | 'blur'; strength: number }
 export type EffectElement = LiftEffect | LoupeEffect | FocusEffect | RedactEffect
 
-export type SceneElement = StickerElement | ShapeElement | ChipElement | EffectElement
-/** Everything with a place of its own on the tile — every element but an effect. */
+export type MarkSide = 'center' | 'left' | 'right' | 'top' | 'bottom'
+
+/** What a mark points at, resolved: a part of the slot's own screenshot (drawn wherever its device
+ *  lands), a box on the tile (`x`/`w` fractions of the composition width, `y`/`h` of the tile
+ *  height; zero size is a point), or the tile's text block, which only the renderer can measure. */
+export type MarkTarget = (
+  | { on: 'screen'; rect: ScreenRect; pad: number }
+  | { on: 'tile'; x: number; y: number; w: number; h: number }
+  | { on: 'text' }
+) & { side?: MarkSide }
+
+/** Colours left undefined fall back at draw time, like a chip's: they depend on the effective settings. */
+export type StepMark = {
+  id: string
+  mark: 'step'
+  at: MarkTarget
+  n: string
+  /** diameter, fraction of the tile's shorter side */
+  size: number
+  color?: string
+  textColor?: string
+}
+export type ArrowMark = {
+  id: string
+  mark: 'arrow'
+  from: MarkTarget
+  to: MarkTarget
+  /** sideways bend of the middle, as a fraction of the arrow's length; the sign picks the side */
+  curve: number
+  /** line width, fraction of the tile's shorter side */
+  stroke: number
+  color?: string
+}
+export type HighlightMark = { id: string; mark: 'highlight'; at: MarkTarget; opacity: number; color?: string }
+export type OutlineMark = { id: string; mark: 'outline'; at: MarkTarget; stroke: number; color?: string }
+export type LabelMark = {
+  id: string
+  mark: 'label'
+  at: MarkTarget
+  caption: string
+  /** font size, fraction of the tile height */
+  size: number
+  color?: string
+  textColor?: string
+}
+export type MarkElement = StepMark | ArrowMark | HighlightMark | OutlineMark | LabelMark
+
+export type SceneElement = StickerElement | ShapeElement | ChipElement | EffectElement | MarkElement
+/** Everything with a place of its own on the tile — every element but an effect or a mark. */
 export type PlacedElement = StickerElement | ShapeElement | ChipElement
 
 export const isShapeElement = (el: SceneElement): el is ShapeElement => 'shape' in el
 export const isChipElement = (el: SceneElement): el is ChipElement => 'text' in el
 export const isStickerElement = (el: SceneElement): el is StickerElement => 'imageId' in el
 export const isEffectElement = (el: SceneElement): el is EffectElement => 'effect' in el
-export const isPlacedElement = (el: SceneElement): el is PlacedElement => !('effect' in el)
+export const isMarkElement = (el: SceneElement): el is MarkElement => 'mark' in el
+export const isPlacedElement = (el: SceneElement): el is PlacedElement => !('effect' in el) && !('mark' in el)
 /** Whether turning an element shows — a circle or a ring looks the same at every angle, so neither
  *  the canvas (turn handle) nor the Stickers panel (Rotate slider) offers one. Scene or slot element. */
 export const turnsVisibly = (el: object): boolean => !('shape' in el) || el.shape === 'blob'
@@ -258,7 +375,10 @@ export type Screen = {
 /** Export size is deliberately global — every shot in a set must share one canvas size. */
 export type OverridableKey = Exclude<keyof Settings, 'sizeId'>
 /** The settings with no entry in `DEFAULT_SETTINGS`: absent is their own, meaningful default. */
-export type OptionalSettingKey = 'deviceOffset' | 'textOffset'
+export type OptionalSettingKey = 'deviceOffset' | 'textOffset' | 'browserUrl' | 'backBlur' | 'deviceFade'
+
+/** How the device runs out at the bottom: into black, or into whatever is behind it. */
+export type DeviceFade = 'dark' | 'background'
 export type ScreenOverrides = Partial<Pick<Settings, OverridableKey>>
 
 export type TextAlign = 'center' | 'left'
@@ -305,6 +425,11 @@ export type Settings = {
   /** moves the copy: the text block (accent bar, eyebrow, headline, subhead) and feature-wall's
    *  list with it, as one unit. Same convention as `deviceOffset`. */
   textOffset?: Offset
+  /** the text in a browser frame's address field; absent leaves the field empty */
+  browserUrl?: string
+  /** blurs every frame of a multi-device arrangement but the front one */
+  backBlur?: boolean
+  deviceFade?: DeviceFade
   textColor: string
   /** eyebrow's own color; null = same as textColor */
   eyebrowColor: string | null

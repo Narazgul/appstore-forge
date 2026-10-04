@@ -8,7 +8,7 @@ import {
 } from '../../lib/canvasEdit'
 import { DEFAULT_CHIP_SIZE } from '../../project/bridge'
 import { EMPTY_GALLERY } from '../../project/store'
-import { isSlotChip, isSlotEffect, isSlotShape } from '../../project/types'
+import { isSlotChip, isSlotEffect, isSlotMark, isSlotShape } from '../../project/types'
 import type { SlotChip, SlotElement, SlotShape, SlotSticker } from '../../project/types'
 import { useStore } from '../../store'
 import { turnsVisibly } from '../../types'
@@ -115,14 +115,16 @@ export function StickersSection({ slotId }: { slotId: string }) {
   return (
     <>
       {elements.map((el, index) =>
-        isSlotEffect(el) ? (
+        isSlotEffect(el) || isSlotMark(el) ? (
           <div
             key={el.id}
             className="flex items-center gap-2 rounded-lg p-2"
             style={{ border: '1px solid var(--line)' }}
           >
             <span className="flex-1 truncate text-[12px]" title={el.id}>
-              Effect {el.effect}: {[el.node ?? el.id].flat().join(', ')}
+              {isSlotEffect(el)
+                ? `Effect ${el.effect}: ${[el.node ?? el.id].flat().join(', ')}`
+                : `Mark ${el.mark}: ${el.id}`}
             </span>
             <button className="seg" disabled={index === 0} onClick={() => move(index, -1)}>
               ↑

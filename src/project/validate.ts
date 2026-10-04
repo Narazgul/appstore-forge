@@ -31,13 +31,18 @@ import {
 import {
   EFFECT_KINDS,
   TILE_ROLES,
+  hasChipText,
   isSlotChip,
   isSlotEffect,
+  isSlotMark,
+  markTargets,
   isSlotShape,
   isSlotSticker,
   isStudioSet,
   slotScreens,
 } from './types'
+import { backgroundProblems, backgroundsToCheck } from './validateBackground'
+import { frameSettingProblems, markNodes, markProblems, onScreen, rectProblem } from './validateMarks'
 import type { Project, ProjectSet, ProjectSlot, SlotEffect, SlotElement, SlotSticker } from './types'
 
 /** #rgb, #rrggbb or #rrggbbaa — the same reach as any CSS hex color the renderer's `fillStyle` accepts. */
@@ -162,18 +167,8 @@ function effectProblems(el: SlotEffect): string[] {
   if (hasRect === hasNode) problems.push('needs exactly one of rect or node')
   if (hasNode && !isNodeTarget(el.node))
     problems.push('node must be a non-empty string or an array of at least two of them')
-  if (hasRect) {
-    const r = el.rect as Record<string, unknown> | null
-    const nums = r && typeof r === 'object' ? [r.x, r.y, r.w, r.h] : []
-    if (nums.length !== 4 || !nums.every((n) => typeof n === 'number' && Number.isFinite(n)))
-      problems.push('rect needs finite numbers x, y, w, h')
-    else {
-      const [x, y, w, h] = nums as number[]
-      if (w <= 0 || h <= 0) problems.push('rect needs w and h above 0')
-      else if (x < 0 || y < 0 || x + w > 1 + 1e-9 || y + h > 1 + 1e-9)
-        problems.push('rect must lie inside the screenshot (fractions 0..1)')
-    }
-  }
+  const rect = hasRect ? rectProblem(el.rect) : null
+  if (rect) problems.push(rect)
   if (
     el.pad !== undefined &&
     !(Number.isFinite(el.pad) && el.pad >= PAD_RANGE.min && el.pad <= PAD_RANGE.max)
@@ -219,6 +214,8 @@ export function validateProject(
   textBlocks: ((localeId: string, slotId: string) => TextBlockProbe[]) | null = null,
   /** The capture's nodes for one locale's screen, which an effect's `node` is looked up in. */
   nodes: NodesLookup = () => null,
+  /** Whether a background image (a path from the repo root) is there. */
+  backgroundExists: (src: string) => boolean = () => true,
 ): Issue[] {
   const { set, copies } = project
   const issues: Issue[] = []
@@ -304,6 +301,10 @@ export function validateProject(
     const problem = offsetProblem(set.settings[key])
     if (problem) error(`${key} ${problem}`)
   }
+  for (const problem of frameSettingProblems(set.settings)) error(problem)
+
+  for (const [bg, where] of backgroundsToCheck(set))
+    for (const problem of backgroundProblems(bg, backgroundExists)) error(problem, where)
 
   const seen = new Set<string>()
   for (const slot of set.slots) {
@@ -319,6 +320,7 @@ export function validateProject(
       const problem = offsetProblem(slot.overrides[key])
       if (problem) error(`${key} ${problem}`, { slot: slot.id })
     }
+    for (const problem of frameSettingProblems(slot.overrides)) error(problem, { slot: slot.id })
     if (slot.elements !== undefined && !Array.isArray(slot.elements))
       error('elements must be an array', { slot: slot.id })
     if (slot.extra !== undefined && !Array.isArray(slot.extra))
@@ -416,8 +418,44 @@ export function validateProject(
         })
     }
 
+    const marks = elements.filter(isSlotMark)
+    if (marks.some((el) => markTargets(el).some((t) => t && onScreen(t)))) {
+      if (slot.kind === 'artwork')
+        error('A mark on the screen needs a screen slot; an artwork slot has no screenshot', {
+          slot: slot.id,
+        })
+      else if (layout.deviceless || layout.id === 'mosaic')
+        issues.push({
+          level: 'warn',
+          message: `Layout "${layout.id}" draws no device screen; marks on the screen unused`,
+          slot: slot.id,
+        })
+      else if (!position.placements.some((p) => p.source === 'self' && !p.frameless))
+        issues.push({
+          level: 'warn',
+          message: `Arrangement ${position.id} frames no own screen; marks on the screen unused`,
+          slot: slot.id,
+        })
+    }
+    if (!layout.text && marks.some((el) => markTargets(el).some((t) => t?.textBlock)))
+      issues.push({
+        level: 'warn',
+        message: `Layout "${layout.id}" has no text block; marks on it unused`,
+        slot: slot.id,
+      })
+
     const elementIds = new Set<string>()
     for (const el of elements) {
+      if (isSlotMark(el)) {
+        if (elementIds.has(el.id)) error(`Duplicate mark id ${el.id}`, { slot: slot.id })
+        elementIds.add(el.id)
+        if (['artwork', 'shape', 'chip', 'effect'].some((k) => k in el))
+          error(`Element ${el.id} must be exactly one of artwork, shape, chip, effect or mark`, {
+            slot: slot.id,
+          })
+        for (const problem of markProblems(el)) error(`Mark ${el.id}: ${problem}`, { slot: slot.id })
+        continue
+      }
       if (isSlotEffect(el)) {
         if (elementIds.has(el.id)) error(`Duplicate effect id ${el.id}`, { slot: slot.id })
         elementIds.add(el.id)
@@ -517,7 +555,11 @@ export function validateProject(
         .get(slot.id)!
         .filter(isSlotEffect)
         .filter((el) => isNodeTarget(el.node) && el.rect === undefined)
-      if (nodeEffects.length && slot.kind !== 'artwork' && slot.screen) {
+      const nodeMarks = elementsOf
+        .get(slot.id)!
+        .filter(isSlotMark)
+        .filter((el) => markNodes(el).length)
+      if ((nodeEffects.length || nodeMarks.length) && slot.kind !== 'artwork' && slot.screen) {
         const file = nodes(locale.id, slot.screen)
         const problem = file ? nodesFileProblem(file) : null
         if (!file)
@@ -531,11 +573,15 @@ export function validateProject(
             locale: locale.id,
           })
         else
-          for (const el of nodeEffects) {
-            const resolved = resolveNode(file, el.node!)
-            if ('error' in resolved)
-              error(`Effect ${el.id}: ${resolved.error}`, { slot: slot.id, locale: locale.id })
-          }
+          for (const [label, el, names] of [
+            ...nodeEffects.map((el) => ['Effect', el, [el.node!]] as const),
+            ...nodeMarks.map((el) => ['Mark', el, markNodes(el)] as const),
+          ])
+            for (const name of names) {
+              const resolved = resolveNode(file, name)
+              if ('error' in resolved)
+                error(`${label} ${el.id}: ${resolved.error}`, { slot: slot.id, locale: locale.id })
+            }
       }
       // An artwork slot may be a pure visual with no copy at all; a store 'screen' slot always needs
       // one. A studio picture may be the screen alone.
@@ -583,16 +629,17 @@ export function validateProject(
       )
         error('chips must be an object', { slot: slot.id, locale: locale.id })
       const chips = rawChips && typeof rawChips === 'object' && !Array.isArray(rawChips) ? rawChips : {}
-      for (const el of elementsOf.get(slot.id)!.filter(isSlotChip)) {
+      for (const el of elementsOf.get(slot.id)!.filter(hasChipText)) {
+        const kind = isSlotChip(el) ? 'Chip' : 'Label'
         const text = chips[el.id]
-        if (!text?.trim()) error(`Chip text missing: ${el.id}`, { slot: slot.id, locale: locale.id })
+        if (!text?.trim()) error(`${kind} text missing: ${el.id}`, { slot: slot.id, locale: locale.id })
         else if (/[\r\n]/.test(text))
-          error(`Chip text must be one line: ${el.id}`, { slot: slot.id, locale: locale.id })
+          error(`${kind} text must be one line: ${el.id}`, { slot: slot.id, locale: locale.id })
       }
       const chipIds = new Set(
         elementsOf
           .get(slot.id)!
-          .filter(isSlotChip)
+          .filter(hasChipText)
           .map((c) => c.id),
       )
       for (const chipId of Object.keys(chips)) {

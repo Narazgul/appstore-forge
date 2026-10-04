@@ -1,4 +1,4 @@
-import { isSlotEffect, isSlotSticker } from './types'
+import { backgroundImageSrcs, isSlotSticker, usesNodes } from './types'
 import type { Project } from './types'
 
 export function canonicalJson(value: unknown): string {
@@ -40,6 +40,7 @@ export async function approvalHash(
   sourceBytes: (localeId: string, screen: string) => Promise<Uint8Array>,
   artworkBytes?: (localeId: string, artwork: string) => Promise<Uint8Array>,
   nodesBytes?: (localeId: string, screen: string) => Promise<Uint8Array>,
+  backgroundBytes?: (src: string) => Promise<Uint8Array>,
 ): Promise<string> {
   const { set } = project
   const parts: Uint8Array[] = [new TextEncoder().encode(approvalContent(project))]
@@ -79,17 +80,18 @@ export async function approvalHash(
       for (const screen of slot.extra ?? []) parts.push(await sourceBytes(locale.id, screen))
     }
   }
-  // A capture's nodes file decides where a `node` effect lands, so it counts like an image — but
-  // only for a slot with such an effect, so every other set keeps the hash it had before.
+  // A capture's nodes file decides where a `node` effect or mark lands, so it counts like an image —
+  // but only for a slot with one, so every other set keeps the hash it had before.
   if (nodesBytes) {
     for (const locale of set.locales) {
       for (const slot of set.slots) {
-        const usesNodes = (slot.elements ?? []).some((el) => isSlotEffect(el) && el.node !== undefined)
-        if (usesNodes && slot.kind !== 'artwork' && slot.screen)
+        if ((slot.elements ?? []).some(usesNodes) && slot.kind !== 'artwork' && slot.screen)
           parts.push(await nodesBytes(locale.id, slot.screen))
       }
     }
   }
+  // Background images last, once each, and only when the set names one.
+  if (backgroundBytes) for (const src of backgroundImageSrcs(set)) parts.push(await backgroundBytes(src))
   const total = parts.reduce((n, p) => n + p.byteLength, 0)
   const joined = new Uint8Array(total)
   let offset = 0

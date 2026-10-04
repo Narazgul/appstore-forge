@@ -178,7 +178,9 @@ async function load(projectDir: string, setId: string) {
     const path = join(repoRoot, nodesPath(project.set, locale, screen))
     return existsSync(path) ? new Uint8Array(await readFile(path)) : new Uint8Array()
   }
-  return { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes }
+  const bgExists = (src: string) => existsSync(join(repoRoot, src))
+  const bgBytes = async (src: string) => new Uint8Array(await readFile(join(repoRoot, src)))
+  return { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes, bgExists, bgBytes }
 }
 
 function assertValid(issues: Issue[]) {
@@ -188,13 +190,19 @@ function assertValid(issues: Issue[]) {
 
 type Bytes = (a: string, b: string) => Promise<Uint8Array>
 
-async function approvalMatches(project: Project, bytes: Bytes, artBytes: Bytes, nodesBytes: Bytes) {
+async function approvalMatches(
+  project: Project,
+  bytes: Bytes,
+  artBytes: Bytes,
+  nodesBytes: Bytes,
+  bgBytes: (src: string) => Promise<Uint8Array>,
+) {
   if (!project.set.approval) return false
-  return (await approvalHash(project, bytes, artBytes, nodesBytes)) === project.set.approval.hash
+  return (await approvalHash(project, bytes, artBytes, nodesBytes, bgBytes)) === project.set.approval.hash
 }
 
 export async function checkCommand(opts: { projectDir: string; setId: string; requireApproval: boolean }) {
-  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes } = await load(
+  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes, bgExists, bgBytes } = await load(
     opts.projectDir,
     opts.setId,
   )
@@ -207,11 +215,12 @@ export async function checkCommand(opts: { projectDir: string; setId: string; re
     listFitsChecker(project),
     textBlockChecker(project),
     nodesLookup(repoRoot, project.set),
+    bgExists,
   )
   // A studio set carries no stamp: there is nothing to approve it for.
   const approvalOk =
     opts.requireApproval && !isStudioSet(project.set) && !issues.some((i) => i.level === 'error')
-      ? await approvalMatches(project, bytes, artBytes, nodesBytes)
+      ? await approvalMatches(project, bytes, artBytes, nodesBytes, bgBytes)
       : null
   return { issues, approvalOk }
 }
@@ -223,7 +232,7 @@ export async function renderCommand(opts: {
   localeIds?: string[]
   requireApproval: boolean
 }) {
-  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes } = await load(
+  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes, bgExists, bgBytes } = await load(
     opts.projectDir,
     opts.setId,
   )
@@ -237,12 +246,13 @@ export async function renderCommand(opts: {
       listFitsChecker(project),
       textBlockChecker(project),
       nodesLookup(repoRoot, project.set),
+      bgExists,
     ),
   )
   if (
     opts.requireApproval &&
     !isStudioSet(project.set) &&
-    !(await approvalMatches(project, bytes, artBytes, nodesBytes))
+    !(await approvalMatches(project, bytes, artBytes, nodesBytes, bgBytes))
   ) {
     throw new CliError(
       project.set.approval
@@ -259,7 +269,7 @@ export async function approveCommand(opts: {
   setId: string
   by: string
 }): Promise<Approval> {
-  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes } = await load(
+  const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes, bgExists, bgBytes } = await load(
     opts.projectDir,
     opts.setId,
   )
@@ -274,10 +284,11 @@ export async function approveCommand(opts: {
       listFitsChecker(project),
       textBlockChecker(project),
       nodesLookup(repoRoot, project.set),
+      bgExists,
     ),
   )
   const approval: Approval = {
-    hash: await approvalHash(project, bytes, artBytes, nodesBytes),
+    hash: await approvalHash(project, bytes, artBytes, nodesBytes, bgBytes),
     by: opts.by,
     at: new Date().toISOString(),
   }

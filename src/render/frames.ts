@@ -55,8 +55,9 @@ function drawCoverTop(ctx: CanvasRenderingContext2D, img: CanvasImageSource, b: 
 export function deviceScreen(box: Box, device: DeviceSpec): { screen: Box; radius: number } {
   const outerR = device.radius * box.w
   const bezel = device.bezel * box.w
+  const bar = (device.toolbar ?? 0) * box.w
   return {
-    screen: { x: box.x + bezel, y: box.y + bezel, w: box.w - bezel * 2, h: box.h - bezel * 2 },
+    screen: { x: box.x + bezel, y: box.y + bezel + bar, w: box.w - bezel * 2, h: box.h - bezel * 2 - bar },
     radius: Math.max(0, outerR - bezel),
   }
 }
@@ -264,10 +265,109 @@ function drawNotch(ctx: CanvasRenderingContext2D, screen: Box, device: DeviceSpe
   }
 }
 
+/** The address field of a browser frame: its text, and how to set the font for it. */
+export type BrowserBar = { url?: string; font: (ctx: CanvasRenderingContext2D, size: number) => void }
+
+/** Only a near-black frame colour gets the dark bar: the phone default (deep blue) reads as light. */
+const isDarkBody = (hex: string) => {
+  const n = parseInt(hex.slice(1, 7), 16)
+  return ((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114 < 40
+}
+
+/** A browser window: title bar with three window buttons and an address field, the page below
+ *  with only its bottom corners rounded. */
+function drawBrowser(
+  ctx: CanvasRenderingContext2D,
+  box: Box,
+  device: DeviceSpec,
+  color: FrameColor,
+  img: CanvasImageSource | null,
+  shadowStyle: DeviceShadow,
+  shadowColor: string,
+  bar: BrowserBar | undefined,
+) {
+  const r = device.radius * box.w
+  const { screen } = deviceScreen(box, device)
+  const barH = screen.y - box.y
+  const dark = isDarkBody(color.body)
+
+  ctx.save()
+  applyShadow(ctx, shadowStyle, box.w, shadowColor)
+  ctx.fillStyle = dark ? '#2b2d31' : '#eceef1'
+  roundRect(ctx, box, r)
+  ctx.fill()
+  ctx.restore()
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.roundRect(screen.x, screen.y, screen.w, screen.h, [0, 0, r, r])
+  ctx.clip()
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(screen.x, screen.y, screen.w, screen.h)
+  if (img) drawCoverTop(ctx, img, screen)
+  ctx.restore()
+
+  ctx.save()
+  const line = Math.max(1, box.w * 0.0012)
+  ctx.fillStyle = dark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(15, 23, 42, 0.12)'
+  ctx.fillRect(box.x, screen.y - line, box.w, line)
+  ctx.strokeStyle = dark ? 'rgba(255, 255, 255, 0.10)' : 'rgba(15, 23, 42, 0.14)'
+  ctx.lineWidth = line
+  roundRect(ctx, { x: box.x + line / 2, y: box.y + line / 2, w: box.w - line, h: box.h - line }, r)
+  ctx.stroke()
+
+  const dot = barH * 0.24
+  const cy = box.y + barH / 2
+  ;['#ff5f57', '#febc2e', '#28c840'].forEach((fill, i) => {
+    ctx.fillStyle = fill
+    ctx.beginPath()
+    ctx.arc(box.x + barH * 0.55 + i * dot * 1.65, cy, dot / 2, 0, Math.PI * 2)
+    ctx.fill()
+  })
+
+  const fieldH = barH * 0.58
+  const fieldW = Math.min(box.w * 0.56, box.w - barH * 4.2)
+  const field: Box = { x: box.x + (box.w - fieldW) / 2, y: cy - fieldH / 2, w: fieldW, h: fieldH }
+  ctx.fillStyle = dark ? '#3c3f46' : '#ffffff'
+  roundRect(ctx, field, fieldH / 2)
+  ctx.fill()
+
+  const url = bar?.url?.trim()
+  if (url && bar) {
+    const size = fieldH * 0.5
+    const ink = dark ? '#c9ccd3' : '#5f6368'
+    bar.font(ctx, size)
+    const lock = size * 0.62
+    const gap = size * 0.45
+    const maxText = field.w - fieldH * 1.2 - lock - gap
+    let text = url
+    if (ctx.measureText(text).width > maxText) {
+      while (text.length > 1 && ctx.measureText(`${text}…`).width > maxText) text = text.slice(0, -1)
+      text = `${text}…`
+    }
+    const textW = ctx.measureText(text).width
+    const left = field.x + (field.w - (lock + gap + textW)) / 2
+    ctx.fillStyle = ink
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'alphabetic'
+    ctx.direction = 'ltr'
+    ctx.fillText(text, left + lock + gap, cy - size * 0.44 + size * 0.8)
+    ctx.strokeStyle = ink
+    ctx.lineWidth = lock * 0.16
+    ctx.beginPath()
+    ctx.arc(left + lock / 2, cy - lock * 0.12, lock * 0.26, Math.PI, 0)
+    ctx.stroke()
+    roundRect(ctx, { x: left, y: cy - lock * 0.12, w: lock, h: lock * 0.62 }, lock * 0.12)
+    ctx.fill()
+  }
+  ctx.restore()
+}
+
 /**
  * Draw a device frame with the screenshot inside it. `box` is the outer frame bounds;
  * the caller is responsible for having already fitted `box` to the frame's aspect ratio.
  * `shadowColor` is only read for `shadowStyle: 'hard'` — the effective text colour of the tile.
+ * `bar` is only read by a browser frame.
  */
 export function drawDevice(
   ctx: CanvasRenderingContext2D,
@@ -277,7 +377,12 @@ export function drawDevice(
   img: CanvasImageSource | null,
   shadowStyle: DeviceShadow,
   shadowColor: string,
+  bar?: BrowserBar,
 ) {
+  if (device.toolbar) {
+    drawBrowser(ctx, box, device, color, img, shadowStyle, shadowColor, bar)
+    return
+  }
   const outerR = device.radius * box.w
   const bezel = device.bezel * box.w
   const { screen, radius: screenR } = deviceScreen(box, device)

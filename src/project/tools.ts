@@ -6,6 +6,8 @@ import { POSITIONS } from '../presets/positions'
 import { EXPORT_SIZES } from '../presets/sizes'
 import { TEMPLATES } from '../presets/templates'
 import { GRADIENT_PRESETS, SOLID_PRESETS } from '../presets/backgrounds'
+import { PAINT_MODEL, PAINT_PRICE_USD, PAINT_STYLE_IDS, type PaintStyle } from '../presets/paintStyles'
+import { FINISH_DEFAULTS, IMAGE_DEFAULTS } from '../render/finishes'
 import {
   freeSlotId,
   projectAfterArtworkSlotAdd,
@@ -25,7 +27,7 @@ import {
 } from '../store'
 import type { ScreenOverrides } from '../types'
 import type { Gallery } from './store'
-import { isSlotChip } from './types'
+import { hasChipText } from './types'
 import type {
   Project,
   ProjectLocale,
@@ -71,6 +73,23 @@ export type CaptureResult = {
   steps: { tool: string; result: unknown }[]
 }
 
+export type BackgroundFetchOptions = {
+  source: 'unsplash' | 'met' | 'aic'
+  query: string
+  list?: boolean
+  pick?: number
+  name?: string
+  orientation?: 'portrait' | 'landscape' | 'squarish'
+}
+
+export type BackgroundPaintOptions = {
+  file: string
+  style: PaintStyle
+  seed?: number
+  name?: string
+  dryRun?: boolean
+}
+
 /** What the tools need from the place a project lives — files on disk for the CLI. */
 export interface ToolHost {
   listSets(): Promise<string[]>
@@ -91,6 +110,9 @@ export interface ToolHost {
   ): Promise<string[]>
   /** needs adb and a device, so only the CLI host has it */
   capture?(opts: CaptureOptions): Promise<CaptureResult>
+  /** network and the project folder, so only the CLI host has them */
+  fetchBackground?(opts: BackgroundFetchOptions): Promise<unknown>
+  paintBackground?(opts: BackgroundPaintOptions): Promise<unknown>
   readGuidelines(): Promise<string | null>
   writeGuidelines(text: string): Promise<void>
   today(): string
@@ -234,6 +256,52 @@ function summary(project: Project) {
   }
 }
 
+const RECT = object(
+  'A part of the screenshot by hand: fractions of it (x, w of its width; y, h of its height).',
+  {
+    x: { type: 'number', description: 'Left edge, 0-1.' },
+    y: { type: 'number', description: 'Top edge, 0-1.' },
+    w: { type: 'number', description: 'Width, >0, x + w <= 1.' },
+    h: { type: 'number', description: 'Height, >0, y + h <= 1.' },
+  },
+  ['x', 'y', 'w', 'h'],
+)
+const NODE: JsonSchema = {
+  description:
+    'A part of the screenshot from the capture: a string, or an array of at least two strings for the rectangle around all their nodes (a row made of several text nodes). Each is looked up in <screenshot>.nodes.json by exact tag, then text, then desc; no match or several is an error, never a guess.',
+}
+const SIDE = str(
+  'Mark: where beside the target a step or label sits, or which edge an arrow end uses (default: step left of a screen target, label right of it, else centre; an arrow takes the edge facing its other end).',
+  { enum: ['center', 'left', 'right', 'top', 'bottom'] },
+)
+const AT = object(
+  'Mark target on the tile instead of the screen: centre x (fraction of the composition width), y (fraction of the tile height), optional size w (fraction of the tile width) and h (fraction of the tile height); without w/h a point.',
+  {
+    x: { type: 'number', description: 'Centre, fraction of the composition width.' },
+    y: { type: 'number', description: 'Centre, fraction of the tile height.' },
+    w: { type: 'number', description: 'Width, fraction of the tile width. Default 0.' },
+    h: { type: 'number', description: 'Height, fraction of the tile height. Default 0.' },
+  },
+  ['x', 'y'],
+)
+const TEXT_BLOCK: JsonSchema = {
+  type: 'boolean',
+  description:
+    "Mark target: true = the tile's headline block (e.g. an arrow from the headline to the screen).",
+}
+const MARK_END = (which: string) =>
+  object(`Arrow ${which}: exactly one of rect, node, at, textBlock; optional pad (rect/node) and side.`, {
+    rect: RECT,
+    node: NODE,
+    pad: {
+      type: 'number',
+      description: 'Margin around a screen target, fraction of the screenshot width, 0-0.2.',
+    },
+    at: AT,
+    textBlock: TEXT_BLOCK,
+    side: SIDE,
+  })
+
 const elementBase = (description: string) =>
   object(description, {
     id: str('Element id; free one derived from the kind when absent.'),
@@ -245,38 +313,51 @@ const elementBase = (description: string) =>
     width: { type: 'number', description: 'Fraction of the tile width.' },
     rotate: { type: 'number', description: 'Degrees, clockwise.' },
     layer: str('Drawn behind or in front of the composition.', { enum: ['behind', 'front'] }),
-    color: str('Hex colour (shape fill, chip pill).'),
-    textColor: str('Chip text colour, hex.'),
+    color: str(
+      "Hex colour: shape fill, chip pill; a mark's colour (default: the set's accentBar, else eyebrowColor, else a strong red; a highlight defaults to the first highlight colour).",
+    ),
+    textColor: str(
+      'Chip, step or label text colour, hex (marks default to white or near-black, whichever reads).',
+    ),
     size: {
       type: 'number',
       description:
-        'Chip: font size, fraction of the tile height. Loupe: diameter, fraction of the tile width, 0.05-0.9 (default: sized from the magnified target).',
+        "Chip and label: font size, fraction of the tile height (label 0.008-0.2, default 0.024). Loupe: diameter, fraction of the tile width, 0.05-0.9 (default: sized from the magnified target). Step: diameter, fraction of the tile's shorter side, 0.02-0.3, default 0.062.",
     },
-    stroke: { type: 'number', description: 'Ring only: stroke, fraction of the diameter, 0.02-0.5.' },
+    stroke: {
+      type: 'number',
+      description:
+        "Ring: stroke, fraction of the diameter, 0.02-0.5. Arrow, outline: line width, fraction of the tile's shorter side, 0.002-0.05 (default 0.009 arrow, 0.008 outline).",
+    },
     seed: { type: 'integer', description: 'Blob only: shape seed.' },
     shadow: { type: 'boolean', description: 'Sticker or chip shadow.' },
     effect: str(
       "Effect on the slot's own screenshot inside its device, instead of a placed element (no x, y, width, rotate, layer): lift raises the target out of the device, loupe magnifies it in a round glass, focus blurs everything else, redact pixelates or blurs it for good.",
       { enum: ['lift', 'loupe', 'focus', 'redact'] },
     ),
-    rect: object(
-      'Effect target by hand: fractions of the screenshot (x, w of its width; y, h of its height).',
-      {
-        x: { type: 'number', description: 'Left edge, 0-1.' },
-        y: { type: 'number', description: 'Top edge, 0-1.' },
-        w: { type: 'number', description: 'Width, >0, x + w <= 1.' },
-        h: { type: 'number', description: 'Height, >0, y + h <= 1.' },
-      },
-      ['x', 'y', 'w', 'h'],
-    ),
-    node: {
-      description:
-        'Effect target from the capture: a string, or an array of at least two strings for the rectangle around all their nodes (a row made of several text nodes). Each is looked up in <screenshot>.nodes.json by exact tag, then text, then desc; no match or several is an error, never a guess. Exactly one of rect or node.',
-    },
+    rect: RECT,
+    node: NODE,
     pad: {
       type: 'number',
-      description: 'Effect: margin around the target, fraction of the screenshot width, 0-0.2. Default 0.',
+      description:
+        'Effect or mark on the screen: margin around the target, fraction of the screenshot width, 0-0.2. Default 0.',
     },
+    mark: str(
+      'Mark drawn over everything, instead of a placed element (no x, y, width, rotate, layer): step is a numbered circle (n), arrow a curved arrow (from, to, curve), highlight a marker stroke, outline a rounded frame, label a short caption pill (text per locale via chipText). A target is exactly one of rect or node (the screenshot, like an effect), at (a point or box on the tile) or textBlock.',
+      { enum: ['step', 'arrow', 'highlight', 'outline', 'label'] },
+    ),
+    at: AT,
+    textBlock: TEXT_BLOCK,
+    side: SIDE,
+    n: { description: 'Step: the number, or up to three characters.' },
+    from: MARK_END('start'),
+    to: MARK_END('end'),
+    curve: {
+      type: 'number',
+      description:
+        'Arrow: bend, -1 to 1, as a fraction of its length; the sign picks the side. Default 0.25.',
+    },
+    opacity: { type: 'number', description: 'Highlight: 0.1-1. Default 0.85.' },
     scale: { type: 'number', description: 'Lift: enlargement of the raised part, 1-1.5. Default 1.08.' },
     dim: {
       type: 'number',
@@ -355,6 +436,9 @@ export const TOOLS: Tool[] = [
         palettes: PALETTES,
         solidBackgrounds: SOLID_PRESETS,
         gradientBackgrounds: GRADIENT_PRESETS,
+        backgroundFinishes: FINISH_DEFAULTS,
+        backgroundImageDefaults: IMAGE_DEFAULTS,
+        paintStyles: PAINT_STYLE_IDS,
         templates: TEMPLATES.map((t) => ({ id: t.id, label: t.label, description: t.description })),
       }
     },
@@ -531,7 +615,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'update_settings',
     description:
-      'Changes the set-wide look every tile inherits (background, textColor, highlights, fontId, layout, positionId, deviceScale, ...). null drops a key back to its default.',
+      'Changes the set-wide look every tile inherits (background, textColor, highlights, fontId, layout, positionId, deviceScale, ...; browserUrl is the address-field text of the browser device, backBlur: true blurs the back devices of a duo or trio, deviceFade "dark" or "background" lets the device run out at the bottom); background may carry image { src, focusX, focusY, zoom, blur, brightness } and finish [{ kind: grain|motion|halftone|newsprint|dither|riso|duotone|reeded, ... }], see list_presets and bg_fetch). null drops a key back to its default.',
     input: object('', { set: SET, settings: freeObject('Patch over the set settings.') }, ['settings']),
     async run(host, input) {
       const project = await host.load(setIdOf(input))
@@ -564,7 +648,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'set_copy',
     description:
-      "Writes a tile's text for one locale. Only the given fields change; chips maps chip element ids to their text.",
+      "Writes a tile's text for one locale. Only the given fields change; chips maps chip and label element ids to their text.",
     input: object(
       '',
       {
@@ -572,7 +656,7 @@ export const TOOLS: Tool[] = [
         locale: LOCALE,
         slot: SLOT,
         ...COPY_FIELDS,
-        chips: freeObject('{ "<chip id>": "text" }.'),
+        chips: freeObject('{ "<chip or label id>": "text" }.'),
       },
       ['locale', 'slot'],
     ),
@@ -595,14 +679,14 @@ export const TOOLS: Tool[] = [
   {
     name: 'add_element',
     description:
-      'Adds a sticker (artwork), deco shape (shape + color), text pill (chip: true + chipText per locale) or a screen effect (effect + rect or node: lift, loupe, focus, redact) to a tile. Placed elements need x, y, width; an effect has none.',
+      'Adds a sticker (artwork), deco shape (shape + color), text pill (chip: true + chipText per locale), a screen effect (effect + rect or node: lift, loupe, focus, redact) or a mark (mark: step, arrow, highlight, outline, label; a label takes chipText) to a tile. Placed elements need x, y, width; an effect or a mark has none.',
     input: object(
       '',
       {
         set: SET,
         slot: SLOT,
-        element: elementBase('The element; exactly one of artwork, shape, chip, effect.'),
-        chipText: freeObject('Chip only: { "<locale>": "text" } — every locale needs one.'),
+        element: elementBase('The element; exactly one of artwork, shape, chip, effect, mark.'),
+        chipText: freeObject('Chip or label: { "<locale>": "text" } — every locale needs one.'),
       },
       ['slot', 'element'],
     ),
@@ -611,15 +695,22 @@ export const TOOLS: Tool[] = [
       const slotId = input.slot as string
       const slot = slotOf(project, slotId)
       const elements = slot.elements ?? []
-      const el = { ...(input.element as SlotElement & { shape?: string; artwork?: string; effect?: string }) }
-      if (el.effect === undefined) {
+      const el = {
+        ...(input.element as SlotElement & {
+          shape?: string
+          artwork?: string
+          effect?: string
+          mark?: string
+        }),
+      }
+      if (el.effect === undefined && el.mark === undefined) {
         const missing = (['x', 'y', 'width'] as const).filter(
           (k) => (el as Record<string, unknown>)[k] === undefined,
         )
         if (missing.length)
           throw new ToolError(`element.${missing.join(', element.')} required for a placed element`)
       }
-      const base = el.artwork ?? el.shape ?? el.effect ?? ('chip' in el ? 'chip' : 'element')
+      const base = el.artwork ?? el.shape ?? el.effect ?? el.mark ?? ('chip' in el ? 'chip' : 'element')
       el.id =
         el.id ??
         freeSlotId(
@@ -628,7 +719,7 @@ export const TOOLS: Tool[] = [
         )
       if (elements.some((e) => e.id === el.id)) throw new ToolError(`Element "${el.id}" exists already`)
       project = projectAfterSlotElements(project, slotId, [...elements, el as SlotElement])
-      if (isSlotChip(el as SlotElement))
+      if (hasChipText(el as SlotElement))
         for (const [localeId, text] of Object.entries((input.chipText as Record<string, string>) ?? {})) {
           localeOf(project, localeId)
           project = projectAfterChipPatch(project, localeId, slotId, el.id, text)
@@ -639,7 +730,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'update_element',
     description:
-      'Changes fields of one element (move, resize, recolour, layer; for an effect its target rect or node, pad and its own settings); null drops an optional field.',
+      'Changes fields of one element (move, resize, recolour, layer; for an effect or a mark its target rect, node, at or textBlock, pad, side and its own settings; for an arrow its from or to as a whole); null drops an optional field.',
     input: object(
       '',
       { set: SET, slot: SLOT, element: str('Element id.'), patch: freeObject('Fields to change.') },
@@ -659,7 +750,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'remove_element',
-    description: "Removes one element from a tile; a chip's text goes with it in every locale.",
+    description: "Removes one element from a tile; a chip's or label's text goes with it in every locale.",
     input: object('', { set: SET, slot: SLOT, element: str('Element id.') }, ['slot', 'element']),
     async run(host, input) {
       const project = await host.load(setIdOf(input))
@@ -759,6 +850,46 @@ export const TOOLS: Tool[] = [
       if (!host.capture)
         throw new ToolError('capture needs a device and adb; run it through forge capture or forge tool')
       return host.capture(input as unknown as CaptureOptions)
+    },
+  },
+  {
+    name: 'bg_fetch',
+    description:
+      'Loads a background picture once into the project folder (hintergruende/<name>.jpg) and records its credit in hintergruende/credits.json: a photo from Unsplash (needs UNSPLASH_ACCESS_KEY; demo keys allow 50 requests an hour, a fetch costs two, a list one) or a public-domain (CC0) painting from The Met or the Art Institute of Chicago. Answers with src (path from the repo root) and average (the mean colour). Use it as settings.background = { kind: "solid", color: <average>, image: { src, focusX, focusY, zoom, blur, brightness }, finish: [...] }; the colour is what the contrast checks read. list: true only shows candidates.',
+    input: object(
+      '',
+      {
+        source: str('Where from.', { enum: ['unsplash', 'met', 'aic'] }),
+        query: str('Search words, or id:<id> for one known photo or object.'),
+        list: { type: 'boolean', description: 'Only list up to 10 candidates with their pick number.' },
+        pick: { type: 'integer', description: 'Which candidate to load, from 1. Default 1.' },
+        name: str('File name without extension; default <source>-<id>.'),
+        orientation: str('Unsplash only.', { enum: ['portrait', 'landscape', 'squarish'] }),
+      },
+      ['source', 'query'],
+    ),
+    async run(host, input) {
+      if (!host.fetchBackground) throw new ToolError('bg_fetch needs the network; run it through forge tool')
+      return host.fetchBackground(input as unknown as BackgroundFetchOptions)
+    },
+  },
+  {
+    name: 'bg_paint',
+    description: `Repaints a background picture once through fal.ai (${PAINT_MODEL}, image to image, about $${PAINT_PRICE_USD} per call, key FAL_AI) and keeps it as a new file next to the source, with model, prompt, seed and the source's own credit in credits.json. It costs money on every call: try dryRun first, never loop it. Use the new src as background.image.`,
+    input: object(
+      '',
+      {
+        file: str('The source picture, path from the repo root (e.g. a bg_fetch src).'),
+        style: str('Painting style.', { enum: PAINT_STYLE_IDS }),
+        seed: { type: 'integer', description: 'Same seed, same picture. Default 1.' },
+        name: str('File name without extension; default <source>-<style>.'),
+        dryRun: { type: 'boolean', description: 'Only show the request and the price, call nothing.' },
+      },
+      ['file', 'style'],
+    ),
+    async run(host, input) {
+      if (!host.paintBackground) throw new ToolError('bg_paint needs fal.ai; run it through forge tool')
+      return host.paintBackground(input as unknown as BackgroundPaintOptions)
     },
   },
   {

@@ -12,6 +12,7 @@ export function fileProjectStore(): ProjectStore {
     `/sources/${encodeURIComponent(localeId)}/${encodeURIComponent(screen)}.png`
   const artworkUrl = (localeId: string, artwork: string) =>
     `/artwork/${encodeURIComponent(localeId)}/${encodeURIComponent(artwork)}.png`
+  const backgroundUrl = (src: string) => `/backgrounds/${src.split('/').map(encodeURIComponent).join('/')}`
   let galleries: Record<string, Gallery> = {}
   // `undefined` until `load()` names the set authoritatively — the URL may carry none at all,
   // in which case the server's own `forge dev --set` default decides.
@@ -50,6 +51,12 @@ export function fileProjectStore(): ProjectStore {
     async artworkBytes(localeId, artwork) {
       const res = await fetch(artworkUrl(localeId, artwork))
       if (!res.ok) throw new Error(`Artwork missing: ${localeId}/${artwork}`)
+      return new Uint8Array(await res.arrayBuffer())
+    },
+    backgroundUrl,
+    async backgroundBytes(src) {
+      const res = await fetch(backgroundUrl(src))
+      if (!res.ok) throw new Error(`Background missing: ${src}`)
       return new Uint8Array(await res.arrayBuffer())
     },
     async nodesBytes(localeId, screen) {

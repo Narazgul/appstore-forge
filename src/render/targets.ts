@@ -1,7 +1,7 @@
 import { effectiveSettings } from '../lib/settings'
 import { frameAspect, getDevice } from '../presets/devices'
 import { getLayout } from '../presets/layouts'
-import { isChipElement, isEffectElement, turnsVisibly } from '../types'
+import { isChipElement, isEffectElement, isMarkElement, turnsVisibly } from '../types'
 import type { Screen, Settings } from '../types'
 import type { Box } from './frames'
 import {
@@ -86,7 +86,7 @@ export function sceneTargets(
 
   const elementTargets = (layer: 'behind' | 'front') => {
     for (const el of screen.elements ?? []) {
-      if (isEffectElement(el) || el.layer !== layer) continue
+      if (isEffectElement(el) || isMarkElement(el) || el.layer !== layer) continue
       let box: Box | null
       if (isChipElement(el)) box = el.text ? chipGeometry(ctx, W, w, h, el, settings, screen.lang).box : null
       else box = elementBox(el, W, w, h, sources)

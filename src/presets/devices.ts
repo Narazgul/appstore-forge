@@ -21,6 +21,7 @@ export const DEVICES: DeviceSpec[] = [
   { id: 'galaxy-a56', label: 'Galaxy A56', group: 'Android', screenAspect: 1080 / 2340, bezel: 0.038, radius: 0.080, notch: 'punch' },
   { id: 'android-tablet', label: 'Android tablet', group: 'Android', screenAspect: 1600 / 2560, bezel: 0.030, radius: 0.050, notch: 'none' },
 
+  { id: 'browser', label: 'Browser window', group: 'Other', screenAspect: 1440 / 900, bezel: 0, radius: 0.012, notch: 'none', toolbar: 0.05 },
   { id: 'none', label: 'No frame', group: 'Other', screenAspect: 1320 / 2868, bezel: 0, radius: 0.045, notch: 'none' },
 ]
 
@@ -39,7 +40,7 @@ export const FRAME_COLORS: FrameColor[] = [
 export function frameAspect(d: DeviceSpec): number {
   const screenW = 1 - 2 * d.bezel
   const screenH = screenW / d.screenAspect
-  return 1 / (screenH + 2 * d.bezel)
+  return 1 / (screenH + 2 * d.bezel + (d.toolbar ?? 0))
 }
 
 export const getDevice = (id: string): DeviceSpec => DEVICES.find((d) => d.id === id) ?? DEVICES[0]
