@@ -2,194 +2,35 @@ import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { effectiveSettings } from '../src/lib/settings'
-import { getLayout } from '../src/presets/layouts'
-import { getSize } from '../src/presets/sizes'
-import { artworkPath, nodesPath, screensFor, settingsFor, sourcePath } from '../src/project/bridge'
+import { artworkPath, nodesPath, sourcePath } from '../src/project/bridge'
+import {
+  eyebrowFitsChecker,
+  listFitsChecker,
+  textBackdropChecker,
+  textBlockChecker,
+  type ContextFactory,
+} from '../src/project/checkers'
 import { approvalHash } from '../src/project/hash'
 import { backgroundImageSrcs, isSlotSticker, isStudioSet } from '../src/project/types'
 import type { Approval, Project } from '../src/project/types'
-import { validateProject, type Issue, type TextBlockProbe } from '../src/project/validate'
-import { sceneSpan, textShifts } from '../src/render/scene'
-import {
-  headlineBaseSize,
-  LIST_CAP_MULT,
-  measureListBlock,
-  measureTextBlock,
-  textBlockBox,
-  type TextMeasurer,
-} from '../src/render/text'
-import { meanColorIn, paintBackground } from '../src/render/textBackdrop'
-import type { Screen } from '../src/types'
+import { validateProject, type Issue } from '../src/project/validate'
 import { CliError } from './errors'
 import { registerFonts } from './fonts'
 import { readProject, repoRootOf, writeProject } from './project-io'
 import { nodesLookup, renderProject } from './render'
 
-/**
- * Whether each slot's eyebrow fits its box on one line, per locale, at the size the block
- * settles on for each target. A slot fits only if it does for every target the set renders —
- * one target's copy shrinks the text differently than another's.
- */
-function eyebrowFitsChecker(project: Project): (localeId: string, slotId: string) => boolean {
+const skia: ContextFactory = (w, h) => {
   registerFonts()
-  const fits = new Map<string, boolean>()
-  for (const target of project.set.targets) {
-    const settings = settingsFor(project, target.id)
-    const size = getSize(settings.sizeId)
-    for (const locale of project.set.locales) {
-      for (const screen of screensFor(project, locale.id)) {
-        if (!screen.eyebrow) continue
-        const resolved = effectiveSettings(screen, settings)
-        const span = sceneSpan(screen, settings)
-        const ctx = createCanvas(size.w * span, size.h).getContext('2d') as unknown as TextMeasurer
-        const block = measureTextBlock(
-          ctx,
-          size.w * span,
-          size.w,
-          size.h,
-          getLayout(resolved.layout),
-          screen,
-          resolved,
-        )
-        const key = `${locale.id}:${screen.id}`
-        fits.set(key, (fits.get(key) ?? true) && (!block || block.eyebrowFits))
-      }
-    }
-  }
-  return (localeId, slotId) => fits.get(`${localeId}:${slotId}`) ?? true
+  return createCanvas(w, h).getContext('2d') as unknown as CanvasRenderingContext2D
 }
 
-/**
- * Whether each `feature-wall` slot's list fits its band, per locale, at the size it settles on
- * for each target — the same shape as `eyebrowFitsChecker`, capped the same way `render/scene.ts`
- * caps it (the headline's own base size × `LIST_CAP_MULT`).
- */
-function listFitsChecker(project: Project): (localeId: string, slotId: string) => boolean {
-  registerFonts()
-  const fits = new Map<string, boolean>()
-  for (const target of project.set.targets) {
-    const settings = settingsFor(project, target.id)
-    const size = getSize(settings.sizeId)
-    for (const locale of project.set.locales) {
-      for (const screen of screensFor(project, locale.id)) {
-        if (!screen.list?.length) continue
-        const resolved = effectiveSettings(screen, settings)
-        const layout = getLayout(resolved.layout)
-        const span = sceneSpan(screen, settings)
-        const ctx = createCanvas(size.w * span, size.h).getContext('2d') as unknown as TextMeasurer
-        const capSize = headlineBaseSize(size.h, resolved, layout.textScale) * LIST_CAP_MULT
-        const block = measureListBlock(ctx, size.w * span, size.w, size.h, layout, screen, resolved, capSize)
-        const key = `${locale.id}:${screen.id}`
-        fits.set(key, (fits.get(key) ?? true) && (!block || block.fits))
-      }
-    }
-  }
-  return (localeId, slotId) => fits.get(`${localeId}:${slotId}`) ?? true
-}
-
-/**
- * Where each slot's text block really lands, per locale, for every target: the renderer's own
- * `textShifts` + `textBlockBox`, called the way `render/targets.ts` frames the copy in the editor,
- * so `validateProject`'s headline checks see `textOffset` and `feature-wall`'s centring. Measured
- * only when asked — just the slots with a front sticker or a moved text block ever are.
- */
-function textBlockChecker(project: Project): (localeId: string, slotId: string) => TextBlockProbe[] {
-  registerFonts()
-  const screens = new Map<string, Screen[]>()
-  const measured = new Map<string, TextBlockProbe[]>()
-  return (localeId, slotId) => {
-    const key = `${localeId}:${slotId}`
-    const known = measured.get(key)
-    if (known) return known
-    if (!screens.has(localeId)) screens.set(localeId, screensFor(project, localeId))
-    const screen = screens.get(localeId)!.find((s) => s.id === slotId)
-    if (!screen) return []
-    const probes: TextBlockProbe[] = []
-    for (const target of project.set.targets) {
-      const settings = settingsFor(project, target.id)
-      const size = getSize(settings.sizeId)
-      const resolved = effectiveSettings(screen, settings)
-      const layout = getLayout(resolved.layout)
-      const W = size.w * layout.span
-      const ctx = createCanvas(W, size.h).getContext('2d') as unknown as TextMeasurer
-      const shifts = textShifts(ctx, W, size.w, size.h, layout, screen, resolved)
-      const box = textBlockBox(ctx, W, size.w, size.h, layout, screen, resolved, shifts.text)
-      if (!box) continue
-      probes.push({
-        tileAspect: size.w / size.h,
-        box: {
-          left: box.x / W,
-          right: (box.x + box.w) / W,
-          top: box.y / size.h,
-          bottom: (box.y + box.h) / size.h,
-        },
-      })
-    }
-    measured.set(key, probes)
-    return probes
-  }
-}
-
-/**
- * The mean colour of the background behind each slot's text block, per locale and target, for the
- * slots whose background carries an image: the background is painted the way `renderScene` paints
- * it (image, blur, brightness, finishes), the text block placed by the renderer's own functions.
- * A missing image is reported by `validateProject` itself; such a slot falls back to the colour.
- */
-async function textBackdropChecker(
-  project: Project,
-  repoRoot: string,
-): Promise<(slotId: string) => string[]> {
-  const images = new Map<string, Awaited<ReturnType<typeof loadImage>>>()
+async function backgroundImages(project: Project, repoRoot: string) {
+  const images = new Map<string, CanvasImageSource>()
   for (const src of backgroundImageSrcs(project.set)) {
     const path = join(repoRoot, src)
-    if (existsSync(path)) images.set(src, await loadImage(path))
+    if (existsSync(path)) images.set(src, (await loadImage(path)) as unknown as CanvasImageSource)
   }
-  if (!images.size) return () => []
-  registerFonts()
-  const screens = new Map(project.set.locales.map((l) => [l.id, screensFor(project, l.id)]))
-  const measured = new Map<string, string[]>()
-  return (slotId) => {
-    const known = measured.get(slotId)
-    if (known) return known
-    const colors: string[] = []
-    for (const target of project.set.targets) {
-      const settings = settingsFor(project, target.id)
-      const size = getSize(settings.sizeId)
-      const painted = { key: '', ctx: undefined as CanvasRenderingContext2D | undefined }
-      for (const locale of project.set.locales) {
-        const screen = screens.get(locale.id)!.find((s) => s.id === slotId)
-        if (!screen) continue
-        const resolved = effectiveSettings(screen, settings)
-        const image = resolved.background.image && images.get(resolved.background.image.src)
-        if (!image) continue
-        const layout = getLayout(resolved.layout)
-        const W = size.w * layout.span
-        const key = `${W}:${JSON.stringify(resolved.background)}`
-        if (!painted.ctx || painted.key !== key) {
-          painted.ctx = createCanvas(W, size.h).getContext('2d') as unknown as CanvasRenderingContext2D
-          painted.key = key
-          paintBackground(
-            painted.ctx,
-            W,
-            size.w,
-            size.h,
-            resolved.background,
-            image as unknown as CanvasImageSource,
-          )
-        }
-        const ctx = painted.ctx
-        const measurer = ctx as unknown as TextMeasurer
-        const shifts = textShifts(measurer, W, size.w, size.h, layout, screen, resolved)
-        const box = textBlockBox(measurer, W, size.w, size.h, layout, screen, resolved, shifts.text)
-        const color = box && meanColorIn(ctx, box)
-        if (color) colors.push(color)
-      }
-    }
-    measured.set(slotId, colors)
-    return colors
-  }
+  return images
 }
 
 /**
@@ -272,13 +113,13 @@ export async function checkCommand(opts: { projectDir: string; setId: string; re
     project,
     exists,
     artExists,
-    eyebrowFitsChecker(project),
+    eyebrowFitsChecker(project, skia),
     await elementAspectChecker(project, repoRoot),
-    listFitsChecker(project),
-    textBlockChecker(project),
+    listFitsChecker(project, skia),
+    textBlockChecker(project, skia),
     nodesLookup(repoRoot, project.set),
     bgExists,
-    await textBackdropChecker(project, repoRoot),
+    textBackdropChecker(project, await backgroundImages(project, repoRoot), skia),
   )
   // A studio set carries no stamp: there is nothing to approve it for.
   const approvalOk =
@@ -304,13 +145,13 @@ export async function renderCommand(opts: {
       project,
       exists,
       artExists,
-      eyebrowFitsChecker(project),
+      eyebrowFitsChecker(project, skia),
       await elementAspectChecker(project, repoRoot),
-      listFitsChecker(project),
-      textBlockChecker(project),
+      listFitsChecker(project, skia),
+      textBlockChecker(project, skia),
       nodesLookup(repoRoot, project.set),
       bgExists,
-      await textBackdropChecker(project, repoRoot),
+      textBackdropChecker(project, await backgroundImages(project, repoRoot), skia),
     ),
   )
   if (
@@ -343,13 +184,13 @@ export async function approveCommand(opts: {
       project,
       exists,
       artExists,
-      eyebrowFitsChecker(project),
+      eyebrowFitsChecker(project, skia),
       await elementAspectChecker(project, repoRoot),
-      listFitsChecker(project),
-      textBlockChecker(project),
+      listFitsChecker(project, skia),
+      textBlockChecker(project, skia),
       nodesLookup(repoRoot, project.set),
       bgExists,
-      await textBackdropChecker(project, repoRoot),
+      textBackdropChecker(project, await backgroundImages(project, repoRoot), skia),
     ),
   )
   const approval: Approval = {

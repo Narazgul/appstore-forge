@@ -493,6 +493,13 @@ type State = {
   /** append a tile, filled with the first gallery image the active language has */
   addSlot: () => Promise<void>
   updateTarget: (id: string, patch: Partial<Pick<ProjectTarget, 'sizeId' | 'deviceId'>>) => void
+  /**
+   * A whole project an agent's tool produced through the `projectAfter*` functions, written the
+   * way a hand edit is (save scheduled, approval gone). Every write of one job passes the same
+   * `jobKind`, so the job is one undo step however long it ran. Resolves once the images and
+   * capture nodes the project newly names are loaded, so a preview right after draws them.
+   */
+  applyAgentProject: (project: Project, jobKind: string) => Promise<void>
   approve: (by: string) => Promise<void>
   refreshApproval: () => Promise<void>
   /** oldest first; capped at `HISTORY_LIMIT` */
@@ -525,6 +532,7 @@ const loadImage = (file: File): Promise<HTMLImageElement> => loadImageUrl(URL.cr
 async function loadProjectImages(
   project: Project,
   store: ProjectStore,
+  have: Record<string, HTMLImageElement> = {},
 ): Promise<Record<string, HTMLImageElement>> {
   const artworkUrl = store.artworkUrl?.bind(store)
   const keys = project.set.locales.flatMap((l) =>
@@ -548,24 +556,30 @@ async function loadProjectImages(
   if (backgroundUrl)
     for (const src of backgroundImageSrcs(project.set))
       keys.push({ id: backgroundIdFor(src), url: backgroundUrl(src) })
-  const results = await Promise.allSettled(keys.map(({ url }) => loadImageUrl(url)))
+  const wanted = keys.filter(({ id }) => !have[id])
+  const results = await Promise.allSettled(wanted.map(({ url }) => loadImageUrl(url)))
   const images: Record<string, HTMLImageElement> = {}
   results.forEach((result, i) => {
-    if (result.status === 'fulfilled') images[keys[i].id] = result.value
-    else console.warn(`source screenshot missing for ${keys[i].id}`, result.reason)
+    if (result.status === 'fulfilled') images[wanted[i].id] = result.value
+    else console.warn(`source screenshot missing for ${wanted[i].id}`, result.reason)
   })
   return images
 }
 
 /** The capture nodes of every slot whose effects aim at a `node`, keyed like its screenshot. A
  *  missing or broken file stays absent; the effect then draws nothing and `forge check` says why. */
-async function loadProjectNodes(project: Project, store: ProjectStore): Promise<Record<string, NodesFile>> {
+async function loadProjectNodes(
+  project: Project,
+  store: ProjectStore,
+  have: Record<string, NodesFile> = {},
+): Promise<Record<string, NodesFile>> {
   const nodesBytes = store.nodesBytes?.bind(store)
   if (!nodesBytes) return {}
   const rows = project.set.locales.flatMap((l) =>
     project.set.slots
       .filter((s) => s.screen && (s.elements ?? []).some(usesNodes))
-      .map((s) => ({ id: imageIdFor(l.id, s.screen!), localeId: l.id, screen: s.screen! })),
+      .map((s) => ({ id: imageIdFor(l.id, s.screen!), localeId: l.id, screen: s.screen! }))
+      .filter((r) => !have[r.id]),
   )
   const results = await Promise.allSettled(
     rows.map(
@@ -675,9 +689,9 @@ type HistoryFields = Pick<State, 'undoStack' | 'redoStack' | 'canUndo' | 'canRed
  * into the one step that preceded the burst. Any edit — coalesced or not — clears the redo stack:
  * a new edit invalidates whatever could have been redone.
  */
-function pushHistory(state: State, kind: string): HistoryFields {
+function pushHistory(state: State, kind: string, windowMs = COALESCE_MS): HistoryFields {
   const now = Date.now()
-  const coalesced = kind === lastEditKind && now - lastEditAt < COALESCE_MS
+  const coalesced = kind === lastEditKind && now - lastEditAt < windowMs
   lastEditKind = kind
   lastEditAt = now
   if (coalesced) {
@@ -735,6 +749,27 @@ let unsaved = false
 
 export const hasUnsavedWork = () => unsaved
 
+let saving: Promise<void> = Promise.resolve()
+
+function runSave(get: () => State): Promise<void> {
+  saveTimer = null
+  const { project, projectStore, setLastError } = get()
+  if (!project || !projectStore) return Promise.resolve()
+  const done = projectStore.save(project).then(
+    () => {
+      unsaved = false
+      if (get().lastError?.startsWith(SAVE_FAILED)) setLastError(null)
+    },
+    (error: unknown) => {
+      setLastError(`${SAVE_FAILED} ${describeError(error)}`)
+      throw error
+    },
+  )
+  saving = done
+  done.catch(() => {})
+  return done
+}
+
 /**
  * Every edit lands here. A failed save used to be an unhandled rejection in the console: the
  * editor looked exactly like a saved one, and the work was gone on the next reload.
@@ -742,19 +777,17 @@ export const hasUnsavedWork = () => unsaved
 function scheduleSave(get: () => State) {
   unsaved = true
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    const { project, projectStore, setLastError } = get()
-    if (!project || !projectStore) return
-    projectStore.save(project).then(
-      () => {
-        unsaved = false
-        if (get().lastError?.startsWith(SAVE_FAILED)) setLastError(null)
-      },
-      (error: unknown) => {
-        setLastError(`${SAVE_FAILED} ${describeError(error)}`)
-      },
-    )
-  }, 300)
+  saveTimer = setTimeout(() => void runSave(get), 300)
+}
+
+/** Writes a pending edit now instead of after the debounce; settles when the last save did,
+ *  and rejects when it failed. */
+export function flushSave(): Promise<void> {
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    return runSave(useStore.getState)
+  }
+  return saving
 }
 
 /**
@@ -1321,6 +1354,29 @@ export const useStore = create<State>((set, get) => ({
       ...pushHistory(state, `target:${id}:${sortedKeys(patch)}`),
     })
     scheduleSave(get)
+  },
+
+  applyAgentProject: async (project, jobKind) => {
+    const state = get()
+    const store = state.projectStore
+    if (!state.project || !store) throw new Error('No project is open')
+    const derived = (current: Project, nodes: Record<string, NodesFile>) => ({
+      screens: screensFor(current, get().localeId, nodesLookupOf(nodes)),
+      settings: current.set.targets.some((t) => t.id === get().targetId)
+        ? settingsFor(current, get().targetId)
+        : get().settings,
+    })
+    set({
+      ...mutated(state, project, derived(project, state.nodes)),
+      ...pushHistory(state, jobKind, Number.POSITIVE_INFINITY),
+    })
+    scheduleSave(get)
+    const images = await loadProjectImages(project, store, get().images)
+    const nodes = await loadProjectNodes(project, store, get().nodes)
+    if (!Object.keys(images).length && !Object.keys(nodes).length) return
+    const allNodes = { ...get().nodes, ...nodes }
+    const current = get().project ?? project
+    set({ images: { ...get().images, ...images }, nodes: allNodes, ...derived(current, allNodes) })
   },
 
   approve: async (by) => {

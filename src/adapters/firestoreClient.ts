@@ -58,6 +58,12 @@ export function parseGalleryDoc(data: unknown): Record<string, Gallery> {
   return galleries
 }
 
+/** The project's guidelines.md as `build:aso` mirrored it; null on sets synced before it did. */
+export function parseGuidelinesDoc(data: unknown): string | null {
+  const raw = (data as { guidelines?: unknown } | undefined)?.guidelines
+  return typeof raw === 'string' ? raw : null
+}
+
 /** The background images `build:aso` uploaded for the picker; absent on sets synced before it did. */
 export function parseBackgroundsDoc(data: unknown): BackgroundChoice[] {
   const raw = (data as { backgrounds?: unknown } | undefined)?.backgrounds
@@ -99,10 +105,35 @@ export function firestoreProjectStore({
   const backgroundUrls = new Map<string, string>()
   let galleries: Record<string, Gallery> = {}
   let backgrounds: BackgroundChoice[] = []
+  let guidelines: string | null = null
   let ownWrite = ''
   // The set THIS set's images actually live under: itself, unless it is a duplicate that has
   // never had its own screenshots synced — set by `load`, read by `createSet`.
   let imagesFrom = setId
+
+  async function write(fields: object) {
+    const payload = {
+      ...fields,
+      updatedAt: new Date().toISOString(),
+      updatedBy: firebase.auth().currentUser?.email ?? 'unknown',
+    }
+    ownWrite = payload.updatedAt
+    // `update` and not `set`: the document also carries the gallery lists, which belong to the
+    // sync and not to the GUI. A full write would drop them until the next build:aso. And not
+    // `set(…, {merge: true})` either — that merges deeply, so a removed slot would linger as a
+    // ghost in copies.<locale> and keep counting towards the approval hash.
+    const data = hostJson.parse(JSON.stringify(payload)) as Record<string, unknown>
+    try {
+      await doc().update(data)
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error
+      // The rule wants request.auth.token.admin, and a custom claim lives in the ID token, not
+      // in the account: a tab left open long enough still carries a token from before the claim.
+      // Reading keeps working, only the write is refused — so refresh once and try again.
+      await firebase.auth().currentUser?.getIdToken(true)
+      await doc().update(data)
+    }
+  }
 
   return {
     currentSetId: setId,
@@ -112,6 +143,7 @@ export function firestoreProjectStore({
       const data = snap.data()
       const project = parseSetDoc(data)
       galleries = parseGalleryDoc(data)
+      guidelines = parseGuidelinesDoc(data)
       // A set duplicated in the GUI has no images of its own in Storage yet — it draws its
       // predecessor's, named on the doc as `sourcesFrom`, never chained further than one hop
       // (see `createSet`).
@@ -158,27 +190,14 @@ export function firestoreProjectStore({
       return project
     },
     async save(project) {
-      const payload = {
-        ...project,
-        updatedAt: new Date().toISOString(),
-        updatedBy: firebase.auth().currentUser?.email ?? 'unknown',
-      }
-      ownWrite = payload.updatedAt
-      // `update` and not `set`: the document also carries the gallery lists, which belong to the
-      // sync and not to the GUI. A full write would drop them until the next build:aso. And not
-      // `set(…, {merge: true})` either — that merges deeply, so a removed slot would linger as a
-      // ghost in copies.<locale> and keep counting towards the approval hash.
-      const data = hostJson.parse(JSON.stringify(payload)) as Record<string, unknown>
-      try {
-        await doc().update(data)
-      } catch (error) {
-        if (!isPermissionDenied(error)) throw error
-        // The rule wants request.auth.token.admin, and a custom claim lives in the ID token, not
-        // in the account: a tab left open long enough still carries a token from before the claim.
-        // Reading keeps working, only the write is refused — so refresh once and try again.
-        await firebase.auth().currentUser?.getIdToken(true)
-        await doc().update(data)
-      }
+      await write(project)
+    },
+    guidelines() {
+      return guidelines
+    },
+    async saveGuidelines(text) {
+      await write({ guidelines: text })
+      guidelines = text
     },
     sourceUrl(localeId, screen) {
       return urls.get(`${localeId}/${screen}`) ?? MISSING_SOURCE

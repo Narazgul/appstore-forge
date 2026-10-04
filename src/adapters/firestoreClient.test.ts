@@ -5,6 +5,7 @@ import {
   nodesObjectPath,
   parseBackgroundsDoc,
   parseGalleryDoc,
+  parseGuidelinesDoc,
   parseSetDoc,
   sourceObjectPath,
 } from './firestoreClient'
@@ -636,5 +637,42 @@ describe('approval hash through Firestore', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+})
+
+describe('guidelines', () => {
+  it('reads the text build:aso mirrored, and nothing from an older doc', () => {
+    expect(parseGuidelinesDoc({ set, guidelines: '# Guidelines\n' })).toBe('# Guidelines\n')
+    expect(parseGuidelinesDoc({ set })).toBeNull()
+    expect(parseGuidelinesDoc({ set, guidelines: 3 })).toBeNull()
+  })
+
+  it('loads them with the set and writes a new text with update, stamped like a save', async () => {
+    const written: unknown[] = []
+    const firebase = {
+      firestore: () => ({
+        collection: () => ({
+          doc: () => ({
+            get: () => Promise.resolve({ exists: true, data: () => ({ set, guidelines: 'old' }) }),
+            update: (data: unknown) => {
+              written.push(data)
+              return Promise.resolve()
+            },
+            set: () => Promise.reject(new Error('never a full write')),
+            onSnapshot: () => () => undefined,
+          }),
+        }),
+      }),
+      storage: () => ({ ref: () => ({ getDownloadURL: () => Promise.reject(new Error('none')) }) }),
+      auth: () => ({ currentUser: { email: 'hofi@example.com', getIdToken: () => Promise.resolve('t') } }),
+    } as unknown as CompatFirebase
+    const store = firestoreProjectStore({ setId: 'default', firebase })
+    await store.load()
+    expect(store.guidelines!()).toBe('old')
+    await store.saveGuidelines!('new')
+    expect(store.guidelines!()).toBe('new')
+    expect(written).toEqual([
+      { guidelines: 'new', updatedAt: expect.any(String), updatedBy: 'hofi@example.com' },
+    ])
   })
 })

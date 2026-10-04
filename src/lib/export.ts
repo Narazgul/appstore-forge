@@ -27,6 +27,35 @@ function toBlob(canvas: HTMLCanvasElement, format: 'png' | 'jpeg'): Promise<Blob
   })
 }
 
+/**
+ * What one screen of a strip draws from, resolved the way the preview resolves it
+ * (`useSceneSources`): a named pair/artwork/sticker/mosaic cell replaces the neighbour lookup, and
+ * a plain neighbour-wrapping arrangement still works with no project fields set at all, which is
+ * all freeform mode ever has.
+ */
+export function sceneSources(screens: Screen[], i: number, images: Record<string, HTMLImageElement>) {
+  const imageAt = (n: number) => {
+    const target = screens[(n + screens.length) % (screens.length || 1)]
+    return target?.imageId ? (images[target.imageId] ?? null) : null
+  }
+  const screen = screens[i]
+  return {
+    self: imageAt(i),
+    next: screen.pairId ? (images[screen.pairId] ?? null) : imageAt(i + 1),
+    prev: screen.pairPrevId ? (images[screen.pairPrevId] ?? null) : imageAt(i - 1),
+    artwork: screen.artworkId ? (images[screen.artworkId] ?? null) : null,
+    elements: Object.fromEntries(
+      (screen.elements ?? []).filter(isStickerElement).map((el) => [el.imageId, images[el.imageId] ?? null]),
+    ),
+    extra: screen.extraIds?.map((id) => images[id] ?? null),
+    backgrounds: Object.fromEntries(
+      Object.entries(images)
+        .filter(([key]) => key.startsWith(BACKGROUND_PREFIX))
+        .map(([key, img]) => [key.slice(BACKGROUND_PREFIX.length), img]),
+    ),
+  }
+}
+
 /** Render every screen at full store resolution. Delivery is the caller's problem. */
 export async function renderAll(
   screens: Screen[],
@@ -43,12 +72,6 @@ export async function renderAll(
   const tileCtx = tile.getContext('2d', { alpha: false })
   if (!tileCtx) throw new Error('2D canvas unavailable')
 
-  // Same neighbour-wrapping the preview uses, so multi-device arrangements export identically.
-  const imageAt = (i: number) => {
-    const target = screens[(i + screens.length) % (screens.length || 1)]
-    return target?.imageId ? (images[target.imageId] ?? null) : null
-  }
-
   const files: { name: string; data: Uint8Array }[] = []
   let tileIndex = 0
   for (const [i, screen] of screens.entries()) {
@@ -58,26 +81,7 @@ export async function renderAll(
     canvas.width = size.w * span
     const ctx = canvas.getContext('2d', { alpha: false })
     if (!ctx) throw new Error('2D canvas unavailable')
-    // A named pair/artwork/sticker/mosaic-cell replaces the neighbour lookup, exactly as the
-    // preview resolves it (`useSceneSources`) — a plain neighbour-wrapping arrangement still
-    // works with no project fields set at all, which is all freeform mode ever has.
-    renderScene(ctx, size.w, size.h, screen, settings, {
-      self: imageAt(i),
-      next: screen.pairId ? (images[screen.pairId] ?? null) : imageAt(i + 1),
-      prev: screen.pairPrevId ? (images[screen.pairPrevId] ?? null) : imageAt(i - 1),
-      artwork: screen.artworkId ? (images[screen.artworkId] ?? null) : null,
-      elements: Object.fromEntries(
-        (screen.elements ?? [])
-          .filter(isStickerElement)
-          .map((el) => [el.imageId, images[el.imageId] ?? null]),
-      ),
-      extra: screen.extraIds?.map((id) => images[id] ?? null),
-      backgrounds: Object.fromEntries(
-        Object.entries(images)
-          .filter(([key]) => key.startsWith(BACKGROUND_PREFIX))
-          .map(([key, img]) => [key.slice(BACKGROUND_PREFIX.length), img]),
-      ),
-    })
+    renderScene(ctx, size.w, size.h, screen, settings, sceneSources(screens, i, images))
     for (let part = 0; part < span; part++) {
       tileCtx.drawImage(canvas, -part * size.w, 0)
       const blob = await toBlob(tile, format)

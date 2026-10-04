@@ -1,3 +1,4 @@
+import { AiPanel } from '../../ai/AiPanel'
 import { readiness } from '../../lib/progress'
 import { getSize } from '../../presets/sizes'
 import { getTemplateSpec } from '../../presets/templates'
@@ -57,6 +58,8 @@ export function ShotsStep({ onBrowse, dragging }: { onBrowse: () => void; draggi
           </span>
         </button>
       )}
+
+      {project && <AiPanel />}
 
       <div className="flex items-start gap-6">
         <TunePanel />

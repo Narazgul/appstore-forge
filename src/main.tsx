@@ -7,6 +7,8 @@ import '@fontsource/poppins/700.css'
 import './index.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { provideAiTransport } from './ai/endpoint'
+import { fetchTransport } from './ai/protocol'
 import { fileProjectStore } from './adapters/fileClient'
 import { firestoreProjectStore, type CompatFirebase } from './adapters/firestoreClient'
 import { App } from './App'
@@ -33,6 +35,9 @@ preloadFonts()
     } else if (__FORGE_PROJECT__) {
       await useStore.getState().openProject(fileProjectStore())
     }
+    // The host page (the backoffice) offers the AI endpoint; without one there is no AI field.
+    const ai = (window.parent as unknown as { forgeAi?: { endpoint?: string } }).forgeAi
+    if (ai?.endpoint) provideAiTransport(fetchTransport(ai.endpoint))
     root.removeAttribute('style')
     root.textContent = ''
     createRoot(root).render(

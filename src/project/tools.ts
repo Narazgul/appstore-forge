@@ -50,8 +50,16 @@ import type { Issue } from './validate'
  * Deliberately absent: approving. The stamp is a person's judgement, not an agent's.
  */
 
-/** A file the preview wrote: one tile of one slot, for one locale and target. */
-export type PreviewFile = { slot: string; locale: string; target: string; part: number; file: string }
+/** A file the preview wrote: one tile of one slot, for one locale and target. A host without a
+ *  file system (the browser) names the tile in `file` and hands the picture over in `image`. */
+export type PreviewFile = {
+  slot: string
+  locale: string
+  target: string
+  part: number
+  file: string
+  image?: { mediaType: 'image/png'; base64: string; width: number; height: number }
+}
 
 export type CaptureOptions = {
   out: string

@@ -31,6 +31,10 @@ export interface ProjectStore {
    * only the images a slot already names. Filled by `load`; absent means no picker.
    */
   gallery?(localeId: string): Gallery
+  /** the project's design rules (guidelines.md), filled by `load`; absent: the backend keeps none */
+  guidelines?(): string | null
+  /** replaces the design rules; absent: they are read-only here */
+  saveGuidelines?(text: string): Promise<void>
   /** fires when the project changed outside this GUI, e.g. an agent edited the files */
   subscribe?(onChange: () => void): () => void
   /** the set this store instance was opened with; absent means the backend has only ever one set */
