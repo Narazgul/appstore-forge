@@ -371,7 +371,7 @@ describe('approval with a background image', () => {
       },
     })
     await runTool(host, 'set_copy', { set: 'probe', locale: 'en', slot: 'a', headline: 'Calm' })
-    await approveCommand({ projectDir, setId: 'probe', by: 'test' })
+    await approveCommand({ projectDir, setId: 'probe' })
     expect((await checkCommand({ projectDir, setId: 'probe', requireApproval: true })).approvalOk).toBe(true)
     await writeFile(
       join(projectDir, 'hintergruende', 'wiese.jpg'),

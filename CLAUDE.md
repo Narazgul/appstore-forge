@@ -35,12 +35,12 @@ pnpm dev              # the editor in a browser on :4324
 
 The CLI is `bin/forge.mjs` → `cli/index.ts`:
 
-| Command                                | Use it when                                     |
-| -------------------------------------- | ----------------------------------------------- |
-| `forge check --project <dir>`          | Asking whether a set is complete                |
-| `forge render --project <dir>`         | Writing the PNGs — RGB, no alpha                |
-| `forge approve --project <dir> --by X` | Stamping a set as reviewed                      |
-| `forge dev --project <dir>`            | The editor on a project instead of an empty tab |
+| Command                         | Use it when                                     |
+| ------------------------------- | ----------------------------------------------- |
+| `forge check --project <dir>`   | Asking whether a set is complete                |
+| `forge render --project <dir>`  | Writing the PNGs — RGB, no alpha                |
+| `forge approve --project <dir>` | Stamping a set as reviewed                      |
+| `forge dev --project <dir>`     | The editor on a project instead of an empty tab |
 
 Exit codes are the contract: `0` fine, `1` usage, `2` the project does not
 validate, `3` approval required but missing or stale. README's "Project mode"

@@ -476,7 +476,7 @@ describe('approvalHash: effects', () => {
         },
         { id: 'b', kind: 'artwork', artwork: 'hero', overrides: {} },
       ],
-      approval: { hash: 'old', by: 'x', at: 'y' },
+      approval: { hash: 'old', at: 'y' },
     },
     copies: {
       en: { a: { headline: 'Hi', subhead: '', chips: { c: '+3 €' } }, b: { headline: 'B', subhead: '' } },

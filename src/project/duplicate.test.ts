@@ -40,7 +40,7 @@ const twoTargetProject = (): Project => ({
       },
       { id: 'b', kind: 'screen', screen: 'shot-b', overrides: {} },
     ],
-    approval: { hash: 'abc', by: 'hofi', at: '2026-01-01T00:00:00.000Z' },
+    approval: { hash: 'abc', at: '2026-01-01T00:00:00.000Z' },
   },
   copies: {
     en: {

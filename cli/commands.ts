@@ -173,19 +173,15 @@ export async function renderCommand(opts: {
   ) {
     throw new CliError(
       project.set.approval
-        ? `Approval by ${project.set.approval.by} at ${project.set.approval.at} no longer matches: set, copy or a source image changed since. Approve again in the GUI or with forge approve.`
-        : 'No approval stamp. Approve the set in the GUI or with forge approve before rendering for upload.',
+        ? `Approval of ${project.set.approval.at} no longer matches: set, copy or a source image changed since. Approve again with forge approve.`
+        : 'No approval stamp. Approve the set with forge approve before rendering for upload.',
       3,
     )
   }
   return renderProject({ project, repoRoot, targetIds: opts.targetIds, localeIds: opts.localeIds })
 }
 
-export async function approveCommand(opts: {
-  projectDir: string
-  setId: string
-  by: string
-}): Promise<Approval> {
+export async function approveCommand(opts: { projectDir: string; setId: string }): Promise<Approval> {
   const { repoRoot, project, exists, bytes, artExists, artBytes, nodesBytes, bgExists, bgBytes } = await load(
     opts.projectDir,
     opts.setId,
@@ -194,7 +190,6 @@ export async function approveCommand(opts: {
   assertValid(await validateLoaded(project, repoRoot, exists, artExists, bgExists))
   const approval: Approval = {
     hash: await approvalHash(project, bytes, artBytes, nodesBytes, bgBytes),
-    by: opts.by,
     at: new Date().toISOString(),
   }
   project.set.approval = approval

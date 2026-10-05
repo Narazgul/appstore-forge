@@ -35,6 +35,17 @@ import { GestureSession } from './lib/canvasEdit'
 const withVariants = TEMPLATES.find((t) => t.variants?.length)!
 const freeform: TemplateSpec = { ...withVariants, variants: undefined }
 
+/** what `forge approve` leaves behind once the reload picks it up; the GUI itself never stamps */
+async function stampLikeTheCli(store: ProjectStore) {
+  const project = useStore.getState().project!
+  const hash = await approvalHash(project, store.sourceBytes, store.artworkBytes)
+  useStore.setState({
+    project: { ...project, set: { ...project.set, approval: { hash, at: '2026-10-05T00:00:00.000Z' } } },
+    approvalOk: true,
+    staleApproval: null,
+  })
+}
+
 describe('variantFor', () => {
   it('cycles the variant list so screen n+len matches screen n', () => {
     const len = withVariants.variants!.length
@@ -93,7 +104,7 @@ const project = (): Project => ({
     sources: 's/{locale}/{screen}.png',
     settings: {},
     slots: [{ id: 'a', kind: 'screen', screen: 'shot', overrides: {} }],
-    approval: { hash: 'h', by: 'x', at: 't' },
+    approval: { hash: 'h', at: 't' },
   },
   copies: { en: { a: { headline: 'Hi', subhead: '' } } },
 })
@@ -620,56 +631,6 @@ describe('opening a project with a missing source', () => {
   })
 })
 
-describe('approve', () => {
-  afterEach(() => {
-    useStore.setState({
-      project: null,
-      projectStore: null,
-      approvalOk: null,
-      staleApproval: null,
-      lastError: null,
-    })
-  })
-
-  const open = (p: Project, store: ProjectStore) => {
-    useStore.setState({
-      project: p,
-      projectStore: store,
-      localeId: 'en',
-      targetId: 'appstore',
-      screens: screensFor(p, 'en'),
-      settings: settingsFor(p, 'appstore'),
-      approvalOk: false,
-      staleApproval: null,
-      lastError: null,
-    })
-  }
-
-  it('stamps the project only after the save came back', async () => {
-    const p = twoSlotProject()
-    open(p, fakeProjectStore(p))
-    await useStore.getState().approve('Hofi')
-    const state = useStore.getState()
-    expect(state.approvalOk).toBe(true)
-    expect(state.project!.set.approval).toMatchObject({ by: 'Hofi' })
-    expect(state.lastError).toBeNull()
-    expect(state.staleApproval).toBeNull()
-  })
-
-  it('keeps the approval unset and reports the failure when the save rejects', async () => {
-    const p = twoSlotProject()
-    open(
-      p,
-      fakeProjectStore(p, () => Promise.reject(new Error('disk full'))),
-    )
-    await useStore.getState().approve('Hofi')
-    const state = useStore.getState()
-    expect(state.approvalOk).toBe(false)
-    expect(state.project!.set.approval).toBeNull()
-    expect(state.lastError).toMatch(/disk full/)
-  })
-})
-
 describe('setSlotElements', () => {
   const open = (p: Project, store: ProjectStore) => {
     useStore.setState({
@@ -775,9 +736,9 @@ describe('staleApproval', () => {
       staleApproval: null,
     })
     useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
-    expect(useStore.getState().staleApproval).toEqual({ hash: 'h', by: 'x', at: 't' })
+    expect(useStore.getState().staleApproval).toEqual({ hash: 'h', at: 't' })
     useStore.getState().setCopy('en', 'a', { headline: 'Neuer' })
-    expect(useStore.getState().staleApproval).toEqual({ hash: 'h', by: 'x', at: 't' })
+    expect(useStore.getState().staleApproval).toEqual({ hash: 'h', at: 't' })
     expect(useStore.getState().approvalOk).toBe(false)
   })
 })
@@ -1023,7 +984,7 @@ describe('undo / redo', () => {
   })
 
   it('undo schedules a save and always leaves the approval null, even if the snapshot had one', async () => {
-    const p = project() // p.set.approval = { hash: 'h', by: 'x', at: 't' }
+    const p = project() // p.set.approval = { hash: 'h', at: 't' }
     let saved: Project | null = null
     open(
       p,
@@ -1095,13 +1056,6 @@ describe('undo / redo', () => {
     useStore.getState().setStep('review')
     expect(useStore.getState().undoStack).toHaveLength(0)
     expect(useStore.getState().canUndo).toBe(false)
-  })
-
-  it('the approve action itself is not recorded', async () => {
-    const p = project()
-    open(p, fakeProjectStore(p))
-    await useStore.getState().approve('Hofi')
-    expect(useStore.getState().undoStack).toHaveLength(0)
   })
 
   it('an outside change clears both stacks', async () => {
@@ -1214,7 +1168,7 @@ describe('undo / redo', () => {
     p.set.approval = null
     const { store, saved } = recordingStore(p)
     open(p, store)
-    await useStore.getState().approve('Hofi')
+    await stampLikeTheCli(store)
     const stamp = useStore.getState().project!.set.approval!
     expect(stamp).not.toBeNull()
 
@@ -1245,7 +1199,7 @@ describe('undo / redo', () => {
     const { store, saved } = recordingStore(p)
     open(p, store)
     useStore.getState().setCopy('en', 'a', { headline: 'Neu' })
-    await useStore.getState().approve('Hofi')
+    await stampLikeTheCli(store)
     const stamp = useStore.getState().project!.set.approval!
     vi.advanceTimersByTime(APART)
     useStore.getState().setSlotRole('a', 'hero')

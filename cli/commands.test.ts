@@ -91,8 +91,7 @@ describe('check', () => {
 describe('approve then render', () => {
   it('writes a stamp that check and render accept, and rejects after a copy change', async () => {
     const { dir, repo } = await scaffold()
-    const approval = await approveCommand({ projectDir: dir, setId: 'default', by: 'hofi' })
-    expect(approval.by).toBe('hofi')
+    const approval = await approveCommand({ projectDir: dir, setId: 'default' })
     expect((await readProject(dir)).set.approval?.hash).toBe(approval.hash)
     expect(
       (await checkCommand({ projectDir: dir, setId: 'default', requireApproval: true })).approvalOk,

@@ -463,7 +463,7 @@ type State = {
   targetId: string
   /** null = nothing to judge, false = edited since the last approval */
   approvalOk: boolean | null
-  /** the stamp an edit invalidated, so the GUI can name who approved what is now outdated */
+  /** the stamp an edit invalidated, so the GUI can say when what is now outdated was approved */
   staleApproval: Approval | null
   /** the last failure a user action produced, shown where that action lives */
   lastError: string | null
@@ -500,7 +500,6 @@ type State = {
    * capture nodes the project newly names are loaded, so a preview right after draws them.
    */
   applyAgentProject: (project: Project, jobKind: string) => Promise<void>
-  approve: (by: string) => Promise<void>
   refreshApproval: () => Promise<void>
   /** oldest first; capped at `HISTORY_LIMIT` */
   undoStack: HistorySnapshot[]
@@ -1377,34 +1376,6 @@ export const useStore = create<State>((set, get) => ({
     const allNodes = { ...get().nodes, ...nodes }
     const current = get().project ?? project
     set({ images: { ...get().images, ...images }, nodes: allNodes, ...derived(current, allNodes) })
-  },
-
-  approve: async (by) => {
-    const { project, projectStore } = get()
-    if (!project || !projectStore) return
-    const hash = await approvalHash(
-      project,
-      (l, s) => projectStore.sourceBytes(l, s),
-      projectStore.artworkBytes?.bind(projectStore),
-      nodesBytesOf(projectStore),
-      projectStore.backgroundBytes?.bind(projectStore),
-    )
-    // An edit while the hash was computing wins; approving the older project would be a lie.
-    if (get().project !== project) return
-    const next: Project = {
-      ...project,
-      set: { ...project.set, approval: { hash, by, at: new Date().toISOString() } },
-    }
-    // A stamp the files never received is worse than no stamp: the CLI would still refuse
-    // and the GUI would claim the set was approved.
-    try {
-      await projectStore.save(next)
-    } catch (error) {
-      set({ lastError: `Approval not saved: ${describeError(error)}` })
-      return
-    }
-    if (get().project !== project) return
-    set({ project: next, approvalOk: true, staleApproval: null, lastError: null })
   },
 
   refreshApproval: async () => {

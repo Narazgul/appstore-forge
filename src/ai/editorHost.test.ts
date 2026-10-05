@@ -24,7 +24,7 @@ const project = (): Project => ({
     sources: 's/{locale}/{screen}.png',
     settings: {},
     slots: [{ id: 'a', kind: 'screen', screen: 'shot', overrides: {} }],
-    approval: { hash: 'h', by: 'x', at: 't' },
+    approval: { hash: 'h', at: 't' },
   },
   copies: { en: { a: { headline: 'Hi', subhead: '' } } },
 })

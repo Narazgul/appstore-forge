@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { approveCommand, checkCommand, formatIssue, renderCommand } from './commands'
 import { CliError } from './errors'
 
-const USAGE = `forge <check|render|approve|dev> --project <dir> [--set default] [--target id]... [--locale id]... [--require-approval] [--by name]
+const USAGE = `forge <check|render|approve|dev> --project <dir> [--set default] [--target id]... [--locale id]... [--require-approval]
 forge capture --project <dir> --out <path.png> --serial <adb serial> [--port 8765] [--screen name] [--seed [--store apple|google]] [--call tool [--args '<json>']]... [--settle ms] [--hide-ime] [--package app.id]
 forge tool [name] --project <dir> [--json '<input>' | --json @file]   (no name: every tool with its input schema)
 forge bg fetch <unsplash|met|aic> <query | id:<id>> --project <dir> [--list] [--pick n] [--name file] [--orientation portrait|landscape|squarish]
@@ -32,7 +32,6 @@ export async function main(argv: string[]): Promise<number> {
         target: { type: 'string', multiple: true },
         locale: { type: 'string', multiple: true },
         'require-approval': { type: 'boolean', default: false },
-        by: { type: 'string' },
         port: { type: 'string', default: '4324' },
         json: { type: 'string' },
       },
@@ -68,9 +67,8 @@ export async function main(argv: string[]): Promise<number> {
         return 0
       }
       case 'approve': {
-        if (!values.by) throw new CliError('--by <name> is required', 1)
-        const a = await approveCommand({ projectDir, setId, by: values.by })
-        console.log(`approved by ${a.by} at ${a.at} (${a.hash.slice(0, 12)})`)
+        const a = await approveCommand({ projectDir, setId })
+        console.log(`approved at ${a.at} (${a.hash.slice(0, 12)})`)
         return 0
       }
       case 'tool': {

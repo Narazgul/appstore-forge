@@ -262,7 +262,7 @@ function summary(project: Project) {
     locales: set.locales.map((l) => l.id),
     targets: set.targets,
     slots: set.slots.map((s) => ({ id: s.id, kind: s.kind, screen: s.screen, layout: s.overrides.layout })),
-    approved: set.approval ? { by: set.approval.by, at: set.approval.at } : null,
+    approved: set.approval ? { at: set.approval.at } : null,
   }
 }
 

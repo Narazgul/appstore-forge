@@ -364,7 +364,7 @@ that project mode exists. There is one renderer (rules.md, rule 1) and project
 mode did not get to add a second.
 
 The GUI reaches the files only through `ProjectStore`. Everything above it —
-locale switch, copy fields, Review grid, Approve — is written against that
+locale switch, copy fields, Review grid, approval status — is written against that
 interface, so a remote backend is a new adapter and no store change. There is no
 locking: two editors on one project overwrite each other, last write wins.
 

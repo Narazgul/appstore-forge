@@ -13,7 +13,7 @@ const project = (): Project => ({
     sources: 's/{locale}/{screen}.png',
     settings: {},
     slots: [{ id: 'a', kind: 'screen', screen: 'shot', overrides: {} }],
-    approval: { hash: 'old', by: 'x', at: 'y' },
+    approval: { hash: 'old', at: 'y' },
   },
   copies: { en: { a: { headline: 'Hi', subhead: '' } } },
 })
@@ -292,7 +292,7 @@ describe('approvalHash and the canvas offsets', () => {
       sources: 's/{locale}/{screen}.png',
       settings: { tilt: 4 },
       slots: [{ id: 'a', kind: 'screen', screen: 'shot', overrides: { layout: 'hero' } }],
-      approval: { hash: 'old', by: 'x', at: 'y' },
+      approval: { hash: 'old', at: 'y' },
     },
     copies: { en: { a: { headline: 'Hi', subhead: '' } } },
   })

@@ -675,7 +675,7 @@ sync gives it real images. Capture nodes follow the same rule
 keyed by their path from the repo root alone (`backoffice/aso/backgrounds/<src>`, a duplicate needs
 no copy), resolved at load for every picture the set draws and every one in the document's
 `backgrounds` list (`[{ src, average }]`, the picker). So `node` effects and marks and background
-pictures draw in the backoffice too, and a stamp set there hashes the same bytes as `forge approve`.
+pictures draw in the backoffice too, and its approval check hashes the same bytes as `forge approve`.
 **The backoffice's `build:aso`/`pull:aso` scripts need to learn about
 this**: they must sync images (and update `gallery`) for every set id found in
 `backoffice/aso/sets`, not only `default`, or a duplicated set stays on its source's screenshots
@@ -1001,7 +1001,7 @@ paint styles.
 ```bash
 forge check --project ./aso                       # is the set complete?
 forge render --project ./aso                      # write every target × locale
-forge approve --project ./aso --by hofi           # stamp the set as reviewed
+forge approve --project ./aso                     # stamp the set as reviewed
 forge dev --project ./aso                         # the editor on this project
 ```
 
@@ -1012,7 +1012,6 @@ forge dev --project ./aso                         # the editor on this project
 | `--target <id>`      | Render only this target. Repeatable.                     |
 | `--locale <id>`      | Render only this language. Repeatable.                   |
 | `--require-approval` | `check` and `render` insist on a current approval stamp. |
-| `--by <name>`        | Who approves. Required for `approve`.                    |
 | `--port <n>`         | Dev server port. Default `4324`.                         |
 | `--json <input>`     | `tool` only: the input as JSON, or `@file` to read it.   |
 
@@ -1034,7 +1033,11 @@ forge render --project ./aso --target play --locale de --locale en --require-app
 **Approval** is a hash over the set file, all copy files and the bytes of every
 source screenshot, paired screen and artwork. Change a headline, swap a screenshot or move a slot and the
 stamp goes stale — `--require-approval` then refuses to render. That is the gate
-between "someone looked at this" and "this went to the store".
+between "someone looked at this" and "this went to the store". The stamp is `{ hash, at }`, no name,
+and only the CLI sets it: the person looks at the set (GUI Review step, or the rendered PNGs) and
+says so, then `forge approve` stamps exactly the bytes they saw. The GUI shows whether the stamp is
+current but has no Approve button. A stamp written by an older version still carries `by`; it is
+ignored and changes nothing about the hash.
 
 | Exit code | Meaning                                                                                                                          |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |

@@ -304,7 +304,7 @@ export type ProjectSlot = {
    *  through undo/redo (`store.ts`'s `setSlotRole`). */
   role?: TileRole
 }
-export type Approval = { hash: string; by: string; at: string }
+export type Approval = { hash: string; at: string }
 export type ProjectSettings = Omit<Settings, 'sizeId' | 'deviceId'>
 
 export type ProjectSet = {
