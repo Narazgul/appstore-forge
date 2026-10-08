@@ -530,11 +530,14 @@ export function renderScene(
     // device body. Only a placement that draws the slot's own frameless artwork applies to it.
     const isArtworkScreen = screen.kind === 'artwork'
     const effects = (screen.elements ?? []).filter(isEffectElement)
-    const effectBox =
-      effects.length && !isArtworkScreen && sources.self
-        ? boxes.find((b) => b.source === 'self' && !b.frameless)
-        : undefined
-    const prepared = effectBox ? prepareScreen(ctx, sources.self!, effects) : null
+    const effectTargets = isArtworkScreen
+      ? []
+      : (['self', 'next', 'prev'] as const).flatMap((source) => {
+          const own = effects.filter((e) => (e.device ?? 'self') === source)
+          const img = own.length ? imageFor(source, sources) : null
+          const box = img ? boxes.find((b) => b.source === source && !b.frameless) : undefined
+          return box && img ? [{ box, effects: own, prepared: prepareScreen(ctx, img, own) }] : []
+        })
     const bar: BrowserBar | undefined = device.toolbar
       ? { url: settings.browserUrl, font: (c, size) => setSubFont(c, size, settings, screen.lang) }
       : undefined
@@ -550,7 +553,7 @@ export function renderScene(
         // A multi-device arrangement falls back to the current screenshot when there is no
         // neighbour, so a single-screen project still renders every frame. Artwork gets no such
         // fallback: an unframed screenshot in that slot would be wrong, not merely a stand-in.
-        const img = deviceBox === effectBox ? prepared!.base : imageFor(source, sources)
+        const img = effectTargets.find((t) => t.box === deviceBox)?.prepared.base ?? imageFor(source, sources)
         const drawOne = (c: CanvasRenderingContext2D) => {
           c.save()
           if (angle !== 0) {
@@ -566,8 +569,8 @@ export function renderScene(
           drawBlurred(target, turnedBounds(box, angle), BACK_BLUR * w, drawOne)
         else drawOne(target)
       }
-      if (effectBox && prepared)
-        drawEffectOverlays(target, effectBox.box, effectBox.angle, device, prepared, effects, w)
+      for (const t of effectTargets)
+        drawEffectOverlays(target, t.box.box, t.box.angle, device, t.prepared, t.effects, w)
     }
     if (settings.deviceFade && settings.deviceFade !== 'none')
       drawFaded(

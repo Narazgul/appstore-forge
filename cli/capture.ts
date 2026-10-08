@@ -77,14 +77,14 @@ const demoBroadcast = (...extras: string[]) => [
   ...extras.flatMap((e) => ['-e', ...e.split(' ')]),
 ]
 
-/** The status bar the store shows: 9:41, full battery, full signal, no notification icons. */
+/** The status bar the store shows: 9:41, full battery, full wifi, no mobile icon, no notification icons. */
 export const demoEnterCommands = (): string[][] => [
   ['shell', 'settings', 'put', 'global', 'sysui_demo_allowed', '1'],
   demoBroadcast('command enter'),
   demoBroadcast('command clock', 'hhmm 0941'),
   demoBroadcast('command battery', 'level 100', 'plugged false'),
-  demoBroadcast('command network', 'wifi show', 'level 4'),
-  demoBroadcast('command network', 'mobile show', 'datatype none', 'level 4'),
+  demoBroadcast('command network', 'wifi show', 'level 4', 'fully true'),
+  demoBroadcast('command network', 'mobile hide'),
   demoBroadcast('command notifications', 'visible false'),
 ]
 

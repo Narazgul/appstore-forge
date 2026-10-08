@@ -378,6 +378,28 @@ const elementBase = (description: string) =>
       type: 'number',
       description: 'Lift: how far the rest of the screen loses its colour, 0-1. Default 0.',
     },
+    angle: {
+      type: 'number',
+      description:
+        'Lift: degrees, clockwise, -45 to 45; the rect is the target before turning (a tilted card), raised as that turned rectangle. Default 0.',
+    },
+    cutout: {
+      type: 'boolean',
+      description:
+        'Lift: raise only the target itself; the background around it (flood-filled from the edge of its box) stays behind. Default false.',
+    },
+    group: str(
+      'Lift: lifts sharing a group are raised as one stack (only their shapes, scaled together around the stack middle with the largest scale), for overlapping cards.',
+    ),
+    device: str(
+      "Effect: which device of a duo or trio it works on: self (the slot's own screen, default), next (the pair) or prev. Another device than self needs a rect.",
+      { enum: ['self', 'next', 'prev'] },
+    ),
+    mirrorRtl: {
+      type: 'boolean',
+      description:
+        'Lift: in a right-to-left locale (ar, he, fa, ur) target the mirrored rect, for a screen the app mirrors. Default false.',
+    },
     zoom: { type: 'number', description: 'Loupe: magnification, 1.2-4. Default 2.' },
     place: str('Loupe: over the target or beside it. Default over.', {
       enum: ['over', 'above', 'below', 'left', 'right'],

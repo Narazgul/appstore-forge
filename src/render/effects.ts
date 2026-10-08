@@ -259,6 +259,133 @@ function drawLift(
   ctx.restore()
 }
 
+/** The screenshot box a turned target covers, in pixels. */
+export function turnedPixelRect(
+  rect: ScreenRect,
+  pad: number,
+  angle: number,
+  w: number,
+  h: number,
+): PixelRect {
+  const cw = rect.w * w + 2 * pad * w
+  const ch = rect.h * h + 2 * pad * w
+  const rad = (angle * Math.PI) / 180
+  const halfW = (Math.abs(cw * Math.cos(rad)) + Math.abs(ch * Math.sin(rad))) / 2
+  const halfH = (Math.abs(cw * Math.sin(rad)) + Math.abs(ch * Math.cos(rad))) / 2
+  const cx = (rect.x + rect.w / 2) * w
+  const cy = (rect.y + rect.h / 2) * h
+  return {
+    x0: Math.max(0, Math.floor(cx - halfW)),
+    y0: Math.max(0, Math.floor(cy - halfH)),
+    x1: Math.min(w, Math.ceil(cx + halfW)),
+    y1: Math.min(h, Math.ceil(cy + halfH)),
+  }
+}
+
+const CUTOUT_TOLERANCE = 18
+
+/** Clears the background around the target: every pixel reachable from the box edge whose colour
+ *  stays close to the edge's mean colour. Pixels inside the target keep their alpha even when they
+ *  match, so a pale area within it never turns into a hole. */
+export function cutOutBackground(px: Pixels) {
+  const { data, w, h } = px
+  const edge: number[] = []
+  for (let x = 0; x < w; x++) edge.push(x, (h - 1) * w + x)
+  for (let y = 1; y < h - 1; y++) edge.push(y * w, y * w + w - 1)
+  const mean = [0, 0, 0]
+  for (const i of edge) for (let c = 0; c < 3; c++) mean[c] += data[i * 4 + c]
+  for (let c = 0; c < 3; c++) mean[c] /= edge.length
+  const distance = (i: number) =>
+    Math.hypot(data[i * 4] - mean[0], data[i * 4 + 1] - mean[1], data[i * 4 + 2] - mean[2])
+  const cleared = new Uint8Array(w * h)
+  const stack = edge.filter((i) => distance(i) < CUTOUT_TOLERANCE)
+  for (const i of stack) cleared[i] = 1
+  while (stack.length) {
+    const i = stack.pop()!
+    const x = i % w
+    const y = (i - x) / w
+    for (const n of [
+      x > 0 ? i - 1 : -1,
+      x < w - 1 ? i + 1 : -1,
+      y > 0 ? i - w : -1,
+      y < h - 1 ? i + w : -1,
+    ]) {
+      if (n < 0 || cleared[n] || distance(n) >= CUTOUT_TOLERANCE) continue
+      cleared[n] = 1
+      stack.push(n)
+    }
+  }
+  for (let i = 0; i < w * h; i++) {
+    if (cleared[i]) data[i * 4 + 3] = 0
+    else if (distance(i) < 2 * CUTOUT_TOLERANCE) {
+      const x = i % w
+      const touches =
+        (x > 0 && cleared[i - 1]) || (x < w - 1 && cleared[i + 1]) || cleared[i - w] || cleared[i + w]
+      if (touches) data[i * 4 + 3] = Math.round(data[i * 4 + 3] * (distance(i) / CUTOUT_TOLERANCE - 1 || 0.5))
+    }
+  }
+}
+
+function fillTurned(
+  g: CanvasRenderingContext2D,
+  e: LiftEffect,
+  px: PixelRect,
+  size: { w: number; h: number },
+) {
+  g.translate((e.rect.x + e.rect.w / 2) * size.w - px.x0, (e.rect.y + e.rect.h / 2) * size.h - px.y0)
+  g.rotate(((e.angle ?? 0) * Math.PI) / 180)
+  const cw = e.rect.w * size.w + 2 * e.pad * size.w
+  const ch = e.rect.h * size.h + 2 * e.pad * size.w
+  g.fillStyle = '#000000'
+  g.fillRect(-cw / 2, -ch / 2, cw, ch)
+  g.setTransform(1, 0, 0, 1, 0, 0)
+}
+
+function liftPixelRect(e: LiftEffect, w: number, h: number): PixelRect {
+  return e.angle ? turnedPixelRect(e.rect, e.pad, e.angle, w, h) : pixelRect(e.rect, e.pad, w, h)
+}
+
+/** A lift with a turned or cut-out shape, or a group of lifts raised as one stack: only the
+ *  targets' own shapes leave the screen, scaled together around the stack's middle, so cards that
+ *  overlap in the app still overlap the same way. */
+function drawShapedLift(
+  ctx: CanvasRenderingContext2D,
+  members: LiftEffect[],
+  src: CanvasImageSource,
+  px: PixelRect,
+  target: Box,
+  size: { w: number; h: number },
+  screenW: number,
+) {
+  const sw = px.x1 - px.x0
+  const sh = px.y1 - px.y0
+  const part = scratchCanvas(ctx, sw, sh)
+  const g = part.getContext('2d')!
+  g.drawImage(src, px.x0, px.y0, sw, sh, 0, 0, sw, sh)
+  if (members.some((e) => e.angle) || members.length > 1) {
+    const mask = scratchCanvas(ctx, sw, sh)
+    const m = mask.getContext('2d')!
+    for (const e of members) fillTurned(m, e, px, size)
+    g.globalCompositeOperation = 'destination-in'
+    g.drawImage(mask, 0, 0)
+    g.globalCompositeOperation = 'source-over'
+  }
+  if (members.some((e) => e.cutout)) {
+    const image = g.getImageData(0, 0, sw, sh)
+    cutOutBackground({ data: image.data, w: sw, h: sh })
+    g.putImageData(image, 0, 0)
+  }
+  const scale = Math.max(...members.map((e) => e.scale))
+  const w = target.w * scale
+  const h = target.h * scale
+  ctx.save()
+  ctx.shadowColor = LIFT_SHADOW
+  ctx.shadowBlur = screenW * 0.06
+  ctx.shadowOffsetY = screenW * 0.02
+  ctx.drawImage(part, target.x + (target.w - w) / 2, target.y + (target.h - h) / 2, w, h)
+  ctx.restore()
+}
+
 function drawLoupe(
   ctx: CanvasRenderingContext2D,
   e: LoupeEffect,
@@ -355,10 +482,28 @@ export function drawEffectOverlays(
     ctx.rotate((angle * Math.PI) / 180)
     ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2))
   }
+  const drawnGroups = new Set<string>()
   for (const e of ordered) {
-    const px = pixelRect(e.rect, e.pad, iw, ih)
+    if (e.effect === 'lift' && e.group) {
+      if (drawnGroups.has(e.group)) continue
+      drawnGroups.add(e.group)
+      const members = ordered.filter((o): o is LiftEffect => o.effect === 'lift' && o.group === e.group)
+      const rects = members.map((m) => liftPixelRect(m, iw, ih))
+      const px = {
+        x0: Math.min(...rects.map((r) => r.x0)),
+        y0: Math.min(...rects.map((r) => r.y0)),
+        x1: Math.max(...rects.map((r) => r.x1)),
+        y1: Math.max(...rects.map((r) => r.y1)),
+      }
+      if (px.x1 > px.x0 && px.y1 > px.y0)
+        drawShapedLift(ctx, members, screenImage.clean, px, onCanvas(px), { w: iw, h: ih }, screen.w)
+      continue
+    }
+    const px = e.effect === 'lift' ? liftPixelRect(e, iw, ih) : pixelRect(e.rect, e.pad, iw, ih)
     if (px.x1 <= px.x0 || px.y1 <= px.y0) continue
-    if (e.effect === 'lift') drawLift(ctx, e, screenImage.clean, px, onCanvas(px), screen.w)
+    if (e.effect === 'lift' && (e.angle || e.cutout))
+      drawShapedLift(ctx, [e], screenImage.clean, px, onCanvas(px), { w: iw, h: ih }, screen.w)
+    else if (e.effect === 'lift') drawLift(ctx, e, screenImage.clean, px, onCanvas(px), screen.w)
     else if (e.effect === 'loupe')
       drawLoupe(ctx, e, screenImage.clean, { w: iw, h: ih }, px, onCanvas(px), fit.scale, tileW)
   }

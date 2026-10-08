@@ -92,6 +92,8 @@ export type EffectRect = { x: number; y: number; w: number; h: number }
  */
 type SlotEffectBase = {
   id: string
+  /** the device it works on in a duo or trio: 'next' (the pair) or 'prev'; default 'self' */
+  device?: 'self' | 'next' | 'prev'
   rect?: EffectRect
   /** several names target the rectangle around all their nodes */
   node?: string | string[]
@@ -108,6 +110,14 @@ export type SlotLift = SlotEffectBase & {
   dim?: number
   /** how far the rest of the screen loses its colour, 0–1; default 0 */
   gray?: number
+  /** degrees, clockwise, -45–45: `rect` is the target before turning (a tilted card); default 0 */
+  angle?: number
+  /** leave the background around the target behind (flood-filled from the box edge); default false */
+  cutout?: boolean
+  /** lifts with the same group are raised as one stack, scaled together (overlapping cards) */
+  group?: string
+  /** in a right-to-left locale target the mirrored rect (x becomes 1 - x - w); default false */
+  mirrorRtl?: boolean
 }
 
 export type LoupePlace = 'over' | 'above' | 'below' | 'left' | 'right'

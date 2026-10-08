@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { composeDevices, renderScene, textFloor } from './scene'
 import { frameAspect, getDevice } from '../presets/devices'
 import { getLayout } from '../presets/layouts'
-import { loupeCircle, pixelRect } from './effects'
+import { cutOutBackground, loupeCircle, pixelRect, turnedPixelRect } from './effects'
 import { DEFAULT_SETTINGS } from '../store'
 import { approvalHash } from '../project/hash'
 import { effectRect, nodesPath, resolveNode, screensFor } from '../project/bridge'
@@ -502,5 +502,121 @@ describe('approvalHash: effects', () => {
     expect(await approvalHash(withNode, enc('img'), undefined, enc('n1'))).not.toBe(
       await approvalHash(withNode, enc('img'), undefined, enc('n2')),
     )
+  })
+})
+
+describe('lift: turned, cut out, grouped, on another device (v3.1.0)', () => {
+  const settings: Partial<Settings> = { layout: 'text-top', tilt: 0, positionId: 'center' }
+  const card = { rect: { x: 0.3, y: 0.3, w: 0.4, h: 0.2 }, scale: 1.2 }
+
+  it('a turned or cut-out lift draws differently from the plain one, and stays deterministic', () => {
+    const plain = render([lift(card)], settings)
+    const turned = render([lift({ ...card, angle: 8 })], settings)
+    const cut = render([lift({ ...card, cutout: true })], settings)
+    expect(diff(plain, turned).count).toBeGreaterThan(0)
+    expect(diff(plain, cut).count).toBeGreaterThan(0)
+    expect(sha(render([lift({ ...card, angle: 8 })], settings))).toBe(sha(turned))
+  })
+
+  it('a group raises its members as one stack, not one by one', () => {
+    const a = lift({ id: 'a', rect: { x: 0.1, y: 0.3, w: 0.5, h: 0.2 }, scale: 1.3, angle: -3 })
+    const b = lift({ id: 'b', rect: { x: 0.4, y: 0.4, w: 0.5, h: 0.2 }, scale: 1.3, angle: 4 })
+    const single = render([a, b], settings)
+    const stacked = render(
+      [{ ...a, group: 'g' } as EffectElement, { ...b, group: 'g' } as EffectElement],
+      settings,
+    )
+    expect(diff(single, stacked).count).toBeGreaterThan(0)
+  })
+
+  it('an effect on the pair changes the picture, and differs from the same effect on the own screen', () => {
+    const duo = { layout: 'text-top' as const, tilt: 0, positionId: 'duo' }
+    const base = render([], duo)
+    const own = render([lift(card)], duo)
+    const pair = render([lift({ ...card, device: 'next' })], duo)
+    expect(diff(base, pair).count).toBeGreaterThan(0)
+    expect(diff(own, pair).count).toBeGreaterThan(0)
+  })
+
+  it('turnedPixelRect equals pixelRect unturned and swaps the sides at 90 degrees', () => {
+    const rect = { x: 0.25, y: 0.25, w: 0.5, h: 0.25 }
+    expect(turnedPixelRect(rect, 0, 0, 100, 100)).toEqual(pixelRect(rect, 0, 100, 100))
+    const r = turnedPixelRect(rect, 0, 90, 100, 100)
+    expect(Math.abs(r.x1 - r.x0 - 25)).toBeLessThanOrEqual(1)
+    expect(Math.abs(r.y1 - r.y0 - 50)).toBeLessThanOrEqual(1)
+  })
+
+  it('cutOutBackground clears what touches the edge and keeps a matching hole inside the target', () => {
+    const w = 10
+    const h = 10
+    const data = new Uint8ClampedArray(w * h * 4).fill(255)
+    for (let y = 3; y < 7; y++)
+      for (let x = 3; x < 7; x++) {
+        const i = (y * w + x) * 4
+        data[i] = 20
+        data[i + 1] = 40
+        data[i + 2] = 200
+      }
+    const hole = (5 * w + 5) * 4
+    data[hole] = data[hole + 1] = data[hole + 2] = 255
+    cutOutBackground({ data, w, h })
+    expect(data[3]).toBe(0)
+    expect(data[(4 * w + 4) * 4 + 3]).toBe(255)
+    expect(data[hole + 3]).toBe(255)
+  })
+})
+
+describe('bridge and validate: lift fields of v3.1.0', () => {
+  const turned = {
+    id: 'l',
+    effect: 'lift' as const,
+    rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.2 },
+    angle: 5,
+    cutout: true,
+    group: 'cards',
+    mirrorRtl: true,
+    device: 'next' as const,
+  }
+
+  it('mirrors the rect only in a right-to-left locale, and passes the new fields on', () => {
+    const project = effectProject([turned])
+    project.set.locales = [{ id: 'en' }, { id: 'ar' }]
+    const [en] = screensFor(project, 'en')
+    const [ar] = screensFor(project, 'ar')
+    expect(en.elements?.[0]).toMatchObject({
+      rect: { x: 0.1 },
+      angle: 5,
+      cutout: true,
+      group: 'cards',
+      device: 'next',
+    })
+    const mirrored = ar.elements?.[0] as EffectElement
+    expect(mirrored.rect.x).toBeCloseTo(0.6)
+  })
+
+  it('leaves the new fields out of a scene that does not set them', () => {
+    const [screen] = screensFor(effectProject([{ id: 'l', effect: 'lift', rect: turned.rect }]), 'en')
+    expect(Object.keys(screen.elements?.[0] ?? {})).not.toContain('angle')
+    expect(Object.keys(screen.elements?.[0] ?? {})).not.toContain('device')
+  })
+
+  it('accepts good values and rejects bad ones', () => {
+    expect(errorsOf(effectProject([turned]))).toEqual([])
+    const errors = errorsOf(
+      effectProject([
+        { ...turned, id: 'a', angle: 60 },
+        { ...turned, id: 'b', cutout: 'yes' } as unknown as SlotElement,
+        { ...turned, id: 'c', group: ' ' },
+        { ...turned, id: 'd', device: 'side' } as unknown as SlotElement,
+        { id: 'e', effect: 'lift', node: 'balance', device: 'next' },
+      ]),
+    )
+    expect(errors).toEqual([
+      'Effect a: angle 60 outside -45–45',
+      'Effect b: cutout must be true or false',
+      'Effect c: group must be a non-empty string',
+      'Effect d: device must be one of self, next, prev',
+      "Effect e: a node is looked up in the slot's own capture; give the other device a rect",
+    ])
   })
 })

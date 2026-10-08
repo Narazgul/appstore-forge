@@ -1,3 +1,4 @@
+import { isRtl } from '../presets/scripts'
 import { DEFAULT_SETTINGS } from '../store'
 import type {
   EffectElement,
@@ -134,8 +135,18 @@ export function effectRect(
   return 'rect' in resolved ? resolved.rect : null
 }
 
+function mirroredForRtl(el: SlotEffect, rect: ScreenRect, localeId: string): ScreenRect {
+  if (el.effect !== 'lift' || !el.mirrorRtl || !isRtl(localeId)) return rect
+  return { ...rect, x: 1 - rect.x - rect.w }
+}
+
 function sceneEffect(el: SlotEffect, rect: ScreenRect): EffectElement {
-  const base = { id: el.id, rect, pad: el.pad ?? 0 }
+  const base = {
+    id: el.id,
+    rect,
+    pad: el.pad ?? 0,
+    ...(el.device && el.device !== 'self' ? { device: el.device } : {}),
+  }
   switch (el.effect) {
     case 'lift':
       return {
@@ -144,6 +155,9 @@ function sceneEffect(el: SlotEffect, rect: ScreenRect): EffectElement {
         scale: el.scale ?? DEFAULT_LIFT.scale,
         dim: el.dim ?? DEFAULT_LIFT.dim,
         gray: el.gray ?? DEFAULT_LIFT.gray,
+        ...(el.angle ? { angle: el.angle } : {}),
+        ...(el.cutout ? { cutout: true } : {}),
+        ...(el.group ? { group: el.group } : {}),
       }
     case 'loupe':
       return {
@@ -323,7 +337,7 @@ export function screensFor(project: Project, localeId: string, nodes?: NodesLook
         ? elements.flatMap((el): SceneElement[] => {
             if (isSlotEffect(el)) {
               const rect = slot.kind === 'artwork' ? null : effectRect(el, localeId, slot.screen, nodes)
-              return rect ? [sceneEffect(el, rect)] : []
+              return rect ? [sceneEffect(el, mirroredForRtl(el, rect, localeId))] : []
             }
             if (isSlotMark(el)) {
               const screen = slot.kind === 'artwork' ? undefined : slot.screen

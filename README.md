@@ -814,6 +814,36 @@ exactly one thing. They sit in `elements` like stickers, but carry `effect` inst
 | `focus`  | everything but the target blurred                                       | `strength` blur radius 0.002–0.05 of the screenshot width (0.012), `dim` 0–0.9 (0)                                                      |
 | `redact` | the target pixelated or blurred for good                                | `style` pixelate/blur (pixelate), `strength` block size or radius 0.005–0.1 (0.03)                                                      |
 
+**Shaped lifts (v3.1.0).** A plain lift raises a rounded rectangle with the screen behind the
+target in it. Four more fields shape it:
+
+- `angle` (−45–45, degrees, clockwise): `rect` is the target before turning, e.g. a tilted card;
+  only that turned rectangle is raised, without the background in its corners.
+- `cutout: true`: the background around the target, flood-filled from the edge of its box (the
+  edge's mean colour, a small tolerance), stays behind; matching pixels inside the target keep
+  their alpha. Suits shapes on a plain background (icons, pixel art).
+- `group`: lifts sharing a group are raised as one stack: only their shapes, scaled together
+  around the stack's middle with the largest `scale`, so cards that overlap in the app still
+  overlap the same way. Order in `elements` is the stacking order.
+- `mirrorRtl: true`: in a right-to-left locale (ar, he, fa, ur) the `rect` is mirrored
+  (`x` becomes `1 − x − w`), for a screen the app mirrors; the `angle` stays.
+
+Every effect may also take `device`: `self` (default), `next` (the pair) or `prev`, for the other
+devices of a duo or trio; another device than `self` needs a `rect`, since a `node` is looked up
+in the slot's own capture.
+
+```json
+{
+  "id": "trip",
+  "effect": "lift",
+  "rect": { "x": 0.104, "y": 0.179, "w": 0.425, "h": 0.251 },
+  "angle": -2.5,
+  "group": "polaroids",
+  "mirrorRtl": true,
+  "scale": 1.25
+}
+```
+
 **The target** is exactly one of `rect` (fractions of the screenshot: `x`, `w` of its width, `y`,
 `h` of its height) or `node`, looked up in the capture's `nodes.json` next to the screenshot (the
 source path with `.nodes.json` for its extension, the file `forge capture` writes): first an exact
@@ -827,7 +857,7 @@ width) adds a margin on every side.
 Redact and focus happen once on the screenshot at its own resolution, in integer steps, so every
 render is byte-identical in the CLI and the editor. Whatever samples the screen afterwards — the
 lifted part, the loupe — sees the redaction. Effects draw on the slot's own framed screen (the
-first `self` placement), turn with the device, and sit under the front stickers. On a deviceless
+first `self` placement, or the device named by `device`), turn with the device, and sit under the front stickers. On a deviceless
 layout, on `mosaic` or in an arrangement without its own framed screen they draw nothing
 (warning); on an artwork slot they are an error. A set without effects renders and hashes exactly
 as before; the effect fields are part of the approval hash, and so are the nodes file bytes of

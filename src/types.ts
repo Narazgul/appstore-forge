@@ -199,8 +199,25 @@ export type ScreenRect = { x: number; y: number; w: number; h: number }
 /** Every field resolved: `rect` is already looked up from a capture's nodes when the slot named
  *  one, `pad` (a fraction of the screenshot width) is applied by the renderer, which knows the
  *  image's pixel size. */
-type EffectBase = { id: string; rect: ScreenRect; pad: number }
-export type LiftEffect = EffectBase & { effect: 'lift'; scale: number; dim: number; gray: number }
+type EffectBase = {
+  id: string
+  rect: ScreenRect
+  pad: number
+  /** which device of the arrangement the effect works on; absent = the slot's own screen */
+  device?: 'next' | 'prev'
+}
+export type LiftEffect = EffectBase & {
+  effect: 'lift'
+  scale: number
+  dim: number
+  gray: number
+  /** degrees, clockwise: `rect` is the target before turning, raised as that turned rectangle */
+  angle?: number
+  /** the background around the target, flood-filled from the edge of its box, stays behind */
+  cutout?: boolean
+  /** lifts sharing a group are raised as one stack */
+  group?: string
+}
 export type LoupeEffect = EffectBase & {
   effect: 'loupe'
   zoom: number

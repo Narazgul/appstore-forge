@@ -153,8 +153,19 @@ function approxTextBlock(layout: Layout, offset: Offset | undefined): Band {
 }
 
 type Range = { min: number; max: number }
-const EFFECT_FIELDS: Record<SlotEffect['effect'], Record<string, Range | readonly string[] | 'hex'>> = {
-  lift: { scale: { min: 1, max: 1.5 }, dim: { min: 0, max: 0.9 }, gray: { min: 0, max: 1 } },
+const EFFECT_FIELDS: Record<
+  SlotEffect['effect'],
+  Record<string, Range | readonly string[] | 'hex' | 'boolean' | 'text'>
+> = {
+  lift: {
+    scale: { min: 1, max: 1.5 },
+    dim: { min: 0, max: 0.9 },
+    gray: { min: 0, max: 1 },
+    angle: { min: -45, max: 45 },
+    cutout: 'boolean',
+    mirrorRtl: 'boolean',
+    group: 'text',
+  },
   loupe: {
     zoom: { min: 1.2, max: 4 },
     size: { min: 0.05, max: 0.9 },
@@ -164,7 +175,8 @@ const EFFECT_FIELDS: Record<SlotEffect['effect'], Record<string, Range | readonl
   focus: { strength: { min: 0.002, max: 0.05 }, dim: { min: 0, max: 0.9 } },
   redact: { style: ['pixelate', 'blur'], strength: { min: 0.005, max: 0.1 } },
 }
-const EFFECT_COMMON = new Set(['id', 'effect', 'rect', 'node', 'pad'])
+const EFFECT_COMMON = new Set(['id', 'effect', 'rect', 'node', 'pad', 'device'])
+const EFFECT_DEVICES = ['self', 'next', 'prev']
 const PAD_RANGE: Range = { min: 0, max: 0.2 }
 
 /** Everything wrong with one effect's own fields — its target and its settings, not yet whether a
@@ -178,6 +190,10 @@ function effectProblems(el: SlotEffect): string[] {
   if (hasRect === hasNode) problems.push('needs exactly one of rect or node')
   if (hasNode && !isNodeTarget(el.node))
     problems.push('node must be a non-empty string or an array of at least two of them')
+  if (el.device !== undefined && !EFFECT_DEVICES.includes(el.device))
+    problems.push(`device must be one of ${EFFECT_DEVICES.join(', ')}`)
+  if (el.device !== undefined && el.device !== 'self' && hasNode)
+    problems.push("a node is looked up in the slot's own capture; give the other device a rect")
   const rect = hasRect ? rectProblem(el.rect) : null
   if (rect) problems.push(rect)
   if (
@@ -189,7 +205,11 @@ function effectProblems(el: SlotEffect): string[] {
     if (value === undefined || EFFECT_COMMON.has(key)) continue
     const rule = fields[key]
     if (!rule) problems.push(`field ${key} does not apply to a ${el.effect}`)
-    else if (rule === 'hex') {
+    else if (rule === 'text') {
+      if (typeof value !== 'string' || !value.trim()) problems.push(`${key} must be a non-empty string`)
+    } else if (rule === 'boolean') {
+      if (typeof value !== 'boolean') problems.push(`${key} must be true or false`)
+    } else if (rule === 'hex') {
       if (typeof value !== 'string' || !HEX_COLOR.test(value))
         problems.push(`${key} is not a hex colour: ${value}`)
     } else if (Array.isArray(rule)) {
